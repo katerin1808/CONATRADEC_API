@@ -7,6 +7,7 @@ namespace CONATRADEC_API.Models
     [Table("Rol", Schema = "dbo")]
     public class Rol
     {
+        [Key]
         public int rolId { get; set; }
 
         [MaxLength(50, ErrorMessage = "El campo {0} debe tener máximo {1} caractéres.")]
@@ -17,7 +18,8 @@ namespace CONATRADEC_API.Models
         [Display(Name = "Descripción")]
         [MaxLength(500, ErrorMessage = "El campo {0} debe tener máximo {1} caractéres.")]
         public string descripcionRol { get; set; } = null!;
-        public bool activo { get; set; }
+        public bool activo { get; set; } = true; // Valor por defecto al crear
     }
 }
+
 
