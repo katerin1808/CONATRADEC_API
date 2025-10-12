@@ -46,7 +46,7 @@ namespace CONATRADEC_API.Controllers
             return Ok(new
             {
                 mensaje = "Rol creado correctamente",
-                datos = new
+                rol = new
                 {
                     rol.rolId,
                     rol.nombreRol,
