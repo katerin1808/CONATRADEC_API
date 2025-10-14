@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using CONATRADEC_API.DTOs;
+using Microsoft.EntityFrameworkCore;
 
 namespace CONATRADEC_API.Controllers
 {
@@ -46,7 +47,8 @@ namespace CONATRADEC_API.Controllers
             return Ok(new
             {
                 mensaje = "Rol creado correctamente",
-                rol = new
+                rol= new
+
                 {
                     rol.rolId,
                     rol.nombreRol,
@@ -54,6 +56,62 @@ namespace CONATRADEC_API.Controllers
                     rol.activo
                 }
             });
+        }
+
+        [HttpGet]
+        [Route("listaRol")]
+        public async Task<ActionResult<IEnumerable<RolCreateDto>>> GetRol()
+        {
+            //Obten la lista de productos de la base de datos
+            var rol = await _context.Roles.ToListAsync();
+
+            //devuelve una lista de productos
+            return Ok(rol);
+        }
+
+
+        [HttpGet("verRol")]
+        public async Task<IActionResult> GetRol(int id)
+        {
+            //obtener el producto de la base de datos
+            var rol = await _context.Roles.FindAsync(id);
+
+
+            //devolver el producto
+            if (rol == null)
+            {
+                return NotFound(new { mensaje = "Rol no encontrado." });
+            }
+
+            return Ok(rol);
+        }
+
+        // GET /roles/editarRol/{id} → Carga datos existentes para el formulario
+        [HttpGet("editarRol/{id:int}")]
+        public async Task<IActionResult> GetRolForEdit(int id)
+        {
+            var rol = await _context.Roles.FindAsync(id);
+            if (rol == null) return NotFound($"No se encontró un rol con ID {id}");
+            return Ok(rol); // ← lo usas para prellenar el formulario
+        }
+
+        // PUT /roles/editarRol/{id} → Guarda los cambios del formulario
+        [HttpPut("editarRol/{id:int}")]
+        public async Task<IActionResult> SaveRolEdit(int id, [FromBody] Rol dto)
+        {
+            var rol = await _context.Roles.FindAsync(id);
+            if (rol == null) return NotFound($"No se encontró un rol con ID {id}");
+
+            rol.nombreRol = dto.nombreRol;
+            rol.descripcionRol = dto.descripcionRol;
+            rol.activo = dto.activo;
+
+            await _context.SaveChangesAsync();
+            return Ok (new
+    {
+                message = "Rol actualizado correctamente",
+                rol = rol
+            }); // ← devuelve el rol actualizado
         }
 
     }
