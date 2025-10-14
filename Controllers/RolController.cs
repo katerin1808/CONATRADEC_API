@@ -108,11 +108,33 @@ namespace CONATRADEC_API.Controllers
 
             await _context.SaveChangesAsync();
             return Ok (new
-    {
+         {
                 message = "Rol actualizado correctamente",
                 rol = rol
             }); // ← devuelve el rol actualizado
         }
 
+
+        // DELETE /eliminarRol/{id} → Elimina un rol por ID
+        [HttpDelete]
+        [Route("eliminarRol/{id:int}")]
+        public async Task<IActionResult> DeleteRol(int id)
+        {
+            // Buscar el rol por ID
+            var rolBorrado = await _context.Roles.FindAsync(id);
+
+            // Si no existe, devolver 404
+            if (rolBorrado == null)
+                return NotFound($"No se encontró un rol con ID {id}");
+
+            // Eliminar el rol de la base de datos
+            _context.Roles.Remove(rolBorrado);
+
+            // Guardar los cambios
+            await _context.SaveChangesAsync();
+
+            // ✅ Devolver mensaje de éxito
+            return Ok(new { message = "Rol eliminado correctamente" });
+        }
     }
 }
