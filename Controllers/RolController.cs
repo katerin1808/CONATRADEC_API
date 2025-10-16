@@ -18,45 +18,65 @@ namespace CONATRADEC_API.Controllers
             _context = context;
         }
 
-        [HttpPost]
-        [Route("crearRol")]
 
-        public async Task<IActionResult> CreateRol([FromBody] RolCreateDto rolCreateDto)
+
+        // POST /crearRol
+        [HttpPost("crearRol")]
+        public async Task<IActionResult> CrearRol([FromBody] RolCreateDto dto)
         {
+            var nombre = dto.nombreRol?.Trim();
+            if (string.IsNullOrWhiteSpace(nombre))
+                return BadRequest("El nombre es obligatorio.");
 
-            // Validaciones básicas
-            if (!ModelState.IsValid)
-                return BadRequest(ModelState);
+            // normalización para comparar (sin tildes ni mayúsculas, opcional)
+            var nombreCmp = nombre.ToUpperInvariant();
 
-            // Evitar duplicados
-            if (_context.Roles.Any(r => r.nombreRol == rolCreateDto.nombreRol))
-                return BadRequest(new { mensaje = "Ya existe un rol con ese nombre." });
+            // 1) ¿Hay ACTIVO con ese nombre?
+            var existeActivo = await _context.Roles
+                .AnyAsync(r => r.activo && r.nombreRol.ToUpper() == nombreCmp);
+            if (existeActivo)
+                return Conflict("Ya existe un rol activo con ese nombre.");
 
-            // Crear el objeto Rol completo
-            var rol = new Rol
+            // 2) ¿Hay INACTIVO con ese nombre? (IMPORTANTE: ignorar filtros globales)
+            var inactivo = await _context.Roles
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(r => !r.activo && r.nombreRol.ToUpper() == nombreCmp);
+
+            if (inactivo != null)
             {
-                nombreRol = rolCreateDto.nombreRol,
-                descripcionRol= rolCreateDto.descripcionRol,
-                activo = true // Se asigna automáticamente
+                inactivo.activo = true;
+                inactivo.descripcionRol = dto.descripcionRol;
+                await _context.SaveChangesAsync();
+
+                return Ok(new
+                {
+                    message = "Rol reactivado correctamente",
+                    inactivo.rolId,
+                    nombreRol = inactivo.nombreRol,
+                    descripcionRol = inactivo.descripcionRol
+                });
+            }
+
+            // 3) Crear nuevo
+            var nuevo = new Rol
+            {
+                nombreRol = nombre,                // guarda el nombre “bonito”
+                descripcionRol = dto.descripcionRol,
+                activo = true
             };
-            //guardar el producto en la base de datos
-            await _context.Roles.AddAsync(rol);
+
+            _context.Roles.Add(nuevo);
             await _context.SaveChangesAsync();
 
-            //devolver un mensaje de exito
-            return Ok(new
+            return CreatedAtAction(nameof(BuscarRol), new { id = nuevo.rolId }, new
             {
-                mensaje = "Rol creado correctamente",
-                rol= new
-
-                {
-                    rol.rolId,
-                    rol.nombreRol,
-                    rol.descripcionRol,
-                    rol.activo
-                }
+                message = "Rol creado correctamente",
+                nuevo.rolId,
+                nuevo.nombreRol,
+                nuevo.descripcionRol
             });
         }
+
 
         // GET /listarRoles → Devuelve solo los roles activos
         [HttpGet("listarRoles")]
