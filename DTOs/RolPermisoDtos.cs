@@ -20,8 +20,39 @@ namespace CONATRADEC_API.DTOs
     {
         public RolLiteDto rol { get; set; } = null!;
         public List<InterfazPermisoDto> permisos { get; set; } = new();
+        public ModoOperacionRol modo { get; set; } = ModoOperacionRol.Reemplazar;
     }
 
-    
+    public class RolConPermisoDto
+    {
+        public RolLiteDto rol { get; set; } = new RolLiteDto();
+        public List<InterfazPermisoDto> permisos { get; set; } = new List<InterfazPermisoDto>();
+    }
+
+    public class RolDto
+    {
+        public int rolId { get; set; }
+        public string nombreRol { get; set; } = string.Empty;
+    }
+
+    public class InterfazPermisosDto
+    {
+        public int permisoId { get; set; }
+        public string nombrePermiso { get; set; } = string.Empty;
+
+        // Acciones del permiso
+        public bool leer { get; set; }
+        public bool agregar { get; set; }
+        public bool actualizar { get; set; }
+        public bool eliminar { get; set; }
+    }
+    public enum ModoOperacionRol
+    {
+        Agregar = 1,
+        Actualizar = 2,
+        Reemplazar = 3
+    }
 
 }
+
+
