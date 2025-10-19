@@ -19,6 +19,8 @@ namespace CONATRADEC_API.Models
         [MaxLength(500, ErrorMessage = "El campo {0} debe tener máximo {1} caractéres.")]
         public string descripcionRol { get; set; } = null!;
         public bool activo { get; set; } = true; // Valor por defecto al crear
+
+        public ICollection<RolPermiso> rolPermisos { get; set; } = new List<RolPermiso>();
     }
 }
 

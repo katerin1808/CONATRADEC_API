@@ -39,26 +39,22 @@ namespace CONATRADEC_API.Models
                 e.Property(x => x.nombrePermiso).HasMaxLength(100).IsRequired();
             });
 
-            // === RolPermiso (tabla puente) ===
             modelBuilder.Entity<RolPermiso>(e =>
             {
-                e.ToTable("RolPermiso", "dbo");
+                e.ToTable("rolPermiso", "dbo");
+                e.HasKey(x => x.rolPermisoId);
 
-                // Clave compuesta (rolId + permisoId)
-                e.HasKey(x => new { x.rolId, x.permisoId });
+                e.HasIndex(x => new { x.rolId, x.permisoId }).IsUnique();
 
-                // FK a Rol
-                e.HasOne(x => x.Rol)
-                 .WithMany()
-                 .HasForeignKey(x => x.rolId)
-                 .OnDelete(DeleteBehavior.Cascade);
+                e.Property(x => x.leer).HasDefaultValue(false);
+                e.Property(x => x.agregar).HasDefaultValue(false);
+                e.Property(x => x.actualizar).HasDefaultValue(false);
+                e.Property(x => x.eliminar).HasDefaultValue(false);
 
-                // FK a Permiso
-                e.HasOne(x => x.Permiso)
-                 .WithMany()
-                 .HasForeignKey(x => x.permisoId)
-                 .OnDelete(DeleteBehavior.Cascade);
+                e.HasOne(x => x.Rol).WithMany(r => r.rolPermisos).HasForeignKey(x => x.rolId).OnDelete(DeleteBehavior.Cascade);
+                e.HasOne(x => x.Permiso).WithMany(p => p.rolPermisos).HasForeignKey(x => x.permisoId).OnDelete(DeleteBehavior.Cascade);
             });
         }
     }
-}
+    }
+

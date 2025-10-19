@@ -22,18 +22,19 @@ namespace CONATRADEC_API.Models
     [Table("RolPermiso", Schema = "dbo")]
     public class RolPermiso
     {
-        // PK compuesta (se configura en OnModelCreating)
-        [ForeignKey(nameof(Rol))] public int rolId { get; set; }
-        [ForeignKey(nameof(Permiso))] public int permisoId { get; set; }
+        [Key, DatabaseGenerated(DatabaseGeneratedOption.Identity)]
+        public int rolPermisoId { get; set; }
 
         public bool leer { get; set; }
         public bool agregar { get; set; }
         public bool actualizar { get; set; }
         public bool eliminar { get; set; }
 
+        public int rolId { get; set; }
+        public int permisoId { get; set; }
+
         public Rol Rol { get; set; } = null!;
         public Permiso Permiso { get; set; } = null!;
-
 
     }
 }
