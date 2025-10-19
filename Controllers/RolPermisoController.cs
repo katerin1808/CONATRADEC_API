@@ -84,123 +84,90 @@ namespace CONATRADEC_API.Controllers
             return Ok(result);
         }
 
-
-        [HttpPut("actualizar-permisos", Name = "ActualizarRolConPermisos")]
-        public async Task<ActionResult<IEnumerable<RolConPermisosDto>>> ActualizarRolConPermisos(
-    [FromBody] List<RolConPermisosDto> rolesConPermisos)
-        {
-            if (rolesConPermisos == null || rolesConPermisos.Count == 0)
-                return BadRequest("La lista de roles con permisos está vacía o es inválida.");
-
-            using var trx = await _db.Database.BeginTransactionAsync();
-            try
+            [HttpPut("actualizar-permisos")]
+            public async Task<IActionResult> ActualizarPermisos([FromBody] List<RolConPermisosDto> items)
             {
-                var rolIds = rolesConPermisos.Select(r => r.rol.rolId).Distinct().ToList();
-                var permisoIdsUs = rolesConPermisos.SelectMany(r => r.permisos.Select(p => p.permisoId)).Distinct().ToList();
+                if (items is null || items.Count == 0)
+                    return BadRequest("El payload está vacío.");
 
-                var rolesValidos = await _db.Roles.Where(r => rolIds.Contains(r.rolId)).Select(r => r.rolId).ToListAsync();
-                var permisosValidos = await _db.Permisos.Where(p => permisoIdsUs.Contains(p.permisoId)).Select(p => p.permisoId).ToListAsync();
-
-                // Cargamos relaciones existentes para acceso O(1)
-                var existentes = await _db.RolPermisos.Where(x => rolIds.Contains(x.rolId)).ToListAsync();
-                var map = existentes.ToDictionary(k => (k.rolId, k.permisoId), v => v);
-
-                foreach (var rolDto in rolesConPermisos)
+                using var trx = await _db.Database.BeginTransactionAsync();
+                try
                 {
-                    if (!rolesValidos.Contains(rolDto.rol.rolId)) continue;
+                    // IDs presentes en el payload
+                    var rolIds = items.Select(i => i.rol.rolId).Distinct().ToList();
+                    var permisoIds = items.SelectMany(i => i.permisos.Select(p => p.permisoId)).Distinct().ToList();
 
-                    foreach (var permisoDto in rolDto.permisos)
+                    // Validar existencia (evita errores de FK)
+                    var rolesSet = (await _db.Roles
+                        .Where(r => rolIds.Contains(r.rolId))
+                        .Select(r => r.rolId)
+                        .ToListAsync()).ToHashSet();
+
+                    var permisosSet = (await _db.Permisos
+                        .Where(p => permisoIds.Contains(p.permisoId))
+                        .Select(p => p.permisoId)
+                        .ToListAsync()).ToHashSet();
+
+                    // Relaciones existentes de los roles involucrados
+                    var existentes = await _db.RolPermisos
+                        .Where(rp => rolIds.Contains(rp.rolId))
+                        .ToListAsync();
+
+                    var map = existentes.ToDictionary(k => (k.rolId, k.permisoId), v => v);
+
+                    // Upsert por cada (rol, permiso) — inserta aunque todos sean false
+                    foreach (var item in items)
                     {
-                        if (!permisosValidos.Contains(permisoDto.permisoId)) continue;
+                        if (!rolesSet.Contains(item.rol.rolId)) continue;
 
-                        var key = (rolDto.rol.rolId, permisoDto.permisoId);
-                        var alguno = permisoDto.leer || permisoDto.agregar || permisoDto.actualizar || permisoDto.eliminar;
-
-                        switch (rolDto.modo)
+                        foreach (var permiso in item.permisos)
                         {
-                            case ModoOperacionRol.Agregar:
-                                // Solo crear si NO existe y hay al menos un flag en true
-                                if (alguno && !map.ContainsKey(key))
-                                {
-                                    var nuevo = new RolPermiso
-                                    {
-                                        rolId = rolDto.rol.rolId,
-                                        permisoId = permisoDto.permisoId,
-                                        leer = permisoDto.leer,
-                                        agregar = permisoDto.agregar,
-                                        actualizar = permisoDto.actualizar,
-                                        eliminar = permisoDto.eliminar
-                                    };
-                                    _db.RolPermisos.Add(nuevo);
-                                    map[key] = nuevo;
-                                }
-                                // Si existe, se ignora (no se actualiza ni elimina)
-                                break;
+                            if (!permisosSet.Contains(permiso.permisoId)) continue;
 
-                            case ModoOperacionRol.Actualizar:
-                                // Solo actualizar si YA existe
-                                if (map.TryGetValue(key, out var rpAct))
-                                {
-                                    rpAct.leer = permisoDto.leer;
-                                    rpAct.agregar = permisoDto.agregar;
-                                    rpAct.actualizar = permisoDto.actualizar;
-                                    rpAct.eliminar = permisoDto.eliminar;
-                                    _db.RolPermisos.Update(rpAct);
-                                }
-                                // Si no existe, se ignora (no se crea)
-                                break;
+                            var key = (item.rol.rolId, permiso.permisoId);
 
-                            case ModoOperacionRol.Reemplazar:
-                            default:
-                                // Upsert: crea o actualiza; y si todos false y existe, elimina
-                                if (alguno)
+                            if (map.TryGetValue(key, out var rp)) // UPDATE
+                            {
+                                rp.leer = permiso.leer;
+                                rp.agregar = permiso.agregar;
+                                rp.actualizar = permiso.actualizar;
+                                rp.eliminar = permiso.eliminar;
+                                _db.RolPermisos.Update(rp);
+                            }
+                            else // INSERT (aunque todo sea false)
+                            {
+                                var nuevo = new RolPermiso
                                 {
-                                    if (!map.TryGetValue(key, out var rpRep))
-                                    {
-                                        rpRep = new RolPermiso
-                                        {
-                                            rolId = rolDto.rol.rolId,
-                                            permisoId = permisoDto.permisoId,
-                                            leer = permisoDto.leer,
-                                            agregar = permisoDto.agregar,
-                                            actualizar = permisoDto.actualizar,
-                                            eliminar = permisoDto.eliminar
-                                        };
-                                        _db.RolPermisos.Add(rpRep);
-                                        map[key] = rpRep;
-                                    }
-                                    else
-                                    {
-                                        rpRep.leer = permisoDto.leer;
-                                        rpRep.agregar = permisoDto.agregar;
-                                        rpRep.actualizar = permisoDto.actualizar;
-                                        rpRep.eliminar = permisoDto.eliminar;
-                                        _db.RolPermisos.Update(rpRep);
-                                    }
-                                }
-                                else if (map.TryGetValue(key, out var rpDel))
-                                {
-                                    _db.RolPermisos.Remove(rpDel);
-                                    map.Remove(key);
-                                }
-                                break;
+                                    rolId = item.rol.rolId,
+                                    permisoId = permiso.permisoId,
+                                    leer = permiso.leer,
+                                    agregar = permiso.agregar,
+                                    actualizar = permiso.actualizar,
+                                    eliminar = permiso.eliminar
+                                };
+                                _db.RolPermisos.Add(nuevo);
+                                map[key] = nuevo;
+                            }
                         }
                     }
+
+                    await _db.SaveChangesAsync();
+                    await trx.CommitAsync();
+
+                    // Solo confirmación
+                    return Ok();
+                    // Si prefieres sin body:
+                    // return NoContent();
                 }
-
-                await _db.SaveChangesAsync();
-                await trx.CommitAsync();
-
-                // Devuelve SIEMPRE la misma lista completa
-                var result = await ListarRolConPermisosStream();
-                return Ok(result);
+                catch (Exception)
+                {
+                    await trx.RollbackAsync();
+                    throw;
+                }
             }
-            catch
-            {
-                await trx.RollbackAsync();
-                throw;
-            }
-
         }
-}
-}
+ 
+
+
+    }
+

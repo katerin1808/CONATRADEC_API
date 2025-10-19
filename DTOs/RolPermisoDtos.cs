@@ -20,7 +20,7 @@ namespace CONATRADEC_API.DTOs
     {
         public RolLiteDto rol { get; set; } = null!;
         public List<InterfazPermisoDto> permisos { get; set; } = new();
-        public ModoOperacionRol modo { get; set; } = ModoOperacionRol.Reemplazar;
+      
     }
 
     public class RolConPermisoDto
@@ -46,13 +46,7 @@ namespace CONATRADEC_API.DTOs
         public bool actualizar { get; set; }
         public bool eliminar { get; set; }
     }
-    public enum ModoOperacionRol
-    {
-        Agregar = 1,
-        Actualizar = 2,
-        Reemplazar = 3
-    }
-
+  
 }
 
 
