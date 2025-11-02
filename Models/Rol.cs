@@ -20,8 +20,11 @@ namespace CONATRADEC_API.Models
         public string descripcionRol { get; set; } = null!;
         public bool activo { get; set; } = true; // Valor por defecto al crear
 
-        public ICollection<RolPermiso> rolPermisos { get; set; } = new List<RolPermiso>();
+        public ICollection<RolInterfaz> rolInterfaz { get; set; } = new List<RolInterfaz>();
+
+        public ICollection<Usuario> Usuarios { get; set; } = new List<Usuario>();
     }
 }
+
 
 

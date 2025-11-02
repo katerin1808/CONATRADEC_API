@@ -5,25 +5,34 @@ namespace CONATRADEC_API.Models
 {
 
 
-    [Table("Permiso", Schema = "dbo")]
-    public class Permiso
+
+    [Table("interfaz", Schema = "dbo")]
+
+    public class Interfaz
     {
+
+
         [Key, DatabaseGenerated(DatabaseGeneratedOption.Identity)]
-        public int permisoId { get; set; }
+        public int interfazId { get; set; }
 
         [Required, MaxLength(100)]
-        public string nombrePermiso { get; set; } = null!;
+        public string nombreInterfaz { get; set; } = null!;
+        public string descripcionInterfaz { get; set; } = null!;
 
         public bool activo { get; set; } = true;
 
-        public ICollection<RolPermiso> rolPermisos { get; set; } = new List<RolPermiso>();
+        public ICollection<RolInterfaz> rolinterfaz{ get; set; } = new List<RolInterfaz>();
+
+
+
     }
 
-    [Table("RolPermiso", Schema = "dbo")]
-    public class RolPermiso
+
+    [Table("RolInterfaz", Schema = "dbo")]
+    public class RolInterfaz
     {
         [Key, DatabaseGenerated(DatabaseGeneratedOption.Identity)]
-        public int rolPermisoId { get; set; }
+        public int rolInterfazId { get; set; }
 
         public bool leer { get; set; }
         public bool agregar { get; set; }
@@ -31,10 +40,10 @@ namespace CONATRADEC_API.Models
         public bool eliminar { get; set; }
 
         public int rolId { get; set; }
-        public int permisoId { get; set; }
+        public int interfazId { get; set; }
 
         public Rol Rol { get; set; } = null!;
-        public Permiso Permiso { get; set; } = null!;
+        public Interfaz Interfaces { get; set; } = null!;  
 
     }
 }

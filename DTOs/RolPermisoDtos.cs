@@ -15,8 +15,8 @@ namespace CONATRADEC_API.DTOs
     // Permiso con acciones
     public class InterfazPermisoDto
     {
-        public int permisoId { get; set; }
-        public string nombrePermiso { get; set; } = string.Empty;
+        public int interfazId { get; set; }
+        public string nombreInterfaz { get; set; } = string.Empty;
 
         public bool leer { get; set; }
         public bool agregar { get; set; }
@@ -24,11 +24,11 @@ namespace CONATRADEC_API.DTOs
         public bool eliminar { get; set; }
     }
 
-    // Rol con su lista de permisos (este es el que usa el controller)
-    public class RolConPermisosDto
+    // Rol con su lista de interfaz (este es el que usa el controller)
+    public class RolConInterfazDto
     {
         public RolLiteDto rol { get; set; } = new();
-        public List<InterfazPermisoDto> permisos { get; set; } = new();
+        public List<InterfazPermisoDto> interfaz{ get; set; } = new();
     }
 
     // (Opcional) DTO para filtrar en el stream POST
@@ -37,13 +37,13 @@ namespace CONATRADEC_API.DTOs
         public int? rolId { get; set; }
         public string? nombreRol { get; set; }
         public bool incluirInactivosRol { get; set; } = false;
-        public bool incluirInactivosPermiso { get; set; } = false;
+        public bool incluirInactivosInterfaz { get; set; } = false;
     }
 
-    public class AgregarPermisoPorNombreRequest
+    public class AgregarInterfazPorNombreRequest
     {
         public string nombreRol { get; set; } = string.Empty;
-        public string nombrePermiso { get; set; } = string.Empty;
+        public string nombreInterfaz { get; set; } = string.Empty;
 
         public bool leer { get; set; }
         public bool agregar { get; set; }
