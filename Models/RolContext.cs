@@ -70,26 +70,43 @@ namespace CONATRADEC_API.Models
                 e.HasIndex(p => p.NombrePais);                        // búsqueda rápida
             });
 
-            modelBuilder.Entity<Departamento>(e =>
+            modelBuilder.Entity<Departamento>(entity =>
             {
-                e.Property(d => d.NombreDepartamento).HasMaxLength(80).IsRequired();
-                e.Property(d => d.PaisId).IsRequired();
+                entity.ToTable("departamento");
 
-                // Relación requerida: Departamento -> Pais
-                e.HasOne(d => d.Pais)
-                 .WithMany(p => p.Departamentos)
-                 .HasForeignKey(d => d.PaisId)
-                 .IsRequired()
-                 .OnDelete(DeleteBehavior.Restrict); // sin cascada
+                entity.HasKey(d => d.DepartamentoId);
+                entity.Property(d => d.DepartamentoId).HasColumnName("departamentoId");
 
-                // Nombre único dentro de un país
-                e.HasIndex(d => new { d.PaisId, d.NombreDepartamento }).IsUnique();
+                entity.Property(d => d.NombreDepartamento)
+                      .IsRequired()
+                      .HasMaxLength(80)
+                      .HasColumnName("nombreDepartamento");
+
+                entity.Property(d => d.Activo)
+                      .IsRequired()
+                      .HasColumnName("activo")
+                      .HasDefaultValue(true);
+
+                entity.Property(d => d.PaisId)
+                      .IsRequired()
+                      .HasColumnName("paisId");
+
+                // Relación requerida: Departamento → Pais
+                entity.HasOne(d => d.Pais)
+                      .WithMany(p => p.Departamentos)
+                      .HasForeignKey(d => d.PaisId)
+                      .OnDelete(DeleteBehavior.Restrict)
+                      .IsRequired();
+
+                // Índice único por país
+                entity.HasIndex(d => new { d.PaisId, d.NombreDepartamento })
+                      .IsUnique();
             });
 
 
             modelBuilder.Entity<Municipio>(e =>
             {
-                e.Property(m => m.NombreMunicipio).HasMaxLength(80).IsRequired();
+                e.Property(m => m.NombreMunicipio).HasMaxLength(80).IsRequired() ;
                 e.Property(m => m.DepartamentoId).IsRequired();
 
                 // Relación requerida: Municipio -> Departamento
