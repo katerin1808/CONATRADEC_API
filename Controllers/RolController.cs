@@ -11,9 +11,9 @@ namespace CONATRADEC_API.Controllers
     public class RolController : ControllerBase
     {
 
-        private readonly RolContext _context;
+        private readonly DBContext _context;
 
-        public RolController(RolContext context)
+        public RolController(DBContext context)
         {
             _context = context;
         }

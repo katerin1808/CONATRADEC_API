@@ -12,8 +12,8 @@ namespace CONATRADEC_API.Controllers
     [Route("api/rol-interfaz")]
     public class RolInterfazController : ControllerBase
     {
-        private readonly RolContext _db;
-        public RolInterfazController(RolContext db) => _db = db;
+        private readonly DBContext _db;
+        public RolInterfazController(DBContext db) => _db = db;
 
         // Helper: resolver IDs por nombre (sin exponer IDs al front)
         private async Task<(Rol rol, Interfaz interfaz)?> ResolveIdsAsync(string nombreRol, string nombreInterfaz)

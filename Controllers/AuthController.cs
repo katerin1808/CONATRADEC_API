@@ -16,8 +16,8 @@ namespace CONATRADEC_API.Controllers
     public class AuthController : Controller
     {
 
-        private readonly RolContext _db;
-        public AuthController(RolContext db) => _db = db;
+        private readonly DBContext _db;
+        public AuthController(DBContext db) => _db = db;
 
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] LoginRequest req)

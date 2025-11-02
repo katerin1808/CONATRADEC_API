@@ -3,9 +3,9 @@ using static CONATRADEC_API.Models.RolInterfaz;
 
 namespace CONATRADEC_API.Models
 {
-    public class RolContext: DbContext  
+    public class DBContext: DbContext  
     {
-        public RolContext(DbContextOptions<RolContext> options) : base(options)
+        public DBContext(DbContextOptions<DBContext> options) : base(options)
         {
         }
 
@@ -17,7 +17,7 @@ namespace CONATRADEC_API.Models
         public DbSet<Pais> Pais { get; set; }
         public DbSet<Departamento> Departamento { get; set; }
 
-        public DbSet<Municipio> Municipio { get; set; } // 👈 agregamos la tabla Cargo
+        public DbSet<Municipio> Municipios => Set<Municipio>();
 
         public DbSet<Usuario> Usuarios => Set<Usuario>();
 
@@ -104,20 +104,28 @@ namespace CONATRADEC_API.Models
             });
 
 
+            // ====== MUNICIPIO ======
             modelBuilder.Entity<Municipio>(e =>
             {
-                e.Property(m => m.NombreMunicipio).HasMaxLength(80).IsRequired() ;
-                e.Property(m => m.DepartamentoId).IsRequired();
+                e.ToTable("municipio");
 
-                // Relación requerida: Municipio -> Departamento
+                e.HasKey(m => m.MunicipioId);
+                e.Property(m => m.MunicipioId).HasColumnName("municipioId");
+
+                e.Property(m => m.NombreMunicipio).IsRequired().HasMaxLength(80).HasColumnName("nombreMunicipio");
+                e.Property(m => m.Activo).IsRequired().HasColumnName("activo");
+                e.Property(m => m.DepartamentoId).IsRequired().HasColumnName("departamentoId");
+
                 e.HasOne(m => m.Departamento)
                  .WithMany(d => d.Municipios)
                  .HasForeignKey(m => m.DepartamentoId)
-                 .IsRequired()
-                 .OnDelete(DeleteBehavior.Restrict);
+                 .OnDelete(DeleteBehavior.Restrict)
+                 .IsRequired();
 
-                // Nombre único dentro de un departamento
-                e.HasIndex(m => new { m.DepartamentoId, m.NombreMunicipio }).IsUnique();
+                // Unicidad GLOBAL por nombre de municipio (coherente con depto)
+                // Si lo quieres por departamento, cámbialo a:
+                // e.HasIndex(m => new { m.DepartamentoId, m.NombreMunicipio }).IsUnique();
+                e.HasIndex(m => m.NombreMunicipio).IsUnique();
             });
 
             modelBuilder.Entity<Usuario>(e =>

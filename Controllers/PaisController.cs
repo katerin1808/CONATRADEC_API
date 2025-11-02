@@ -14,8 +14,8 @@ namespace CONATRADEC_API.Controllers
 
 
 
-        private readonly RolContext _ctx;
-        public PaisController( RolContext ctx) => _ctx = ctx;
+        private readonly DBContext _ctx;
+        public PaisController( DBContext ctx) => _ctx = ctx;
         [HttpGet]
         public async Task<ActionResult<IEnumerable<PaisResponse>>> GetAll()
         {

@@ -12,8 +12,8 @@ namespace CONATRADEC_API.Controllers
     [Route("api/departamento")]
     public class DepartamentoController : Controller
     {
-        private readonly RolContext _ctx;
-        public DepartamentoController(RolContext ctx) => _ctx = ctx;
+        private readonly DBContext _ctx;
+        public DepartamentoController(DBContext ctx) => _ctx = ctx;
 
 
         // =========================
@@ -156,7 +156,7 @@ namespace CONATRADEC_API.Controllers
                 return NotFound("El departamento indicado no existe.");
 
             // 2️⃣ Verificar si tiene municipios activos asociados
-            bool tieneMunicipios = await _ctx.Municipio
+            bool tieneMunicipios = await _ctx.Municipios
                 .AnyAsync(m => m.DepartamentoId == id && m.Activo);
 
             if (tieneMunicipios)

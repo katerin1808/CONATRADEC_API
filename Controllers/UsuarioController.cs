@@ -15,8 +15,8 @@ namespace CONATRADEC_API.Controllers
     {
 
 
-        private readonly RolContext _db;
-        public UsuarioController(RolContext db) => _db = db;
+        private readonly DBContext _db;
+        public UsuarioController(DBContext db) => _db = db;
 
        
 

@@ -10,16 +10,21 @@ namespace CONATRADEC_API.Models
 
         [Key]
         [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
+        [Column("municipioId")]
         public int MunicipioId { get; set; }
 
         [Required, MaxLength(80)]
+        [Column("nombreMunicipio")]
         public string NombreMunicipio { get; set; } = string.Empty;
 
-        public bool Activo { get; set; } = true;
+        [Required]
+        [Column("activo")]
+        public bool Activo { get; set; }
 
-        // FK REQUERIDA → Departamento
-        [ForeignKey(nameof(Departamento))]
+        // FK → departamento
+        [Required]
+        [Column("departamentoId")]
         public int DepartamentoId { get; set; }
-        public Departamento Departamento{ get; set; } = null!;
+        public Departamento Departamento { get; set; } = null!;
     }
 }
