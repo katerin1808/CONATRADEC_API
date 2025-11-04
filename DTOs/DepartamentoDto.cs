@@ -20,8 +20,7 @@ namespace CONATRADEC_API.DTOs
             [Required, MaxLength(80)]
             public string NombreDepartamento { get; set; } = string.Empty;
 
-            [Required]
-            public int PaisId { get; set; } // permite mover el dpto a otro país si aplica
+           
         }
 
         public class DepartamentoResponse

@@ -20,8 +20,6 @@ namespace CONATRADEC_API.DTOs
             [Required, MaxLength(80)]
             public string NombreMunicipio { get; set; } = string.Empty;
 
-            [Required]
-            public int DepartamentoId { get; set; }
         }
 
         public class MunicipioResponse
