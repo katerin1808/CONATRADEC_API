@@ -234,53 +234,63 @@ namespace CONATRADEC_API.Controllers
                 return BadRequest("Debe enviar nombreRol y nombreInterfaz.");
             }
 
-            var nombreRol = req.nombreRol.Trim();
-            var nombreInterfaz = req.nombreInterfaz.Trim();
-
-            var rol = await _db.Roles.FirstOrDefaultAsync(r => r.nombreRol == nombreRol);
-            if (rol is null)
-                return NotFound($"No se encontró el rol '{nombreRol}'.");
-
-            var interfaz = await _db.Interfaz.FirstOrDefaultAsync(p => p.nombreInterfaz == nombreInterfaz);
-            if (interfaz is null)
-                return NotFound($"No se encontró la interfaz '{nombreInterfaz}'.");
-
-            var existente = await _db.RolInterfaz
-                .FirstOrDefaultAsync(rp => rp.rolId == rol.rolId && rp.interfazId == interfaz.interfazId);
-
-            var accion = "actualizado";
-            if (existente is null)
+            await using var trx = await _db.Database.BeginTransactionAsync(); // BEGIN TRAN
+            try
             {
-                var nuevo = new RolInterfaz
+                var nombreRol = req.nombreRol.Trim();
+                var nombreInterfaz = req.nombreInterfaz.Trim();
+
+                var rol = await _db.Roles.FirstOrDefaultAsync(r => r.nombreRol == nombreRol);
+                if (rol is null)
+                    return NotFound($"No se encontró el rol '{nombreRol}'.");
+
+                var interfaz = await _db.Interfaz.FirstOrDefaultAsync(p => p.nombreInterfaz == nombreInterfaz);
+                if (interfaz is null)
+                    return NotFound($"No se encontró la interfaz '{nombreInterfaz}'.");
+
+                var existente = await _db.RolInterfaz
+                    .FirstOrDefaultAsync(rp => rp.rolId == rol.rolId && rp.interfazId == interfaz.interfazId);
+
+                var accion = "actualizado";
+                if (existente is null)
                 {
-                    rolId = rol.rolId,
-                    interfazId = interfaz.interfazId,
-                    leer = req.leer,
-                    agregar = req.agregar,
-                    actualizar = req.actualizar,
-                    eliminar = req.eliminar
-                };
-                _db.RolInterfaz.Add(nuevo);
-                accion = "insertado";
-            }
-            else
-            {
-                existente.leer = req.leer;
-                existente.agregar = req.agregar;
-                existente.actualizar = req.actualizar;
-                existente.eliminar = req.eliminar;
-                _db.RolInterfaz.Update(existente);
-            }
+                    var nuevo = new RolInterfaz
+                    {
+                        rolId = rol.rolId,
+                        interfazId = interfaz.interfazId,
+                        leer = req.leer,
+                        agregar = req.agregar,
+                        actualizar = req.actualizar,
+                        eliminar = req.eliminar
+                    };
+                    _db.RolInterfaz.Add(nuevo);
+                    accion = "insertado";
+                }
+                else
+                {
+                    existente.leer = req.leer;
+                    existente.agregar = req.agregar;
+                    existente.actualizar = req.actualizar;
+                    existente.eliminar = req.eliminar;
+                    _db.RolInterfaz.Update(existente);
+                }
 
-            await _db.SaveChangesAsync();
+                await _db.SaveChangesAsync();
+                await trx.CommitAsync(); // COMMIT
 
-            return Ok(new
+                return Ok(new
+                {
+                    mensaje = $"Interfaz {accion} correctamente.",
+                    rol = new { rol.rolId, rol.nombreRol },
+                    interfaz = new { interfaz.interfazId, interfaz.nombreInterfaz },
+                    valores = new { req.leer, req.agregar, req.actualizar, req.eliminar }
+                });
+            }
+            catch
             {
-                mensaje = $"Interfaz {accion} correctamente.",
-                rol = new { rol.rolId, rol.nombreRol },
-                interfaz = new { interfaz.interfazId, interfaz.nombreInterfaz },
-                valores = new { req.leer, req.agregar, req.actualizar, req.eliminar }
-            });
+                await trx.RollbackAsync(); // ROLLBACK
+                throw;
+            }
         }
 }
 }

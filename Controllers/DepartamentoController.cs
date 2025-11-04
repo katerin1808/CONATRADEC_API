@@ -89,7 +89,7 @@ namespace CONATRADEC_API.Controllers
             var pais = await _ctx.Pais
                 .AsNoTracking()
                 .Where(p => p.PaisId == paisId && p.Activo)
-                .Select(p => new { p.PaisId, p.NombrePais })
+                .Select(p => new { p.PaisId, p.NombrePais , p.CodigoISOPais})
                 .SingleOrDefaultAsync();
 
             if (pais is null)
