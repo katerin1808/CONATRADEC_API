@@ -10,18 +10,19 @@ namespace CONATRADEC_API.Controllers
     [ApiController]
     [Route("api/pais")]
     public class PaisController : ControllerBase
-        {
-
-
-
+    {
         private readonly DBContext _ctx;
-        public PaisController( DBContext ctx) => _ctx = ctx;
+        public PaisController(DBContext ctx) => _ctx = ctx;
+
+        // ==========================================================
+        // LISTAR SOLO ACTIVOS
+        // ==========================================================
         [HttpGet]
         public async Task<ActionResult<IEnumerable<PaisResponse>>> GetAll()
         {
             var data = await _ctx.Pais
                 .AsNoTracking()
-                .Where(p => p.Activo)                 // solo los activos
+                .Where(p => p.Activo)
                 .OrderBy(p => p.NombrePais)
                 .Select(p => new PaisResponse
                 {
@@ -35,72 +36,183 @@ namespace CONATRADEC_API.Controllers
             return Ok(data);
         }
 
-        [HttpPost("Crear")]
-        public async Task<ActionResult> Create(PaisRequest req)
+        // ==========================================================
+        // CREAR (con transacción)
+        // ==========================================================
+        [HttpPost("crear")]
+        [Consumes("application/json")]
+        public async Task<ActionResult> Create([FromBody] PaisRequest req)
         {
-            // Normaliza
-            var iso = req.CodigoISOPais?.Trim().ToUpperInvariant();
-            var nombre = req.NombrePais?.Trim();
+            // Normalizar entradas
+            var nombre = req?.NombrePais?.ReplaceLineEndings(" ").Trim();
+            var iso = req?.CodigoISOPais?.Trim().ToUpperInvariant();
 
-            // Revalida por si vinieron espacios
             if (string.IsNullOrWhiteSpace(nombre))
                 return BadRequest("El nombre del país es requerido.");
 
-            if (string.IsNullOrWhiteSpace(iso) || iso.Length != 2|| !iso.All(char.IsLetter))
-                return BadRequest("El Código ISO debe tener exactamente 2 letras (A-Z).");
+            if (string.IsNullOrWhiteSpace(iso) || iso.Length != 3 || !iso.All(char.IsLetter))
+                return BadRequest("El Código ISO debe tener exactamente 3 letras (A-Z).");
 
-            // Duplicado por ISO
-            bool isoDup = await _ctx.Pais.AnyAsync(p => p.CodigoISOPais == iso);
-            if (isoDup) return Conflict("Ya existe un país con ese Código ISO.");
-
-            var entity = new Pais
+            await using var tx = await _ctx.Database.BeginTransactionAsync();
+            try
             {
-                NombrePais = nombre,
-                CodigoISOPais = iso,
-                Activo = true
-            };
+                // Duplicados (case-insensitive)
+                bool isoDup = await _ctx.Pais.AnyAsync(p => p.CodigoISOPais.ToUpper() == iso);
+                if (isoDup) return Conflict("Ya existe un país con ese Código ISO.");
 
-            _ctx.Pais.Add(entity);
-            await _ctx.SaveChangesAsync();
+                bool nombreDup = await _ctx.Pais
+                    .AnyAsync(p => p.NombrePais.ToLower() == nombre.ToLower());
+                if (nombreDup) return Conflict("Ya existe un país con ese nombre.");
 
-            return Ok(new
+                var entity = new Pais
+                {
+                    NombrePais = nombre,
+                    CodigoISOPais = iso,
+                    Activo = true
+                };
+
+                _ctx.Pais.Add(entity);
+                await _ctx.SaveChangesAsync();      // ID real se genera aquí
+                await tx.CommitAsync();
+
+                return Ok(new
+                {
+                    message = "País creado exitosamente",
+                    pais = new
+                    {
+                        entity.PaisId,
+                        entity.NombrePais,
+                        entity.CodigoISOPais
+                    }
+                });
+            }
+            catch (DbUpdateException ex)
             {
-                message = "País creado exitosamente",
-                pais = new { entity.PaisId, entity.NombrePais, entity.CodigoISOPais }
-            });
+                await tx.RollbackAsync();
+                _ctx.ChangeTracker.Clear();
+                return BadRequest($"Error al guardar el país. Detalle: {ex.InnerException?.Message ?? ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                await tx.RollbackAsync();
+                _ctx.ChangeTracker.Clear();
+                return StatusCode(500, $"Error interno al crear el país: {ex.Message}");
+            }
         }
 
-        [HttpPut("actualizarPais{id:int}")]
-        public async Task<ActionResult> Update(int id, PaisRequest req)
+        // ==========================================================
+        // ACTUALIZAR (con transacción)
+        // ==========================================================
+        [HttpPut("actualizarPais/{id:int}")]
+        [Consumes("application/json")]
+        public async Task<ActionResult> Update(int id, [FromBody] PaisRequest req)
         {
-            var entity = await _ctx.Pais.FindAsync(id);
-            if (entity is null) return NotFound();
+            if (req is null) return BadRequest("Body vacío o JSON mal formado.");
 
-            string iso = req.CodigoISOPais.Trim().ToUpperInvariant();
-            bool isoDup = await _ctx.Pais.AnyAsync(p => p.PaisId != id && p.CodigoISOPais == iso);
-            if (isoDup) return Conflict("Ya existe un país con ese Código ISO.");
+            var nombre = req.NombrePais?.ReplaceLineEndings(" ").Trim();
+            var iso = req.CodigoISOPais?.Trim().ToUpperInvariant();
 
-            entity.NombrePais = req.NombrePais.Trim();
-            entity.CodigoISOPais = iso;
-          
+            if (string.IsNullOrWhiteSpace(nombre))
+                return BadRequest("El nombre del país es requerido.");
 
-            await _ctx.SaveChangesAsync();
-            return NoContent();
+            if (string.IsNullOrWhiteSpace(iso) || iso.Length != 3 || !iso.All(char.IsLetter))
+                return BadRequest("El Código ISO debe tener exactamente 3 letras (A-Z).");
+
+            await using var tx = await _ctx.Database.BeginTransactionAsync();
+            try
+            {
+                var entity = await _ctx.Pais.FindAsync(id);
+                if (entity is null) return NotFound("El país indicado no existe.");
+
+                // Duplicados excluyendo el propio registro
+                bool isoDup = await _ctx.Pais.AnyAsync(p =>
+                    p.PaisId != id && p.CodigoISOPais.ToUpper() == iso);
+                if (isoDup) return Conflict("Ya existe un país con ese Código ISO.");
+
+                bool nombreDup = await _ctx.Pais.AnyAsync(p =>
+                    p.PaisId != id && p.NombrePais.ToLower() == nombre.ToLower());
+                if (nombreDup) return Conflict("Ya existe un país con ese nombre.");
+
+                entity.NombrePais = nombre;
+                entity.CodigoISOPais = iso;
+
+                await _ctx.SaveChangesAsync();
+                await tx.CommitAsync();
+
+                return Ok(new
+                {
+                    message = "País actualizado correctamente",
+                    pais = new
+                    {
+                        entity.PaisId,
+                        entity.NombrePais,
+                        entity.CodigoISOPais,
+                        entity.Activo
+                    }
+                });
+            }
+            catch (DbUpdateException ex)
+            {
+                await tx.RollbackAsync();
+                _ctx.ChangeTracker.Clear();
+                return BadRequest($"Error al actualizar el país. Detalle: {ex.InnerException?.Message ?? ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                await tx.RollbackAsync();
+                _ctx.ChangeTracker.Clear();
+                return StatusCode(500, $"Error interno al actualizar el país: {ex.Message}");
+            }
         }
 
+        // ==========================================================
+        // ELIMINAR (borrado lógico, con transacción)
+        // ==========================================================
         [HttpDelete("eliminarPais/{id:int}")]
         public async Task<ActionResult> Delete(int id)
         {
-            var entity = await _ctx.Pais.FindAsync(id);
-            if (entity is null) return NotFound();
+            await using var tx = await _ctx.Database.BeginTransactionAsync();
+            try
+            {
+                var entity = await _ctx.Pais.FindAsync(id);
+                if (entity is null) return NotFound("El país indicado no existe.");
 
-            entity.Activo = false; // borrado lógico
-            await _ctx.SaveChangesAsync();
-            return NoContent();
+                // (Opcional) Bloquear si tiene departamentos activos:
+                // bool tieneDptos = await _ctx.Departamento.AnyAsync(d => d.PaisId == id && d.Activo);
+                // if (tieneDptos) return Conflict("No se puede eliminar: el país tiene departamentos activos.");
+
+                entity.Activo = false; // borrado lógico
+                await _ctx.SaveChangesAsync();
+                await tx.CommitAsync();
+
+                return Ok(new
+                {
+                    message = $"El país '{entity.NombrePais}' fue eliminado correctamente (borrado lógico).",
+                    pais = new
+                    {
+                        entity.PaisId,
+                        entity.NombrePais,
+                        entity.CodigoISOPais,
+                        entity.Activo
+                    }
+                });
+            }
+            catch (DbUpdateException ex)
+            {
+                await tx.RollbackAsync();
+                _ctx.ChangeTracker.Clear();
+                return BadRequest($"Error al eliminar el país. Detalle: {ex.InnerException?.Message ?? ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                await tx.RollbackAsync();
+                _ctx.ChangeTracker.Clear();
+                return StatusCode(500, $"Error interno al eliminar el país: {ex.Message}");
+            }
         }
-    }
 
 
+}
 }
 
 

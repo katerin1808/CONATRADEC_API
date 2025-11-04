@@ -36,7 +36,7 @@ namespace CONATRADEC_API.Models
               // === Permiso ===
             modelBuilder.Entity<Interfaz>(e =>
             {
-                e.ToTable("Permiso", "dbo");
+                e.ToTable("interfaz", "dbo");
                 e.HasKey(x => x.interfazId);
                 e.HasIndex(x => x.nombreInterfaz).IsUnique(); // mismo estilo: índice único por nombre
                 e.Property(x => x.descripcionInterfaz).HasMaxLength(100).IsRequired();
@@ -44,7 +44,7 @@ namespace CONATRADEC_API.Models
 
             modelBuilder.Entity<RolInterfaz>(e =>
             {
-                e.ToTable("rolPermiso", "dbo");
+                e.ToTable("rolInterfaz", "dbo");
                 e.HasKey(x => x.rolInterfazId);
 
                 e.HasIndex(x => new { x.rolId, x.interfazId }).IsUnique();
@@ -67,7 +67,7 @@ namespace CONATRADEC_API.Models
 
                 // Únicos / índices
                 e.HasIndex(p => p.CodigoISOPais).IsUnique();          // ISO único
-                e.HasIndex(p => p.NombrePais);                        // búsqueda rápida
+                e.HasIndex(p => p.NombrePais).IsUnique(); ;                        // búsqueda rápida
             });
 
             modelBuilder.Entity<Departamento>(entity =>
@@ -133,21 +133,21 @@ namespace CONATRADEC_API.Models
                 e.ToTable("usuario", "dbo");
                 e.HasKey(x => x.UsuarioId);
 
-                e.Property(x => x.nombreUsuario).IsRequired().HasMaxLength(100);
-                e.Property(x => x.claveHashUsuario).IsRequired().HasMaxLength(400);
-                e.Property(x => x.telefonoUsuario).HasMaxLength(20);
-                e.Property(x => x.correoUsuario).HasMaxLength(200);
+                e.Property(x => x.NombreUsuario).IsRequired().HasMaxLength(100);
+                e.Property(x => x.ClaveHashUsuario).IsRequired().HasMaxLength(400);
+                e.Property(x => x.TelefonoUsuario).HasMaxLength(20);
+                e.Property(x => x.CorreoUsuario).HasMaxLength(200);
 
-                e.Property(x => x.activo)
+                e.Property(x => x.Activo)
                  .IsRequired()
                  .HasDefaultValue(true); // <- default en SQL
 
                 e.HasOne(x => x.Rol)
                  .WithMany(r => r.Usuarios)
-                 .HasForeignKey(x => x.rolId)
+                 .HasForeignKey(x => x.RolId)
                  .OnDelete(DeleteBehavior.Restrict);
 
-                e.HasIndex(x => x.nombreUsuario).IsUnique();
+                e.HasIndex(x => x.NombreUsuario).IsUnique();
             });
 
         }

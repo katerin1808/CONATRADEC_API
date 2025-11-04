@@ -7,30 +7,20 @@ namespace CONATRADEC_API.Models
     {
 
 
-        [Key]
-        
-        [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
         public int UsuarioId { get; set; }
+        public string NombreUsuario { get; set; } = default!;
+        public string ClaveHashUsuario { get; set; } = default!;
+        public string? IdentificacionUsuario { get; set; }
+        public string NombreCompletoUsuario { get; set; } = default!;
+        public string CorreoUsuario { get; set; } = default!;
+        public string? TelefonoUsuario { get; set; }
+        public DateOnly? FechaNacimientoUsuario { get; set; }
+        public bool Activo { get; set; } = true;
 
-        [Required, MaxLength(100)]
-        public string nombreUsuario { get; set; } = string.Empty;
+        public int RolId { get; set; }
+        public Rol Rol { get; set; } = default!;
 
-        // Guardaremos: PBKDF2$<iter>$<saltB64>$<hashB64>
-        [Required, MaxLength(400)]
-        public string claveHashUsuario { get; set; } = string.Empty;
-
-        [MinLength(6, ErrorMessage = "La contraseña debe tener al menos 6 caracteres.")]
-        [MaxLength(20)]
-        public string? telefonoUsuario { get; set; }
-
-        [MaxLength(200)]
-        public string? correoUsuario { get; set; }
-
-        public bool activo { get; set; } = true;
-
-        // FK
-        public int rolId { get; set; }
-        [ForeignKey(nameof(rolId))]
-        public Rol Rol { get; set; } = null!;
+        public int ProcedenciaId { get; set; }
+        public Procedencia Procedencia { get; set; } = default!;
     }
 }

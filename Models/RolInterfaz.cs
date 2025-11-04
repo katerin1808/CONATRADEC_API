@@ -45,5 +45,7 @@ namespace CONATRADEC_API.Models
         public Rol Rol { get; set; } = null!;
         public Interfaz Interfaces { get; set; } = null!;  
 
+
+
     }
 }

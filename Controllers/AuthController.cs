@@ -29,13 +29,13 @@ namespace CONATRADEC_API.Controllers
             var usuario = await _db.Usuarios
                 .AsNoTracking()
                 .Include(u => u.Rol)
-                .FirstOrDefaultAsync(u => u.nombreUsuario == req.nombreUsuario.Trim() && u.activo);
+                .FirstOrDefaultAsync(u => u.NombreUsuario == req.nombreUsuario.Trim() && u.Activo);
 
             if (usuario is null)
                 return Unauthorized(new { mensaje = "Usuario o contraseña incorrectos." });
 
             // Verificar hash de la contraseña
-            bool ok = Pbkdf2PasswordHasher.VerifyFromString(req.clavePlano, usuario.claveHashUsuario);
+            bool ok = Pbkdf2PasswordHasher.VerifyFromString(req.clavePlano, usuario.ClaveHashUsuario);
 
             if (!ok)
                 return Unauthorized(new { mensaje = "Usuario o contraseña incorrectos." });
@@ -47,7 +47,7 @@ namespace CONATRADEC_API.Controllers
                 usuario = new
                 {
                     usuario.UsuarioId,
-                    usuario.nombreUsuario,
+                    usuario.NombreUsuario,
                     rol = usuario.Rol?.nombreRol ?? "(sin rol)"
                 }
             });
