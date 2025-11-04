@@ -71,25 +71,40 @@ namespace CONATRADEC_API.Controllers
         // 2) LISTAR POR PAÍS (GET /api/departamento/por-pais/{paisId})
         //    Devuelve SOLO activos del país indicado
         // ===========================================
-        [HttpGet("Listar")]
-        public async Task<ActionResult<IEnumerable<DepartamentoResponse>>> GetAll()
+        // GET /api/departamento/por-pais/1
+        [HttpGet("por-pais/{paisId:int}")]
+        public async Task<ActionResult<IEnumerable<DepartamentoResponse>>> BuscarPorPais(int paisId)
         {
-            var data = await _ctx.Departamento
+            // 1️⃣ Verificar que el país existe y esté activo
+            var pais = await _ctx.Pais
                 .AsNoTracking()
-                .Include(d => d.Pais)
-                .OrderBy(d => d.Pais!.NombrePais)
-                .ThenBy(d => d.NombreDepartamento)
+                .Where(p => p.PaisId == paisId && p.Activo)
+                .Select(p => new { p.PaisId, p.NombrePais })
+                .SingleOrDefaultAsync();
+
+            if (pais is null)
+                return NotFound($"No existe un país activo con el ID {paisId}.");
+
+            // 2️⃣ Obtener departamentos activos del país
+            var departamentos = await _ctx.Departamento
+                .AsNoTracking()
+                .Where(d => d.PaisId == paisId && d.Activo)
+                .OrderBy(d => d.NombreDepartamento)
                 .Select(d => new DepartamentoResponse
                 {
                     DepartamentoId = d.DepartamentoId,
                     NombreDepartamento = d.NombreDepartamento,
-                    PaisId = d.PaisId,        // sigue existiendo internamente
-                    NombrePais = d.Pais!.NombrePais,
+                    // 👇 se incluye nombre del país asociado
+                    NombrePais = pais.NombrePais,
                     Activo = d.Activo
                 })
                 .ToListAsync();
 
-            return Ok(data);
+            // 3️⃣ Si el país no tiene departamentos activos
+            if (departamentos.Count == 0)
+                return NotFound($"El país '{pais.NombrePais}' no tiene departamentos activos.");
+
+            return Ok(departamentos);
         }
 
         // ===========================================

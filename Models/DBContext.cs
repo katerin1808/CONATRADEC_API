@@ -33,35 +33,57 @@ namespace CONATRADEC_API.Models
 
 
 
-              // === Permiso ===
+            // === Interfaz ===
             modelBuilder.Entity<Interfaz>(e =>
             {
                 e.ToTable("interfaz", "dbo");
                 e.HasKey(x => x.interfazId);
-                e.HasIndex(x => x.nombreInterfaz).IsUnique(); // mismo estilo: índice único por nombre
-                e.Property(x => x.descripcionInterfaz).HasMaxLength(100).IsRequired();
+
+                e.Property(x => x.nombreInterfaz)
+                 .HasMaxLength(100)
+                 .IsRequired();
+
+                e.Property(x => x.descripcionInterfaz)
+                 .HasMaxLength(100)
+                 .IsRequired();
+
+                e.Property(x => x.activo).IsRequired();
+
+                e.HasIndex(x => x.nombreInterfaz).IsUnique(); // único por nombre
             });
 
+            // === RolInterfaz ===
             modelBuilder.Entity<RolInterfaz>(e =>
             {
-                e.ToTable("rolInterfaz", "dbo");
-                e.HasKey(x => x.rolInterfazId);
+                e.ToTable("rolInteraz", "dbo");
+                e.HasKey(x => x.rolInterazId);
 
-                e.HasIndex(x => new { x.rolId, x.interfazId }).IsUnique();
+                e.HasIndex(x => new { x.rolId, x.interfazId }).IsUnique(); // evita duplicados rol+interfaz
 
                 e.Property(x => x.leer).HasDefaultValue(false);
                 e.Property(x => x.agregar).HasDefaultValue(false);
                 e.Property(x => x.actualizar).HasDefaultValue(false);
                 e.Property(x => x.eliminar).HasDefaultValue(false);
 
-                e.HasOne(x => x.Rol).WithMany(r => r.rolInterfaz).HasForeignKey(x => x.rolId).OnDelete(DeleteBehavior.Cascade);
-                e.HasOne(x => x.Interfaces).WithMany(p => p.rolinterfaz).HasForeignKey(x => x.interfazId).OnDelete(DeleteBehavior.Cascade);
-            });
+                e.HasOne(x => x.Rol)
+                 .WithMany(r => r.rolInterfaz)
+                 .HasForeignKey(x => x.rolId)
+                 .OnDelete(DeleteBehavior.Cascade);
 
+                // 👇 CAMBIO clave: usa la navegación renombrada a Interfaz
+                e.HasOne(x => x.Interfaz)
+                 .WithMany(p => p.rolinterfaz)
+                 .HasForeignKey(x => x.interfazId)
+                 .OnDelete(DeleteBehavior.Cascade);
+            });
 
 
             modelBuilder.Entity<Pais>(e =>
             {
+                e.ToTable("pais", "dbo");
+                e.HasKey(p => p.PaisId);
+
+                e.Property(p => p.PaisId).HasColumnName("paisId");
                 e.Property(p => p.NombrePais).HasMaxLength(80).IsRequired();
                 e.Property(p => p.CodigoISOPais).HasMaxLength(3).IsRequired();
 
