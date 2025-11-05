@@ -12,7 +12,7 @@ namespace CONATRADEC_API.DTOs
 
             // ISO 3166-1 alpha-3: exactamente 3 letras
             [Required, RegularExpression(@"^[A-Za-z]{3}$", ErrorMessage = "El Código ISO debe tener exactamente 3 letras (A-Z).")]
-            [StringLength(3, MinimumLength = 3, ErrorMessage = "El Código ISO debe tener exactamente 3 caracteres.")]
+            /*[StringLength(3, MinimumLength = 3, ErrorMessage = "El Código ISO debe tener exactamente 3 caracteres.")]*///lo deje comentariado porque repite el error -Ntreminio
             public string CodigoISOPais { get; set; } = string.Empty;
 
         }

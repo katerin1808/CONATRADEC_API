@@ -43,15 +43,17 @@ namespace CONATRADEC_API.Controllers
                     return BadRequest("No se puede crear: el país no existe o está inactivo.");
 
                 // Unicidad POR PAÍS y SOLO entre activos
+                /*EF.Functions.Collate(d.NombreDepartamento.ToUpper(), "Modern_Spanish_CI_AI") == nombre.ToUpper());
+                 * permite guardar todo en mayusculas respetando los signos de acentuacion */
                 bool duplicado = await _ctx.Departamento
                     .AnyAsync(d => d.PaisId == req.PaisId
                                 && d.Activo
-                                && d.NombreDepartamento.ToLower() == nombre!.ToLower());
+                                && EF.Functions.Collate(d.NombreDepartamento.ToUpper(), "Modern_Spanish_CI_AI") == nombre!.ToUpper());
                 if (duplicado) return Conflict("Ya existe un departamento activo con ese nombre en ese país.");
 
                 var entity = new Departamento
                 {
-                    NombreDepartamento = nombre!,
+                    NombreDepartamento = nombre!.ToUpper(),
                     PaisId = pais.PaisId,
                     Activo = true
                 };
@@ -136,11 +138,15 @@ namespace CONATRADEC_API.Controllers
                     .AnyAsync(d => d.DepartamentoId != id
                                 && d.PaisId == paisIdActual
                                 && d.Activo
-                                && d.NombreDepartamento.ToLower() == nombre!.ToLower());
+                                && EF.Functions.Collate(d.NombreDepartamento.ToUpper(), "Modern_Spanish_CI_AI") == nombre.ToUpper());
                 if (duplicadoActivoMismoPais)
                     return Conflict("Ya existe un departamento activo con ese nombre en este país.");
 
-                entity.NombreDepartamento = nombre!;
+                if (!entity.Activo)
+                    return Conflict("No se puede actualizar un departamento que está inactivo."
+     );
+
+                entity.NombreDepartamento = nombre!.ToUpper();
                 await _ctx.SaveChangesAsync();
                 await trx.CommitAsync();
 
@@ -183,6 +189,9 @@ namespace CONATRADEC_API.Controllers
 
                 if (entity is null)
                     return NotFound("El departamento indicado no existe.");
+
+                if (!entity.Activo)
+                    return Conflict("El departamento ya está inactivo.");
 
                 bool tieneMunicipios = await _ctx.Municipios
                     .AnyAsync(m => m.DepartamentoId == id && m.Activo);
