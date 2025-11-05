@@ -1,7 +1,9 @@
-﻿using System.ComponentModel.DataAnnotations;
+﻿using System;
+using System.ComponentModel.DataAnnotations;
 
 namespace CONATRADEC_API.DTOs
 {
+
     public class RolCreateDto
     {
         [Required(ErrorMessage = "El nombre del rol es obligatorio")]
@@ -14,6 +16,18 @@ namespace CONATRADEC_API.DTOs
         [MaxLength(500, ErrorMessage = "El campo {0} debe tener máximo {1} caractéres.")]
         public string descripcionRol { get; set; } = null!;
 
+
+    }
+
+
+    public class RolUpdateDto
+    {
+
+        [Required, MaxLength(50)]
+        public string nombreRol { get; set; } = null!;
+
+        [MaxLength(500)]
+        public string descripcionRol { get; set; } = null!;
 
     }
 }

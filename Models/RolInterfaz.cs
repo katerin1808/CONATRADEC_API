@@ -5,7 +5,6 @@ namespace CONATRADEC_API.Models
 {
 
 
-
     [Table("interfaz", Schema = "dbo")]
     public class Interfaz
     {
@@ -14,32 +13,29 @@ namespace CONATRADEC_API.Models
 
         [Required, MaxLength(100)]
         public string nombreInterfaz { get; set; } = null!;
-
-        [Required, MaxLength(100)]
-        public string descripcionInterfaz { get; set; } = null!;
-
+        public string  descripcionInterfaz { get; set; } = null!;
         public bool activo { get; set; } = true;
 
-        // Relación con RolInterfaz
-        public ICollection<RolInterfaz> rolinterfaz { get; set; } = new List<RolInterfaz>();
+        public ICollection<RolInteraz> rolInteraz { get; set; } = new List<RolInteraz>();
     }
 
     [Table("rolInteraz", Schema = "dbo")]
-    public class RolInterfaz
+    public class RolInteraz
     {
         [Key, DatabaseGenerated(DatabaseGeneratedOption.Identity)]
         public int rolInterazId { get; set; }
 
-        public bool leer { get; set; } = false;
-        public bool agregar { get; set; } = false;
-        public bool actualizar { get; set; } = false;
-        public bool eliminar { get; set; } = false;
+        public bool leer { get; set; }
+        public bool agregar { get; set; }
+        public bool actualizar { get; set; }
+        public bool eliminar { get; set; }
 
         public int rolId { get; set; }
         public int interfazId { get; set; }
 
-        public Rol Rol { get; set; } = null!;
-        public Interfaz Interfaz{ get; set; } = null!; // 👈 se mantiene como tú lo tenías
+        public Rol Rol { get; set; }
+        public Interfaz  Interfaz { get; set; }
+
     }
 
 }

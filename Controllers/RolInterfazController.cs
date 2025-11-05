@@ -6,61 +6,61 @@ using System;
 
 namespace CONATRADEC_API.Controllers
 {
-
-
     [ApiController]
-    [Route("api/rol-interfaz")]
-    public class RolInterfazController : ControllerBase
+    [Route("api/rol-permisos")]
+    public class RolPermisosController : ControllerBase
     {
         private readonly DBContext _db;
-        public RolInterfazController(DBContext db) => _db = db;
+        public RolPermisosController(DBContext db) => _db = db;
 
-        // ===========================================================
-        //  Helper: resolver IDs por nombre (sin exponer IDs al front)
-        // ===========================================================
+        // Helper: resolver IDs por nombre (sin exponer IDs al front)
         private async Task<(Rol rol, Interfaz interfaz)?> ResolveIdsAsync(string nombreRol, string nombreInterfaz)
         {
             var r = await _db.Roles.FirstOrDefaultAsync(x => x.nombreRol == nombreRol.Trim());
             if (r is null) return null;
-
-            var i = await _db.Interfaz.FirstOrDefaultAsync(x => x.nombreInterfaz == nombreInterfaz.Trim());
-            if (i is null) return null;
-
-            return (r, i);
+            var p = await _db.Interfaz.FirstOrDefaultAsync(x => x.nombreInterfaz == nombreInterfaz.Trim());
+            if (p is null) return null;
+            return (r, p);
         }
 
+
         // ===========================================================
-        // 3) STREAM AGRUPADO POR ROL
+        // 3) STREAM AGRUPADO POR ROL (útil si haces grilla por rol)
         // ===========================================================
-        [HttpGet("matriz-por-rol")]
-        public async Task<ActionResult<IEnumerable<RolConInterfazDto>>> ListarRolConInterfazStream()
+        // GET /api/rol-permisos/stream
+        // GET /api/rol-permisos/stream?nombreRol=Admin
+        [HttpGet("/api/rol-interfaz/matriz-por-rol", Name = "ListarRolConInterfazStream")]
+        public async Task<ActionResult<IEnumerable<RolConPermisosDto>>> ListarRolConInterfazStream()
         {
+            // Solo activos y sin tracking para rendimiento
             var rolesQ = _db.Roles.AsNoTracking().Where(r => r.activo);
             var interfazQ = _db.Interfaz.AsNoTracking().Where(p => p.activo);
 
+            // Genera TODAS las combinaciones rol-permiso y hace left join contra RolPermisos
             var rows = await (
                 from r in rolesQ
-                from i in interfazQ
-                join ri0 in _db.RolInterfaz.AsNoTracking()
-                    on new { r.rolId, i.interfazId } equals new { ri0.rolId, ri0.interfazId } into grp
-                from ri in grp.DefaultIfEmpty()
-                orderby r.nombreRol, i.nombreInterfaz
+                from p in interfazQ
+                join rp0 in _db.RolInteraz.AsNoTracking()
+                    on new { r.rolId, p.interfazId } equals new { rp0.rolId, rp0.interfazId } into grp
+                from rp in grp.DefaultIfEmpty()
+                orderby r.nombreRol, p.nombreInterfaz
                 select new
                 {
                     r.rolId,
                     r.nombreRol,
-                    i.interfazId,
-                    i.nombreInterfaz,
-                    leer = ri != null && ri.leer,
-                    agregar = ri != null && ri.agregar,
-                    actualizar = ri != null && ri.actualizar,
-                    eliminar = ri != null && ri.eliminar
+                    p.interfazId,
+                    p.nombreInterfaz,
+                    leer = rp != null && rp.leer,
+                    agregar = rp != null && rp.agregar,
+                    actualizar = rp != null && rp.actualizar,
+                    eliminar = rp != null && rp.eliminar
                 }
             ).ToListAsync();
 
+            // Agrupa por rol y materializa el DTO final
             var result = rows
                 .GroupBy(x => new { x.rolId, x.nombreRol })
-                .Select(g => new RolConInterfazDto
+                .Select(g => new RolConPermisosDto
                 {
                     rol = new RolLiteDto
                     {
@@ -70,7 +70,7 @@ namespace CONATRADEC_API.Controllers
                     interfaz = g.Select(x => new InterfazPermisoDto
                     {
                         interfazId = x.interfazId,
-                        nombreInterfaz = x.nombreInterfaz,
+                        nombreIntefaz = x.nombreInterfaz,
                         leer = x.leer,
                         agregar = x.agregar,
                         actualizar = x.actualizar,
@@ -82,46 +82,50 @@ namespace CONATRADEC_API.Controllers
             return Ok(result);
         }
 
-        // ===========================================================
         // 4) STREAM FILTRADO POR NOMBRE DE ROL
         // ===========================================================
-        [HttpGet("matriz-por-rol-nombre")]
-        public async Task<ActionResult<IEnumerable<RolConInterfazDto>>> ListarRolConInterfazPorNombre([FromQuery] string nombreRol)
+        // GET /api/rol-permisos/matriz-por-rol-nombre?nombreRol=Administrador
+        [HttpGet("/api/rol-interfaz/matriz-por-rol-nombre", Name = "ListarRolConPermisosPorNombre")]
+        public async Task<ActionResult<IEnumerable<RolConPermisosDto>>> ListarRolConPermisosPorNombre([FromQuery] string nombreRol)
         {
             if (string.IsNullOrWhiteSpace(nombreRol))
                 return BadRequest("Debe proporcionar un nombre de rol.");
 
+            // Filtramos solo el rol con ese nombre
             var rolesQ = _db.Roles.AsNoTracking()
                 .Where(r => r.activo && r.nombreRol == nombreRol.Trim());
 
             var interfazQ = _db.Interfaz.AsNoTracking().Where(p => p.activo);
 
+            // Genera TODAS las combinaciones del rol encontrado con los permisos
             var rows = await (
                 from r in rolesQ
-                from i in interfazQ
-                join ri0 in _db.RolInterfaz.AsNoTracking()
-                    on new { r.rolId, i.interfazId } equals new { ri0.rolId, ri0.interfazId } into grp
-                from ri in grp.DefaultIfEmpty()
-                orderby r.nombreRol, i.nombreInterfaz
+                from p in interfazQ
+                join rp0 in _db.RolInteraz.AsNoTracking()
+                    on new { r.rolId, p.interfazId } equals new { rp0.rolId, rp0.interfazId } into grp
+                from rp in grp.DefaultIfEmpty()
+                orderby r.nombreRol, p.nombreInterfaz
                 select new
                 {
                     r.rolId,
                     r.nombreRol,
-                    i.interfazId,
-                    i.nombreInterfaz,
-                    leer = ri != null && ri.leer,
-                    agregar = ri != null && ri.agregar,
-                    actualizar = ri != null && ri.actualizar,
-                    eliminar = ri != null && ri.eliminar
+                    p.interfazId,
+                    p.nombreInterfaz,
+                    leer = rp != null && rp.leer,
+                    agregar = rp != null && rp.agregar,
+                    actualizar = rp != null && rp.actualizar,
+                    eliminar = rp != null && rp.eliminar
                 }
             ).ToListAsync();
 
+            // Si no hay coincidencias, devolver 404
             if (rows.Count == 0)
-                return NotFound($"No se encontró el rol '{nombreRol}' o no tiene interfaces activas.");
+                return NotFound($"No se encontró el rol '{nombreRol}' o no tiene permisos activos.");
 
+            // Agrupa por rol (en este caso será solo uno)
             var result = rows
                 .GroupBy(x => new { x.rolId, x.nombreRol })
-                .Select(g => new RolConInterfazDto
+                .Select(g => new RolConPermisosDto
                 {
                     rol = new RolLiteDto
                     {
@@ -131,7 +135,7 @@ namespace CONATRADEC_API.Controllers
                     interfaz = g.Select(x => new InterfazPermisoDto
                     {
                         interfazId = x.interfazId,
-                        nombreInterfaz = x.nombreInterfaz,
+                        nombreIntefaz = x.nombreInterfaz,
                         leer = x.leer,
                         agregar = x.agregar,
                         actualizar = x.actualizar,
@@ -143,33 +147,38 @@ namespace CONATRADEC_API.Controllers
             return Ok(result);
         }
 
+
         // ===========================================================
-        // 5) PUT UPSERT: Inserta/actualiza interfaces de un rol
+        // 4) PUT UPSERT: inserta (aunque todo sea false) y actualiza si existe
+        // PUT /api/rol-permisos/actualizar-permisos
+        // body: List<RolConPermisosDto>
         // ===========================================================
         [HttpPut("actualizar-interfaz")]
-        public async Task<IActionResult> ActualizarInterfaz([FromBody] List<RolConInterfazDto> items)
+        public async Task<IActionResult> ActualizarPermisos([FromBody] List<RolConPermisosDto> items)
         {
             if (items is null || items.Count == 0)
-                return BadRequest("El payload está vacío.");
+                return BadRequest("El objeto está vacío.");
 
             using var trx = await _db.Database.BeginTransactionAsync();
 
             try
             {
                 var rolIds = items.Select(i => i.rol.rolId).Distinct().ToList();
-                var interfazIds = items.SelectMany(i => i.interfaz.Select(p => p.interfazId)).Distinct().ToList();
+                var permisoIds = items.SelectMany(i => i.interfaz.Select(p => p.interfazId)).Distinct().ToList();
 
+                // Validar existencia para evitar FK errors
                 var rolesSet = (await _db.Roles
                     .Where(r => rolIds.Contains(r.rolId))
                     .Select(r => r.rolId)
                     .ToListAsync()).ToHashSet();
 
-                var interfazSet = (await _db.Interfaz
-                    .Where(p => interfazIds.Contains(p.interfazId))
+                var permisosSet = (await _db.Interfaz
+                    .Where(p => permisoIds.Contains(p.interfazId))
                     .Select(p => p.interfazId)
                     .ToListAsync()).ToHashSet();
 
-                var existentes = await _db.RolInterfaz
+                // Relaciones existentes de los roles enviados
+                var existentes = await _db.RolInteraz
                     .Where(rp => rolIds.Contains(rp.rolId))
                     .ToListAsync();
 
@@ -179,32 +188,32 @@ namespace CONATRADEC_API.Controllers
                 {
                     if (!rolesSet.Contains(item.rol.rolId)) continue;
 
-                    foreach (var interfaz in item.interfaz)
+                    foreach (var permiso in item.interfaz)
                     {
-                        if (!interfazSet.Contains(interfaz.interfazId)) continue;
+                        if (!permisosSet.Contains(permiso.interfazId)) continue;
 
-                        var key = (item.rol.rolId, interfaz.interfazId);
+                        var key = (item.rol.rolId, permiso.interfazId);
 
                         if (map.TryGetValue(key, out var rp)) // UPDATE
                         {
-                            rp.leer = interfaz.leer;
-                            rp.agregar = interfaz.agregar;
-                            rp.actualizar = interfaz.actualizar;
-                            rp.eliminar = interfaz.eliminar;
-                            _db.RolInterfaz.Update(rp);
+                            rp.leer = permiso.leer;
+                            rp.agregar = permiso.agregar;
+                            rp.actualizar = permiso.actualizar;
+                            rp.eliminar = permiso.eliminar;
+                            _db.RolInteraz.Update(rp);
                         }
-                        else // INSERT
+                        else // INSERT (aunque todos sean false)
                         {
-                            var nuevo = new RolInterfaz
+                            var nuevo = new RolInteraz
                             {
                                 rolId = item.rol.rolId,
-                                interfazId = interfaz.interfazId,
-                                leer = interfaz.leer,
-                                agregar = interfaz.agregar,
-                                actualizar = interfaz.actualizar,
-                                eliminar = interfaz.eliminar
+                                interfazId = permiso.interfazId,
+                                leer = permiso.leer,
+                                agregar = permiso.agregar,
+                                actualizar = permiso.actualizar,
+                                eliminar = permiso.eliminar,
                             };
-                            _db.RolInterfaz.Add(nuevo);
+                            _db.RolInteraz.Add(nuevo);
                             map[key] = nuevo;
                         }
                     }
@@ -212,7 +221,7 @@ namespace CONATRADEC_API.Controllers
 
                 await _db.SaveChangesAsync();
                 await trx.CommitAsync();
-                return Ok(new { mensaje = "Permisos actualizados correctamente." });
+                return Ok(); // o NoContent();
             }
             catch
             {
@@ -221,77 +230,74 @@ namespace CONATRADEC_API.Controllers
             }
         }
 
-        // ===========================================================
-        // 6) POST: Agregar o actualizar interfaz por nombre
-        // ===========================================================
+
+        // POST /api/rol-permisos/agregar-permiso-por-nombre
         [HttpPost("agregar-interfaz-por-nombre")]
-        public async Task<IActionResult> AgregarInterfazPorNombre([FromBody] AgregarInterfazPorNombreRequest req)
+        public async Task<IActionResult> AgregarPermisoPorNombre([FromBody] AgregarPermisoPorNombreRequest req)
         {
             if (req == null ||
                 string.IsNullOrWhiteSpace(req.nombreRol) ||
                 string.IsNullOrWhiteSpace(req.nombreInterfaz))
             {
-                return BadRequest("Debe enviar nombreRol y nombreInterfaz.");
+                return BadRequest("Debe enviar nombreRol y nombrePermiso.");
             }
 
-            await using var trx = await _db.Database.BeginTransactionAsync(); // BEGIN TRAN
-            try
+            var nombreRol = req.nombreRol.Trim();
+            var nombrePermiso = req.nombreInterfaz.Trim();
+
+            // Buscar rol por nombre (exacto). Si quieres parcial, usa EF.Functions.Like.
+            var rol = await _db.Roles.FirstOrDefaultAsync(r => r.nombreRol == nombreRol);
+            if (rol is null)
+                return NotFound($"No se encontró el rol '{nombreRol}'.");
+
+            // Buscar permiso por nombre (exacto)
+            var permiso = await _db.Interfaz.FirstOrDefaultAsync(p => p.nombreInterfaz == nombrePermiso);
+            if (permiso is null)
+                return NotFound($"No se encontró el permiso '{nombrePermiso}'.");
+
+            // Upsert por (rolId, permisoId)
+            var existente = await _db.RolInteraz
+                .FirstOrDefaultAsync(rp => rp.rolId == rol.rolId && rp.interfazId == permiso.interfazId);
+
+            var accion = "actualizado";
+            if (existente is null)
             {
-                var nombreRol = req.nombreRol.Trim();
-                var nombreInterfaz = req.nombreInterfaz.Trim();
-
-                var rol = await _db.Roles.FirstOrDefaultAsync(r => r.nombreRol == nombreRol);
-                if (rol is null)
-                    return NotFound($"No se encontró el rol '{nombreRol}'.");
-
-                var interfaz = await _db.Interfaz.FirstOrDefaultAsync(p => p.nombreInterfaz == nombreInterfaz);
-                if (interfaz is null)
-                    return NotFound($"No se encontró la interfaz '{nombreInterfaz}'.");
-
-                var existente = await _db.RolInterfaz
-                    .FirstOrDefaultAsync(rp => rp.rolId == rol.rolId && rp.interfazId == interfaz.interfazId);
-
-                var accion = "actualizado";
-                if (existente is null)
+                var nuevo = new RolInteraz
                 {
-                    var nuevo = new RolInterfaz
-                    {
-                        rolId = rol.rolId,
-                        interfazId = interfaz.interfazId,
-                        leer = req.leer,
-                        agregar = req.agregar,
-                        actualizar = req.actualizar,
-                        eliminar = req.eliminar
-                    };
-                    _db.RolInterfaz.Add(nuevo);
-                    accion = "insertado";
-                }
-                else
-                {
-                    existente.leer = req.leer;
-                    existente.agregar = req.agregar;
-                    existente.actualizar = req.actualizar;
-                    existente.eliminar = req.eliminar;
-                    _db.RolInterfaz.Update(existente);
-                }
-
-                await _db.SaveChangesAsync();
-                await trx.CommitAsync(); // COMMIT
-
-                return Ok(new
-                {
-                    mensaje = $"Interfaz {accion} correctamente.",
-                    rol = new { rol.rolId, rol.nombreRol },
-                    interfaz = new { interfaz.interfazId, interfaz.nombreInterfaz },
-                    valores = new { req.leer, req.agregar, req.actualizar, req.eliminar }
-                });
+                    rolId = rol.rolId,
+                    interfazId = permiso.interfazId,
+                    leer = req.leer,
+                    agregar = req.agregar,
+                    actualizar = req.actualizar,
+                    eliminar = req.eliminar
+                };
+                _db.RolInteraz.Add(nuevo);
+                accion = "insertado";
             }
-            catch
+            else
             {
-                await trx.RollbackAsync(); // ROLLBACK
-                throw;
+                existente.leer = req.leer;
+                existente.agregar = req.agregar;
+                existente.actualizar = req.actualizar;
+                existente.eliminar = req.eliminar;
+                _db.RolInteraz.Update(existente);
             }
+
+            await _db.SaveChangesAsync();
+
+            return Ok(new
+            {
+                mensaje = $"Permiso {accion} correctamente.",
+                rol = new { rol.rolId, rol.nombreRol },
+                permiso = new { permiso.interfazId, permiso.nombreInterfaz },
+                valores = new { req.leer, req.agregar, req.actualizar, req.eliminar }
+            });
         }
-}
-}
 
+
+
+    }
+
+
+
+}

@@ -1,5 +1,5 @@
 ﻿using Microsoft.EntityFrameworkCore;
-using static CONATRADEC_API.Models.RolInterfaz;
+using static CONATRADEC_API.Models.RolInteraz;
 
 namespace CONATRADEC_API.Models
 {
@@ -12,7 +12,7 @@ namespace CONATRADEC_API.Models
         public DbSet<Rol> Roles { get; set; }
      
         public DbSet<Interfaz>Interfaz{ get; set; } = null!;
-        public DbSet<RolInterfaz> RolInterfaz { get; set; } = null!;
+        public DbSet<RolInteraz> RolInteraz { get; set; } = null!;
 
         public DbSet<Pais> Pais { get; set; }
         public DbSet<Departamento> Departamento { get; set; }
@@ -30,52 +30,32 @@ namespace CONATRADEC_API.Models
             // Si quieres mantener el índice único, puedes dejarlo
             modelBuilder.Entity<Rol>().HasIndex(c => c.nombreRol).IsUnique();
 
-
-
-
             // === Interfaz ===
+          
             modelBuilder.Entity<Interfaz>(e =>
             {
                 e.ToTable("interfaz", "dbo");
                 e.HasKey(x => x.interfazId);
-
-                e.Property(x => x.nombreInterfaz)
-                 .HasMaxLength(100)
-                 .IsRequired();
-
-                e.Property(x => x.descripcionInterfaz)
-                 .HasMaxLength(100)
-                 .IsRequired();
-
-                e.Property(x => x.activo).IsRequired();
-
-                e.HasIndex(x => x.nombreInterfaz).IsUnique(); // único por nombre
+                e.HasIndex(x => x.nombreInterfaz).IsUnique(); // mismo estilo: índice único por nombre
+                e.Property(x => x.nombreInterfaz).HasMaxLength(100).IsRequired();
             });
 
-            // === RolInterfaz ===
-            modelBuilder.Entity<RolInterfaz>(e =>
+            modelBuilder.Entity<RolInteraz>(e =>
             {
-                e.ToTable("rolInteraz", "dbo");
+                e.ToTable("rolinteraz", "dbo");
                 e.HasKey(x => x.rolInterazId);
 
-                e.HasIndex(x => new { x.rolId, x.interfazId }).IsUnique(); // evita duplicados rol+interfaz
+                e.HasIndex(x => new { x.rolId, x.interfazId }).IsUnique();
 
                 e.Property(x => x.leer).HasDefaultValue(false);
                 e.Property(x => x.agregar).HasDefaultValue(false);
                 e.Property(x => x.actualizar).HasDefaultValue(false);
                 e.Property(x => x.eliminar).HasDefaultValue(false);
 
-                e.HasOne(x => x.Rol)
-                 .WithMany(r => r.rolInterfaz)
-                 .HasForeignKey(x => x.rolId)
-                 .OnDelete(DeleteBehavior.Cascade);
-
-                // 👇 CAMBIO clave: usa la navegación renombrada a Interfaz
-                e.HasOne(x => x.Interfaz)
-                 .WithMany(p => p.rolinterfaz)
-                 .HasForeignKey(x => x.interfazId)
-                 .OnDelete(DeleteBehavior.Cascade);
+                e.HasOne(x => x.Rol).WithMany(r => r.rolInteraz).HasForeignKey(x => x.rolId).OnDelete(DeleteBehavior.Cascade);
+                e.HasOne(x => x.Interfaz).WithMany(p => p.rolInteraz).HasForeignKey(x => x.rolInterazId).OnDelete(DeleteBehavior.Cascade);
             });
+
 
 
             modelBuilder.Entity<Pais>(e =>
@@ -150,28 +130,7 @@ namespace CONATRADEC_API.Models
                 e.HasIndex(m => m.NombreMunicipio).IsUnique();
             });
 
-            modelBuilder.Entity<Usuario>(e =>
-            {
-                e.ToTable("usuario", "dbo");
-                e.HasKey(x => x.UsuarioId);
-
-                e.Property(x => x.NombreUsuario).IsRequired().HasMaxLength(100);
-                e.Property(x => x.ClaveHashUsuario).IsRequired().HasMaxLength(400);
-                e.Property(x => x.TelefonoUsuario).HasMaxLength(20);
-                e.Property(x => x.CorreoUsuario).HasMaxLength(200);
-
-                e.Property(x => x.Activo)
-                 .IsRequired()
-                 .HasDefaultValue(true); // <- default en SQL
-
-                e.HasOne(x => x.Rol)
-                 .WithMany(r => r.Usuarios)
-                 .HasForeignKey(x => x.RolId)
-                 .OnDelete(DeleteBehavior.Restrict);
-
-                e.HasIndex(x => x.NombreUsuario).IsUnique();
-            });
-
+     
         }
     }
     }

@@ -1,8 +1,9 @@
-﻿using CONATRADEC_API.Models;
+﻿using CONATRADEC_API.DTOs;
+using CONATRADEC_API.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using CONATRADEC_API.DTOs;
 using Microsoft.EntityFrameworkCore;
+
 
 namespace CONATRADEC_API.Controllers
 {
@@ -124,10 +125,10 @@ namespace CONATRADEC_API.Controllers
                 rol = new
 
                 {
-                  
+
                     rol.nombreRol,
                     rol.descripcionRol,
-                  
+
                 }
             });
         }
@@ -150,5 +151,8 @@ namespace CONATRADEC_API.Controllers
 
             return Ok(new { message = "Rol desactivado (borrado lógico) correctamente" });
         }
+
     }
+
 }
+
