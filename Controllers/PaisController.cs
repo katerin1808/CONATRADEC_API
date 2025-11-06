@@ -61,13 +61,14 @@ namespace CONATRADEC_API.Controllers
                 bool isoDup = await _ctx.Pais.AnyAsync(p => p.Activo && p.CodigoISOPais.ToUpper() == iso);
                 if (isoDup) return Conflict("Ya existe un país ACTIVO con ese Código ISO.");
 
-                bool nombreDup = await _ctx.Pais.AnyAsync(p => p.Activo && p.NombrePais.ToLower() == nombre.ToLower());
+                bool nombreDup = await _ctx.Pais.AnyAsync(p => p.Activo &&
+                EF.Functions.Collate(p.NombrePais.ToUpper(), "Modern_Spanish_CI_AI") == nombre!.ToUpper());
                 if (nombreDup) return Conflict("Ya existe un país ACTIVO con ese nombre.");
 
                 var entity = new Pais
                 {
-                    NombrePais = nombre!,
-                    CodigoISOPais = iso,
+                    NombrePais = nombre!.ToUpper(),
+                    CodigoISOPais = iso.ToUpper(),
                     Activo = true
                 };
 
@@ -109,15 +110,18 @@ namespace CONATRADEC_API.Controllers
                 var entity = await _ctx.Pais.FindAsync(id);
                 if (entity is null) return NotFound("El país indicado no existe.");
 
+                if (!entity.Activo)
+                    return Conflict("No se puede actualizar un pais que está inactivo.");
+
                 // ✅ Solo contra activos (permite reutilizar valores que estén inactivos)
                 bool isoDup = await _ctx.Pais.AnyAsync(p => p.PaisId != id && p.Activo && p.CodigoISOPais.ToUpper() == iso);
                 if (isoDup) return Conflict("Ya existe un país ACTIVO con ese Código ISO.");
 
-                bool nombreDup = await _ctx.Pais.AnyAsync(p => p.PaisId != id && p.Activo && p.NombrePais.ToLower() == nombre!.ToLower());
+                bool nombreDup = await _ctx.Pais.AnyAsync(p => p.PaisId != id && p.Activo && EF.Functions.Collate(p.NombrePais.ToUpper(), "Modern_Spanish_CI_AI") == nombre!.ToUpper());
                 if (nombreDup) return Conflict("Ya existe un país ACTIVO con ese nombre.");
 
-                entity.NombrePais = nombre!;
-                entity.CodigoISOPais = iso;
+                entity.NombrePais = nombre!.ToUpper();
+                entity.CodigoISOPais = iso.ToUpper();
 
                 await _ctx.SaveChangesAsync();
                 await tx.CommitAsync();
@@ -147,9 +151,13 @@ namespace CONATRADEC_API.Controllers
                 var entity = await _ctx.Pais.FindAsync(id);
                 if (entity is null) return NotFound("El país indicado no existe.");
 
+                if (!entity.Activo)
+                    return Conflict("No se puede actualizar un departamento que está inactivo.");
+
+
                 // (Opcional) Bloquear si tiene departamentos activos:
-                // bool tieneDptos = await _ctx.Departamento.AnyAsync(d => d.PaisId == id && d.Activo);
-                // if (tieneDptos) return Conflict("No se puede eliminar: el país tiene departamentos activos.");
+                bool tieneDptos = await _ctx.Departamento.AnyAsync(d => d.PaisId == id && d.Activo);
+                if (tieneDptos) return Conflict("No se puede eliminar: el país tiene departamentos activos.");
 
                 entity.Activo = false; // borrado lógico
                 await _ctx.SaveChangesAsync();
