@@ -2,6 +2,7 @@
 using CONATRADEC_API.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using System;
 
 namespace CONATRADEC_API.Controllers
@@ -50,10 +51,10 @@ namespace CONATRADEC_API.Controllers
                     r.nombreRol,
                     p.interfazId,
                     p.nombreInterfaz,
-                    leer = rp != null && rp.leer,
-                    agregar = rp != null && rp.agregar,
-                    actualizar = rp != null && rp.actualizar,
-                    eliminar = rp != null && rp.eliminar
+                    leer = rp != null && rp.leer == true ? true : false,
+                    agregar = rp != null && rp.agregar == true ? true : false,
+                    actualizar = rp != null && rp.actualizar == true ? true : false,
+                    eliminar = rp != null && rp.eliminar == true ? true : false
                 }
             ).ToListAsync();
 
@@ -111,10 +112,10 @@ namespace CONATRADEC_API.Controllers
                     r.nombreRol,
                     p.interfazId,
                     p.nombreInterfaz,
-                    leer = rp != null && rp.leer,
-                    agregar = rp != null && rp.agregar,
-                    actualizar = rp != null && rp.actualizar,
-                    eliminar = rp != null && rp.eliminar
+                    leer = rp != null && rp.leer == true ? true : false,
+                    agregar = rp != null && rp.agregar == true ? true : false,
+                    actualizar = rp != null && rp.actualizar == true ? true : false,
+                    eliminar = rp != null && rp.eliminar == true ? true : false
                 }
             ).ToListAsync();
 
@@ -154,81 +155,86 @@ namespace CONATRADEC_API.Controllers
         // body: List<RolConPermisosDto>
         // ===========================================================
         [HttpPut("actualizar-interfaz")]
-        public async Task<IActionResult> ActualizarPermisos([FromBody] List<RolConPermisosDto> items)
+        public async Task<IActionResult> ActualizarPermisos([FromBody] RolConPermisosDto dto)
         {
-            if (items is null || items.Count == 0)
-                return BadRequest("El objeto está vacío.");
+            if (dto is null || dto.rol is null || dto.interfaz is null || dto.interfaz.Count == 0)
+                return BadRequest("El objeto está vacío o mal formado.");
 
-            using var trx = await _db.Database.BeginTransactionAsync();
-
+            await using var trx = await _db.Database.BeginTransactionAsync();
             try
             {
-                var rolIds = items.Select(i => i.rol.rolId).Distinct().ToList();
-                var permisoIds = items.SelectMany(i => i.interfaz.Select(p => p.interfazId)).Distinct().ToList();
+                int rolId = dto.rol.rolId;
 
-                // Validar existencia para evitar FK errors
-                var rolesSet = (await _db.Roles
-                    .Where(r => rolIds.Contains(r.rolId))
-                    .Select(r => r.rolId)
-                    .ToListAsync()).ToHashSet();
+                // 1️⃣ Validar que el rol exista
+                bool rolExiste = await _db.Roles.AnyAsync(r => r.rolId == rolId);
+                if (!rolExiste)
+                    return NotFound($"El rol con ID {rolId} no existe.");
 
-                var permisosSet = (await _db.Interfaz
-                    .Where(p => permisoIds.Contains(p.interfazId))
-                    .Select(p => p.interfazId)
-                    .ToListAsync()).ToHashSet();
+                // 2️⃣ Obtener IDs de interfaces válidas
+                var interfazIds = dto.interfaz.Select(i => i.interfazId).Distinct().ToList();
 
-                // Relaciones existentes de los roles enviados
-                var existentes = await _db.RolInteraz
-                    .Where(rp => rolIds.Contains(rp.rolId))
+                var interfazValidas = await _db.Interfaz
+                    .Where(i => interfazIds.Contains(i.interfazId))
+                    .Select(i => i.interfazId)
                     .ToListAsync();
 
-                var map = existentes.ToDictionary(k => (k.rolId, k.interfazId), v => v);
+                // 3️⃣ Traer las relaciones existentes del rol
+                var existentes = await _db.RolInteraz
+                    .Where(rp => rp.rolId == rolId)
+                    .ToListAsync();
 
-                foreach (var item in items)
+                // Crear diccionario (clave: interfazId → valor: entidad RolInteraz)
+                var map = existentes.ToDictionary(k => k.interfazId, v => v);
+
+                // 4️⃣ Recorrer todas las interfaces del DTO
+                foreach (var permiso in dto.interfaz)
                 {
-                    if (!rolesSet.Contains(item.rol.rolId)) continue;
+                    if (!interfazValidas.Contains(permiso.interfazId))
+                        continue;
 
-                    foreach (var permiso in item.interfaz)
+                    if (map.TryGetValue(permiso.interfazId, out var rp)) // UPDATE
                     {
-                        if (!permisosSet.Contains(permiso.interfazId)) continue;
+                        rp.leer = permiso.leer;
+                        rp.agregar = permiso.agregar;
+                        rp.actualizar = permiso.actualizar;
+                        rp.eliminar = permiso.eliminar;
 
-                        var key = (item.rol.rolId, permiso.interfazId);
-
-                        if (map.TryGetValue(key, out var rp)) // UPDATE
+                        _db.RolInteraz.Update(rp);
+                    }
+                    else // INSERT
+                    {
+                        var nuevo = new RolInteraz
                         {
-                            rp.leer = permiso.leer;
-                            rp.agregar = permiso.agregar;
-                            rp.actualizar = permiso.actualizar;
-                            rp.eliminar = permiso.eliminar;
-                            _db.RolInteraz.Update(rp);
-                        }
-                        else // INSERT (aunque todos sean false)
-                        {
-                            var nuevo = new RolInteraz
-                            {
-                                rolId = item.rol.rolId,
-                                interfazId = permiso.interfazId,
-                                leer = permiso.leer,
-                                agregar = permiso.agregar,
-                                actualizar = permiso.actualizar,
-                                eliminar = permiso.eliminar,
-                            };
+                            rolId = dto.rol.rolId,
+                            interfazId = permiso.interfazId,
+                            leer = permiso.leer == true ? true : false,
+                            agregar = permiso.agregar == true ? true : false,
+                            actualizar = permiso.actualizar == true ? true : false,
+                            eliminar = permiso.eliminar == true ? true : false,
+                        };
+                        if(nuevo.leer.Value.Equals(true) || nuevo.agregar.Value.Equals(true) || nuevo.actualizar.Value.Equals(true) || nuevo.eliminar.Value.Equals(true))
                             _db.RolInteraz.Add(nuevo);
-                            map[key] = nuevo;
-                        }
+
                     }
                 }
 
+                // 5️⃣ Guardar y confirmar
                 await _db.SaveChangesAsync();
                 await trx.CommitAsync();
-                return Ok(); // o NoContent();
+
+
+                return Ok(new
+                {
+                    message = "Permisos actualizados correctamente.",
+                });
             }
-            catch
+            catch (Exception ex)
             {
                 await trx.RollbackAsync();
-                throw;
+                return StatusCode(500, $"Error interno del servidor: {ex.Message}");
             }
         }
+
 
 
         // POST /api/rol-permisos/agregar-permiso-por-nombre
@@ -294,10 +300,6 @@ namespace CONATRADEC_API.Controllers
             });
         }
 
-
-
     }
-
-
 
 }

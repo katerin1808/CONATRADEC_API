@@ -10,7 +10,7 @@ builder.Services.AddDbContext<DBContext>(o =>
 {
     o.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"))
     .EnableSensitiveDataLogging()
-    .LogTo(Console.WriteLine, LogLevel.Information);
+    .LogTo(Console.WriteLine);
 });
 
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle

@@ -39,19 +39,19 @@ namespace CONATRADEC_API.Controllers
                     .SingleOrDefaultAsync();
 
                 if (dep is null)
-                    return BadRequest("No se puede crear: el departamento no existe o está inactivo.");
+                    return BadRequest("No se puede crear el municipio: el departamento no existe o está inactivo.");
 
                 // Unicidad POR DEPARTAMENTO y SOLO entre activos
                 bool duplicado = await _ctx.Municipios
                     .AnyAsync(m => m.DepartamentoId == req.DepartamentoId
                                 && m.Activo
-                                && m.NombreMunicipio.ToLower() == nombre!.ToLower());
+                                && EF.Functions.Collate(m.NombreMunicipio.ToUpper(), "Modern_Spanish_CI_AI") == nombre!.ToUpper());
                 if (duplicado)
                     return Conflict("Ya existe un municipio activo con ese nombre en este departamento.");
 
                 var entity = new Municipio
                 {
-                    NombreMunicipio = nombre!,
+                    NombreMunicipio = nombre!.ToUpper(),
                     DepartamentoId = req.DepartamentoId,
                     Activo = true
                 };
@@ -82,7 +82,34 @@ namespace CONATRADEC_API.Controllers
         // ==========================================================
         // LISTAR TODOS LOS MUNICIPIOS CON SU DEPARTAMENTO Y PAÍS
         // ==========================================================
+        [HttpGet("listarTodos-por-departamento-por-pais")]
+        public async Task<ActionResult<IEnumerable<MunicipioResponse>>> ListarTodosConDepartamentoYpais()
+        {
+            var data = await _ctx.Municipios
+        .AsNoTracking()
+        .Where(m => m.Activo
+                    && m.Departamento!.Activo
+                    && m.Departamento.Pais!.Activo)
+        .Include(m => m.Departamento)
+            .ThenInclude(d => d.Pais)
+        .OrderBy(m => m.Departamento!.NombreDepartamento)
+        .ThenBy(m => m.NombreMunicipio)
+        .Select(m => new MunicipioResponse
+        {
+            MunicipioId = m.MunicipioId,
+            NombreMunicipio = m.NombreMunicipio,
+            DepartamentoId = m.DepartamentoId,
+            NombreDepartamento = m.Departamento!.NombreDepartamento,
+            NombrePais = m.Departamento.Pais!.NombrePais,
+            Activo = m.Activo
+        })
+        .ToListAsync();
 
+            if (data.Count == 0)
+                return NotFound("No existen municipios activos registrados.");
+
+            return Ok(data);
+        }
         // ===========================================
         // 2) LISTAR POR DEPARTAMENTO
         // GET /api/municipio/por-departamento/{departamentoId}
@@ -136,6 +163,9 @@ namespace CONATRADEC_API.Controllers
             if (string.IsNullOrWhiteSpace(nombre))
                 return BadRequest("El nombre del municipio es requerido.");
 
+            if (!entity.Activo)
+                return Conflict("No se puede actualizar un municipio que está inactivo.");
+
             await using var trx = await _ctx.Database.BeginTransactionAsync();
             try
             {
@@ -146,17 +176,17 @@ namespace CONATRADEC_API.Controllers
                     .AnyAsync(m => m.MunicipioId != id
                                 && m.DepartamentoId == departamentoIdActual
                                 && m.Activo
-                                && m.NombreMunicipio.ToLower() == nombre!.ToLower());
+                                && EF.Functions.Collate(m.NombreMunicipio.ToUpper(), "Modern_Spanish_CI_AI") == nombre!.ToUpper());
                 if (duplicadoActivo)
                     return Conflict("Ya existe un municipio activo con ese nombre en este departamento.");
 
-                entity.NombreMunicipio = nombre!;
+                entity.NombreMunicipio = nombre!.ToUpper();
                 await _ctx.SaveChangesAsync();
                 await trx.CommitAsync();
 
                 var dep = await _ctx.Departamento.AsNoTracking()
                     .Include(d => d.Pais)
-                    .Where(d => d.DepartamentoId == departamentoIdActual)
+                    .Where(d => d.DepartamentoId == departamentoIdActual && d.Activo)
                     .Select(d => new { d.NombreDepartamento, d.Pais!.NombrePais })
                     .SingleOrDefaultAsync();
 
@@ -214,5 +244,5 @@ namespace CONATRADEC_API.Controllers
                 throw;
             }
         }
-}
+    }
 }

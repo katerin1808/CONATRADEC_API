@@ -42,18 +42,25 @@ namespace CONATRADEC_API.Models
 
             modelBuilder.Entity<RolInteraz>(e =>
             {
-                e.ToTable("rolinteraz", "dbo");
+                e.ToTable("rolInteraz", "dbo");
                 e.HasKey(x => x.rolInterazId);
+                e.Property(x => x.rolInterazId).ValueGeneratedOnAdd();
 
-                e.HasIndex(x => new { x.rolId, x.interfazId }).IsUnique();
+                e.Property(x => x.leer)
+                    .IsRequired()
+                    .HasDefaultValue(false);
 
-                e.Property(x => x.leer).HasDefaultValue(false);
-                e.Property(x => x.agregar).HasDefaultValue(false);
-                e.Property(x => x.actualizar).HasDefaultValue(false);
-                e.Property(x => x.eliminar).HasDefaultValue(false);
+                e.Property(x => x.agregar)
+                    .IsRequired()
+                    .HasDefaultValue(false);
 
-                e.HasOne(x => x.Rol).WithMany(r => r.rolInteraz).HasForeignKey(x => x.rolId).OnDelete(DeleteBehavior.Cascade);
-                e.HasOne(x => x.Interfaz).WithMany(p => p.rolInteraz).HasForeignKey(x => x.rolInterazId).OnDelete(DeleteBehavior.Cascade);
+                e.Property(x => x.actualizar)
+                    .IsRequired()
+                    .HasDefaultValue(false);
+
+                e.Property(x => x.eliminar)
+                    .IsRequired()
+                    .HasDefaultValue(false);
             });
 
 
