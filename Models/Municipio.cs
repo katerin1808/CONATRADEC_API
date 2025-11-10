@@ -26,5 +26,6 @@ namespace CONATRADEC_API.Models
         [Column("departamentoId")]
         public int DepartamentoId { get; set; }
         public Departamento Departamento { get; set; } = null!;
+        public ICollection<Usuario> Usuarios { get; set; } = new List<Usuario>();
     }
 }

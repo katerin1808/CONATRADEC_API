@@ -5,7 +5,6 @@ namespace CONATRADEC_API.Security
 {
     public class Pbkdf2PasswordHasher
     {
-
         // Guarda: PBKDF2$<iter>$<saltB64>$<hashB64>
         public static string HashToString(string password, int iterations = 100_000, int saltSize = 16, int keySize = 32)
         {

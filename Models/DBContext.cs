@@ -1,4 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+using System.ComponentModel;
 using static CONATRADEC_API.Models.RolInteraz;
 
 namespace CONATRADEC_API.Models
@@ -19,7 +21,9 @@ namespace CONATRADEC_API.Models
 
         public DbSet<Municipio> Municipios => Set<Municipio>();
 
-        public DbSet<Usuario> Usuarios => Set<Usuario>();
+        public DbSet<Procedencia> Procedencia { get; set; } = null!;
+        public DbSet<Usuario> Usuarios { get; set; } = null!;
+
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -137,8 +141,65 @@ namespace CONATRADEC_API.Models
                 e.HasIndex(m => m.NombreMunicipio).IsUnique();
             });
 
-     
+            modelBuilder.Entity<Procedencia>(e =>
+            {
+                e.ToTable("procedencia");
+                e.HasKey(x => x.procedenciaId);
+                e.Property(x => x.procedenciaId).HasColumnName("procedenciaId");
+                e.Property(x => x.nombreProcedencia).HasColumnName("nombreProcedencia").HasMaxLength(100).IsRequired();
+                e.Property(x => x.descripcionProcedencia).HasColumnName("descripcionProcedencia").HasMaxLength(200);
+                e.Property(x => x.activo).HasColumnName("activo").HasDefaultValue(true);
+
+                e.HasData(
+                    new Procedencia { procedenciaId = 1, nombreProcedencia = "Interno", descripcionProcedencia = "Usuario interno", activo = true },
+                    new Procedencia { procedenciaId = 2, nombreProcedencia = "Externo", descripcionProcedencia = "Usuario externo", activo = true }
+                );
+            });
+
+
+            modelBuilder.Entity<Usuario>(e =>
+            {
+                e.ToTable("usuario", "dbo");
+                e.HasKey(x => x.UsuarioId);
+
+                e.Property(x => x.nombreUsuario).IsRequired().HasMaxLength(100);
+                e.Property(x => x.claveHashUsuario).IsRequired().HasMaxLength(512);
+                e.Property(x => x.identificacionUsuario).HasMaxLength(50);
+                e.Property(x => x.nombreCompletoUsuario).IsRequired().HasMaxLength(150);
+                e.Property(x => x.correoUsuario).IsRequired().HasMaxLength(150);
+                e.Property(x => x.telefonoUsuario).HasMaxLength(25);
+
+                // Mapear DateOnly -> date
+                e.Property(x => x.fechaNacimientoUsuario)
+                 .HasColumnType("date");
+
+                e.Property(x => x.activo).IsRequired().HasDefaultValue(true);
+
+                // Índices únicos (evita duplicados)
+                e.HasIndex(x => x.nombreUsuario).IsUnique();
+                e.HasIndex(x => x.correoUsuario).IsUnique();
+
+                // FKs
+                e.HasOne(x => x.Rol)
+                 .WithMany(r => r.Usuarios)
+                 .HasForeignKey(x => x.rolId)
+                 .OnDelete(DeleteBehavior.Restrict);
+
+                e.HasOne(x => x.Procedencia)
+                 .WithMany(p => p.Usuarios)
+                 .HasForeignKey(x => x.procedenciaId)
+                 .OnDelete(DeleteBehavior.Restrict);
+
+                e.HasOne(x => x.Municipio)
+                 .WithMany(m => m.Usuarios)
+                 .HasForeignKey(x => x.municipioId)
+                 .OnDelete(DeleteBehavior.SetNull);
+            });
+
         }
+
+
     }
+    
     }
 

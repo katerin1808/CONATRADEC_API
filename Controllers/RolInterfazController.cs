@@ -71,7 +71,7 @@ namespace CONATRADEC_API.Controllers
                     interfaz = g.Select(x => new InterfazPermisoDto
                     {
                         interfazId = x.interfazId,
-                        nombreIntefaz = x.nombreInterfaz,
+                        nombreInterfaz = x.nombreInterfaz,
                         leer = x.leer,
                         agregar = x.agregar,
                         actualizar = x.actualizar,
@@ -136,7 +136,7 @@ namespace CONATRADEC_API.Controllers
                     interfaz = g.Select(x => new InterfazPermisoDto
                     {
                         interfazId = x.interfazId,
-                        nombreIntefaz = x.nombreInterfaz,
+                        nombreInterfaz = x.nombreInterfaz,
                         leer = x.leer,
                         agregar = x.agregar,
                         actualizar = x.actualizar,

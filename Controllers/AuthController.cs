@@ -5,6 +5,13 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
+using static CONATRADEC_API.DTOs.AuthDtos;
+using static CONATRADEC_API.Models.Usuario;
 
 namespace CONATRADEC_API.Controllers
 {
@@ -15,42 +22,66 @@ namespace CONATRADEC_API.Controllers
 
     public class AuthController : Controller
     {
-
         private readonly DBContext _db;
         public AuthController(DBContext db) => _db = db;
 
-        [HttpPost("login")]
-        public async Task<IActionResult> Login([FromBody] LoginRequest req)
+        // PBKDF2 verifier
+        private static bool VerifyHash(string password, string stored)
         {
-            if (string.IsNullOrWhiteSpace(req.nombreUsuario) || string.IsNullOrWhiteSpace(req.clavePlano))
-                return BadRequest(new { mensaje = "Debe proporcionar usuario y contraseña." });
+            var parts = stored.Split('$');
+            if (parts.Length != 4 || parts[0] != "PBKDF2") return false;
+            if (!int.TryParse(parts[1], out var iter)) return false;
 
-            // Buscar usuario activo por nombre
+            var salt = Convert.FromBase64String(parts[2]);
+            var hash = Convert.FromBase64String(parts[3]);
+
+            using var pbkdf2 = new Rfc2898DeriveBytes(password, salt, iter, HashAlgorithmName.SHA256);
+            var computed = pbkdf2.GetBytes(hash.Length);
+            return CryptographicOperations.FixedTimeEquals(computed, hash);
+        }
+
+        // ==========================
+        // LOGIN
+        // POST: api/Auth/login
+        // ==========================
+        [HttpPost("login")]
+        public async Task<ActionResult<UsuarioLoginResponseDto>> Login([FromBody] UsuarioLoginDto req)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
             var usuario = await _db.Usuarios
-                .AsNoTracking()
                 .Include(u => u.Rol)
-                .FirstOrDefaultAsync(u => u.NombreUsuario == req.nombreUsuario.Trim() && u.Activo);
+                .Include(u => u.Procedencia)
+                .FirstOrDefaultAsync(u =>
+                    u.nombreUsuario == req.usuarioOEmail || u.correoUsuario == req.usuarioOEmail);
 
             if (usuario is null)
-                return Unauthorized(new { mensaje = "Usuario o contraseña incorrectos." });
+                return Unauthorized("Usuario o contraseña inválidos.");
 
-            // Verificar hash de la contraseña
-            bool ok = Pbkdf2PasswordHasher.VerifyFromString(req.clavePlano, usuario.ClaveHashUsuario);
+            if (!usuario.activo)
+                return Unauthorized("Usuario inactivo.");
 
-            if (!ok)
-                return Unauthorized(new { mensaje = "Usuario o contraseña incorrectos." });
+            if (!VerifyHash(req.clave, usuario.claveHashUsuario))
+                return Unauthorized("Usuario o contraseña inválidos.");
 
-            // ✅ Si todo bien:
-            return Ok(new
+            var respuesta = new UsuarioLoginResponseDto
             {
-                mensaje = "Inicio de sesión exitoso",
-                usuario = new
-                {
-                    usuario.UsuarioId,
-                    usuario.NombreUsuario,
-                    rol = usuario.Rol?.nombreRol ?? "(sin rol)"
-                }
-            });
+                UsuarioId = usuario.UsuarioId,
+                nombreUsuario = usuario.nombreUsuario,
+                nombreCompletoUsuario = usuario.nombreCompletoUsuario,
+                correoUsuario = usuario.correoUsuario,
+                activo = usuario.activo,
+                rolId = usuario.rolId,
+                rolNombre = usuario.Rol.nombreRol,
+                procedenciaId = usuario.procedenciaId,
+                procedenciaNombre = usuario.Procedencia.nombreProcedencia,
+                esInterno = usuario.Procedencia.nombreProcedencia.Equals("Interno", StringComparison.OrdinalIgnoreCase)
+            };
+
+            return Ok(respuesta);
+
         }
 }
 }
+

@@ -16,7 +16,7 @@ namespace CONATRADEC_API.Models
         public string  descripcionInterfaz { get; set; } = "";
         public bool activo { get; set; } = true;
 
-        //public ICollection<RolInteraz> rolInteraz { get; set; } = new List<RolInteraz>();
+        public ICollection<RolInteraz> RolInteraz { get; set; } = new List<RolInteraz>();
     }
 
     [Table("rolInteraz", Schema = "dbo")]
@@ -37,6 +37,9 @@ namespace CONATRADEC_API.Models
 
         public int rolId { get; set; }
         public int interfazId { get; set; }
+
+        public Rol Rol { get; set; } = null!;
+        public Interfaz Interfaz { get; set; } = null!;
 
 
     }

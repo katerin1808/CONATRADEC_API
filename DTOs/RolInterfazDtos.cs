@@ -15,7 +15,7 @@ namespace CONATRADEC_API.DTOs
     public class InterfazPermisoDto
     {
         public int interfazId { get; set; }
-        public string nombreIntefaz { get; set; } = string.Empty;
+        public string nombreInterfaz { get; set; } = string.Empty;
 
         public bool leer { get; set; }
         public bool agregar { get; set; }

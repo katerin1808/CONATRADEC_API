@@ -2,10 +2,10 @@
 {
     public class Procedencia
     {
-        public int ProcedenciaId { get; set; }
-        public string NombreProcedencia { get; set; } = default!; // "Interno"|"Externo"
-        public string? DescripcionProcedencia { get; set; }
-        public bool Activo { get; set; } = true;
+        public int procedenciaId { get; set; }
+        public string nombreProcedencia { get; set; } = default!; // "Interno"|"Externo"
+        public string? descripcionProcedencia { get; set; }
+        public bool activo { get; set; } = true;
 
         public ICollection<Usuario> Usuarios { get; set; } = new List<Usuario>();
     }

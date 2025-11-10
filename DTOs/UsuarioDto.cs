@@ -3,72 +3,86 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace CONATRADEC_API.DTOs
 {
-    public class UsuarioDto
+    public class UsuarioCrearDto
     {
-        [Key]
-        [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
-        public int UsuarioId { get; set; }
-        public string nombreUsuario { get; set; } = string.Empty;
+        [Required, MaxLength(100)]
+        public string nombreUsuario { get; set; } = default!;
+
+        [Required, MaxLength(150)]
+        public string nombreCompletoUsuario { get; set; } = default!;
+
+        [Required, EmailAddress, MaxLength(150)]
+        public string correoUsuario { get; set; } = default!;
+
+        [MaxLength(25)]
         public string? telefonoUsuario { get; set; }
-        public string? correoUsuario { get; set; }
-        public bool? activo { get; set; }
-        public int rolId { get; set; }
-        public string nombreRol { get; set; } = string.Empty;
 
-    }
+        public DateOnly? fechaNacimientoUsuario { get; set; }
 
-    public class UsuarioListDto
-    {
-        public string nombreUsuario { get; set; } = string.Empty;
-        public string telefonoUsuario { get; set; } = string.Empty;
-        public string correoUsuario { get; set; } = string.Empty;
-        public string nombreRol { get; set; } = string.Empty;
-    }
-    public class UsuarioCreateDto
-    {
-        [Required, StringLength(100)]
-        public string nombreUsuario { get; set; } = string.Empty;
-
-
-        [MinLength(6, ErrorMessage = "La contraseña debe tener al menos 6 caracteres.")]
-        [Required, StringLength(128, MinimumLength = 6)]
-        public string clavePlano { get; set; } = string.Empty;
-
-        [MaxLength(20)]
-        [Phone] public string? telefonoUsuario { get; set; }
-        [EmailAddress] public string? correoUsuario { get; set; }
-
+        // === Lógica Interno/Externo controlada por backend ===
         [Required]
-        public int rolId { get; set; }
-    }
+        public bool esInterno { get; set; }
 
-    public class UsuarioUpdateDto
+        // Solo válido si es interno; para externos se ignora y se fuerza "Invitado"
+        public int? rolId { get; set; }
+
+        // Relaciones opcionales
+        public int? municipioId { get; set; }
+
+        [MaxLength(50)]
+        public string? identificacionUsuario { get; set; }
+
+        // Contraseña en texto plano
+        [Required, MinLength(6)]
+        public string clave { get; set; } = default!;
+    }
+    public class UsuarioActualizarDto
     {
+        [Required, MaxLength(150)]
+        public string nombreCompletoUsuario { get; set; } = default!;
+
+        [Required, EmailAddress, MaxLength(150)]
+        public string correoUsuario { get; set; } = default!;
+
+        [MaxLength(25)]
         public string? telefonoUsuario { get; set; }
-        public string? correoUsuario { get; set; }
-        public bool activo { get; set; } = true;
+
+        public DateOnly? fechaNacimientoUsuario { get; set; }
+
+        // Cambiar tipo (interno/externo)
+        [Required]
+        public bool esInterno { get; set; }
+
+        // Si es interno y deseas cambiar rol
+        public int? rolId { get; set; }
+
+        // Cambiar contraseña (opcional)
+        public string? nuevaClave { get; set; }
+
+        public int? municipioId { get; set; }
+
+        [MaxLength(50)]
+        public string? identificacionUsuario { get; set; }
+
+        public bool? activo { get; set; }
+    }
+
+    public class UsuarioReadDto
+    {
+        public int UsuarioId { get; set; }
+        public string nombreUsuario { get; set; } = default!;
+        public string nombreCompletoUsuario { get; set; } = default!;
+        public string correoUsuario { get; set; } = default!;
+        public string? telefonoUsuario { get; set; }
+        public DateOnly? fechaNacimientoUsuario { get; set; }
+        public bool activo { get; set; }
         public int rolId { get; set; }
-    }
+        public int procedenciaId { get; set; }
+        public int? municipioId { get; set; }
 
-    public class UsuarioPasswordDto
-    {
-        public string clavePlano { get; set; } = string.Empty;
-    }
-
-    // Login
-    public class LoginRequest
-    {
-        public string nombreUsuario { get; set; } = string.Empty;
-        public string clavePlano { get; set; } = string.Empty;
-    }
-
-    public class LoginResponse
-    {
-        public bool autenticado { get; set; }
-        public int usuarioId { get; set; }
-        public string nombreUsuario { get; set; } = string.Empty;
-        public int rolId { get; set; }
-        public string nombreRol { get; set; } = string.Empty;
-        public string? token { get; set; } // si luego activas JWT
+        // Información derivada para front
+        public string rolNombre { get; set; } = string.Empty;
+        public string procedenciaNombre { get; set; } = string.Empty;
+        public bool esInterno { get; set; }
     }
 }
