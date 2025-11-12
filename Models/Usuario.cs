@@ -34,7 +34,8 @@ namespace CONATRADEC_API.Models
         public bool activo { get; set; } = true;
 
 
-        public string urlImagenUsuario { get; set; } = string.Empty;
+        [MaxLength(500)]
+        public string? urlImagenUsuario { get; set; } //= string.Empty;
 
         // ===== Relaciones (FK) =====
         public int rolId { get; set; }

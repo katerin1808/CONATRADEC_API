@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 using System.Security.Cryptography;
 using static CONATRADEC_API.DTOs.AuthDtos;
 
@@ -131,6 +132,8 @@ namespace CONATRADEC_API.Controllers
             {
                 var (rolNombre, procNombre, interno) = await DescribeUsuarioAsync(u);
                 result.Add(MapToDto(u, rolNombre, procNombre, interno));
+                if (u.urlImagenUsuario.IsNullOrEmpty())
+                    u.urlImagenUsuario = "";
             }
             return Ok(result);
         }
@@ -190,7 +193,7 @@ namespace CONATRADEC_API.Controllers
                 rolId = rolId,
                 procedenciaId = procedenciaId,
                 municipioId = req.municipioId,
-                urlImagenUsuario = req.urlImagenUsuario.Trim(),
+                //urlImagenUsuario = string.Empty,
                 claveHashUsuario = BuildHash(req.clave)
             };
 
@@ -202,7 +205,76 @@ namespace CONATRADEC_API.Controllers
         }
 
         // ==========================
-        // 4) ACTUALIZAR (misma regla Interno/Externo)
+        // 4) SubirImagenUsuario (Interno/Externo en backend)
+        // ==========================
+        [HttpPost("{usuarioId:int}/SubirImagenUsuario")]
+        [RequestSizeLimit(10 * 1024 * 1024)] // 10 MB
+        public async Task<IActionResult> SubirImagenUsuario(int usuarioId, IFormFile? archivo)
+        {
+            if (archivo is null || archivo.Length == 0)
+                return BadRequest("Debe enviar un archivo de imagen en el campo 'archivo'.");
+
+            var usuario = await _db.Usuarios.FirstOrDefaultAsync(u => u.UsuarioId == usuarioId && u.activo);
+            if (usuario is null)
+                return NotFound("Usuario no encontrado o inactivo.");
+
+            // 🔹 Validar tipo de archivo
+            var permitidas = new[] { ".jpg", ".jpeg", ".png" };
+            var ext = Path.GetExtension(archivo.FileName).ToLowerInvariant();
+            if (!permitidas.Contains(ext))
+                return BadRequest("Formato no permitido. Use .jpg, .jpeg o .png");
+            if (!archivo.ContentType.StartsWith("image/"))
+                return BadRequest("El contenido no parece ser una imagen.");
+
+            // 🔹 Definir ruta base segura
+            var basePath = AppDomain.CurrentDomain.BaseDirectory;
+
+            // 🔹 Carpeta destino final
+            var uploadsRoot = Path.Combine(basePath, "root", "resources", "uploads", "users", "img");
+            Directory.CreateDirectory(uploadsRoot); // crea todas las subcarpetas si no existen
+
+            // 🔹 Nombre único del archivo
+            var nombreArchivo = $"user_{usuarioId}_{DateTime.UtcNow:yyyyMMddHHmmssfff}{ext}";
+            var rutaFisica = Path.Combine(uploadsRoot, nombreArchivo);
+
+            // 🔹 Guardar el archivo físico
+            using (var stream = new FileStream(rutaFisica, FileMode.Create))
+                await archivo.CopyToAsync(stream);
+
+            // 🔹 Construir URL pública
+            var baseUrl = $"{Request.Scheme}://{Request.Host.Value}";
+            var urlPublica = $"{baseUrl}/resources/uploads/users/img/{nombreArchivo}";
+
+            // 🔹 Borrar imagen anterior (si existía)
+            if (!string.IsNullOrWhiteSpace(usuario.urlImagenUsuario))
+            {
+                try
+                {
+                    var uri = new Uri(usuario.urlImagenUsuario);
+                    var rel = uri.AbsolutePath.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
+                    var oldPath = Path.Combine(basePath, "root", rel);
+                    if (System.IO.File.Exists(oldPath))
+                        System.IO.File.Delete(oldPath);
+                }
+                catch { /* log warning y continuar */ }
+            }
+
+            // 🔹 Actualizar BD
+            usuario.urlImagenUsuario = urlPublica;
+            await _db.SaveChangesAsync();
+
+            return Ok(new
+            {
+                usuario.UsuarioId,
+                usuario.nombreUsuario,
+                urlImagen = urlPublica
+            });
+        }
+
+
+
+        // ==========================
+        // 5) ACTUALIZAR (misma regla Interno/Externo)
         // ==========================
         [HttpPut("actualizar/{id:int}")]
         public async Task<IActionResult> Actualizar(int id, [FromBody] UsuarioActualizarDto req)
@@ -222,8 +294,8 @@ namespace CONATRADEC_API.Controllers
             u.municipioId = req.municipioId;
             u.identificacionUsuario = req.identificacionUsuario.Trim().ToUpper();
             if (req.activo.HasValue) u.activo = req.activo.Value;
-            if (!string.IsNullOrWhiteSpace(req.urlImagenUsuario))
-                u.urlImagenUsuario = req.urlImagenUsuario.Trim();
+            /*if (!string.IsNullOrWhiteSpace(req.urlImagenUsuario))
+                u.urlImagenUsuario = req.urlImagenUsuario.Trim();*/
             await EnsureProcedenciasAsync();
             u.procedenciaId = await GetProcedenciaIdAsync(req.esInterno);
 
@@ -246,7 +318,7 @@ namespace CONATRADEC_API.Controllers
         }
 
         // ==========================
-        // 5) ELIMINAR (Soft Delete)
+        // 6) ELIMINAR (Soft Delete)
         // ==========================
         [HttpDelete("eliminar/{id:int}")]
         public async Task<IActionResult> Eliminar(int id)

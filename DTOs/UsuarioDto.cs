@@ -37,8 +37,8 @@ namespace CONATRADEC_API.DTOs
         public string clave { get; set; } = default!;
 
         // 🔹 NUEVO (obligatorio)
-        [Required, MaxLength(300)]
-        public string urlImagenUsuario { get; set; } = default!;
+        /*[Required, MaxLength(300)]
+        public string urlImagenUsuario { get; set; } = default!;*/
     }
     public class UsuarioActualizarDto
     {
@@ -71,7 +71,7 @@ namespace CONATRADEC_API.DTOs
         public bool? activo { get; set; }
 
         // 🔹 NUEVO (obligatorio)
-        [Required, MaxLength(300)]
+        [Required, MaxLength(500)]
         public string urlImagenUsuario { get; set; } = default!;
     }
 
@@ -96,6 +96,6 @@ namespace CONATRADEC_API.DTOs
         public string procedenciaNombre { get; set; } = string.Empty;
         public bool esInterno { get; set; }
 
-        public string urlImagenUsuario { get; set; } = string.Empty;
+        public string? urlImagenUsuario { get; set; } = null;
     }
 }
