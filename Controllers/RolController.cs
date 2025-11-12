@@ -25,11 +25,11 @@ namespace CONATRADEC_API.Controllers
         public async Task<IActionResult> CrearRol([FromBody] RolCreateDto dto)
         {
             var nombre = dto.nombreRol.Trim();
-            var nombreLower = nombre.ToLower();
+            var nombreUpper = nombre.ToLower();
 
             // 1️⃣ Verificar si ya existe un rol activo con el mismo nombre
             var existeActivo = await _context.Roles
-                .AnyAsync(r => r.activo && r.nombreRol.ToLower() == nombreLower);
+                .AnyAsync(r => r.activo && r.nombreRol.ToUpper() == nombreUpper);
 
             if (existeActivo)
                 return Conflict("Ya existe un rol activo con ese nombre.");
@@ -37,8 +37,8 @@ namespace CONATRADEC_API.Controllers
             // 2️⃣ No importa si hay uno inactivo, simplemente crea uno nuevo
             var nuevoRol = new Rol
             {
-                nombreRol = nombre,
-                descripcionRol = dto.descripcionRol,
+                nombreRol = nombre.ToUpper(),
+                descripcionRol = dto.descripcionRol.ToUpper(),
                 activo = true
             };
 
@@ -112,8 +112,8 @@ namespace CONATRADEC_API.Controllers
                 return NotFound("No se encontró un rol activo con ese ID");
 
             // Actualizar solo los campos permitidos
-            rol.nombreRol = dto.nombreRol;
-            rol.descripcionRol = dto.descripcionRol;
+            rol.nombreRol = dto.nombreRol.ToUpper();
+            rol.descripcionRol = dto.descripcionRol.ToUpper();
 
             // Guardar los cambios
             await _context.SaveChangesAsync();

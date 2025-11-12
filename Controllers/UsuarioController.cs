@@ -180,12 +180,12 @@ namespace CONATRADEC_API.Controllers
 
             var usuario = new Usuario
             {
-                nombreUsuario = req.nombreUsuario.Trim(),
-                nombreCompletoUsuario = req.nombreCompletoUsuario.Trim(),
-                correoUsuario = req.correoUsuario.Trim(),
+                nombreUsuario = req.nombreUsuario.Trim().ToUpper(),
+                nombreCompletoUsuario = req.nombreCompletoUsuario.Trim().ToUpper(),
+                correoUsuario = req.correoUsuario.Trim().ToUpper(),
                 telefonoUsuario = req.telefonoUsuario,
                 fechaNacimientoUsuario = req.fechaNacimientoUsuario,
-                identificacionUsuario = req.identificacionUsuario,
+                identificacionUsuario = req.identificacionUsuario.Trim().ToUpper(),
                 activo = true,
                 rolId = rolId,
                 procedenciaId = procedenciaId,
@@ -215,12 +215,12 @@ namespace CONATRADEC_API.Controllers
             bool correoTomado = await _db.Usuarios.AnyAsync(x => x.UsuarioId != id && x.correoUsuario == req.correoUsuario);
             if (correoTomado) return Conflict("El correo ya está en uso por otro usuario.");
 
-            u.nombreCompletoUsuario = req.nombreCompletoUsuario.Trim();
-            u.correoUsuario = req.correoUsuario.Trim();
+            u.nombreCompletoUsuario = req.nombreCompletoUsuario.Trim().ToUpper();
+            u.correoUsuario = req.correoUsuario.Trim().ToUpper();
             u.telefonoUsuario = req.telefonoUsuario;
             u.fechaNacimientoUsuario = req.fechaNacimientoUsuario;
             u.municipioId = req.municipioId;
-            u.identificacionUsuario = req.identificacionUsuario;
+            u.identificacionUsuario = req.identificacionUsuario.Trim().ToUpper();
             if (req.activo.HasValue) u.activo = req.activo.Value;
             if (!string.IsNullOrWhiteSpace(req.urlImagenUsuario))
                 u.urlImagenUsuario = req.urlImagenUsuario.Trim();

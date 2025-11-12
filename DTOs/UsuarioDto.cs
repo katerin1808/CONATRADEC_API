@@ -30,7 +30,7 @@ namespace CONATRADEC_API.DTOs
         public int? municipioId { get; set; }
 
         [MaxLength(50)]
-        public string? identificacionUsuario { get; set; }
+        public string identificacionUsuario { get; set; } = "";
 
         // Contraseña en texto plano
         [Required, MinLength(6)]
@@ -66,7 +66,7 @@ namespace CONATRADEC_API.DTOs
         public int? municipioId { get; set; }
 
         [MaxLength(50)]
-        public string? identificacionUsuario { get; set; }
+        public string identificacionUsuario { get; set; } = "";
 
         public bool? activo { get; set; }
 
