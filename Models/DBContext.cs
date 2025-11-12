@@ -175,6 +175,12 @@ namespace CONATRADEC_API.Models
 
                 e.Property(x => x.activo).IsRequired().HasDefaultValue(true);
 
+                // 🔹 NUEVO: mapeo URL imagen (NOT NULL, varchar(300))
+                e.Property(x => x.urlImagenUsuario)
+                 .IsRequired()
+                 .HasMaxLength(300)
+                 .IsUnicode(false);
+
                 // Índices únicos (evita duplicados)
                 e.HasIndex(x => x.nombreUsuario).IsUnique();
                 e.HasIndex(x => x.correoUsuario).IsUnique();

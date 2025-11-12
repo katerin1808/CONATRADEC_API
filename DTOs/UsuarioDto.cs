@@ -35,6 +35,10 @@ namespace CONATRADEC_API.DTOs
         // Contraseña en texto plano
         [Required, MinLength(6)]
         public string clave { get; set; } = default!;
+
+        // 🔹 NUEVO (obligatorio)
+        [Required, MaxLength(300)]
+        public string urlImagenUsuario { get; set; } = default!;
     }
     public class UsuarioActualizarDto
     {
@@ -65,6 +69,10 @@ namespace CONATRADEC_API.DTOs
         public string? identificacionUsuario { get; set; }
 
         public bool? activo { get; set; }
+
+        // 🔹 NUEVO (obligatorio)
+        [Required, MaxLength(300)]
+        public string urlImagenUsuario { get; set; } = default!;
     }
 
     public class UsuarioReadDto
@@ -75,7 +83,10 @@ namespace CONATRADEC_API.DTOs
         public string correoUsuario { get; set; } = default!;
         public string? telefonoUsuario { get; set; }
         public DateOnly? fechaNacimientoUsuario { get; set; }
-        public bool activo { get; set; }
+       
+        [MaxLength(50)]
+        public string? identificacionUsuario { get; set; }
+
         public int rolId { get; set; }
         public int procedenciaId { get; set; }
         public int? municipioId { get; set; }
@@ -84,5 +95,7 @@ namespace CONATRADEC_API.DTOs
         public string rolNombre { get; set; } = string.Empty;
         public string procedenciaNombre { get; set; } = string.Empty;
         public bool esInterno { get; set; }
+
+        public string urlImagenUsuario { get; set; } = string.Empty;
     }
 }

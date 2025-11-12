@@ -24,6 +24,24 @@
 
             // Opcional: Token (si luego implementas JWT)
             public string? token { get; set; }
+
+            public string urlImagenUsuario { get; set; } = string.Empty;
+
+
+            public List<PermisoInterfazDto> permisos { get; set; } = new();
+        }
+
+        public class PermisoInterfazDto
+        {
+            public int interfazId { get; set; }
+            public string nombreInterfaz { get; set; } = default!;
+            public bool? leer { get; set; }
+
+            public bool? agregar { get; set; }
+
+            public bool? actualizar { get; set; }
+
+            public bool? eliminar { get; set; }
         }
     }
 }

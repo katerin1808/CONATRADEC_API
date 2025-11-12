@@ -108,13 +108,14 @@ namespace CONATRADEC_API.Controllers
             correoUsuario = u.correoUsuario,
             telefonoUsuario = u.telefonoUsuario,
             fechaNacimientoUsuario = u.fechaNacimientoUsuario,
-            activo = u.activo,
+           identificacionUsuario= u.identificacionUsuario,
             rolId = u.rolId,
             procedenciaId = u.procedenciaId,
             municipioId = u.municipioId,
             rolNombre = rolNombre,
             procedenciaNombre = procedenciaNombre,
-            esInterno = esInterno
+            esInterno = esInterno,
+             urlImagenUsuario = u.urlImagenUsuario
         };
 
         // ==========================
@@ -189,6 +190,7 @@ namespace CONATRADEC_API.Controllers
                 rolId = rolId,
                 procedenciaId = procedenciaId,
                 municipioId = req.municipioId,
+                urlImagenUsuario = req.urlImagenUsuario.Trim(),
                 claveHashUsuario = BuildHash(req.clave)
             };
 
@@ -220,7 +222,8 @@ namespace CONATRADEC_API.Controllers
             u.municipioId = req.municipioId;
             u.identificacionUsuario = req.identificacionUsuario;
             if (req.activo.HasValue) u.activo = req.activo.Value;
-
+            if (!string.IsNullOrWhiteSpace(req.urlImagenUsuario))
+                u.urlImagenUsuario = req.urlImagenUsuario.Trim();
             await EnsureProcedenciasAsync();
             u.procedenciaId = await GetProcedenciaIdAsync(req.esInterno);
 

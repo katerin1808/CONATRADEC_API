@@ -33,6 +33,9 @@ namespace CONATRADEC_API.Models
 
         public bool activo { get; set; } = true;
 
+
+        public string urlImagenUsuario { get; set; } = string.Empty;
+
         // ===== Relaciones (FK) =====
         public int rolId { get; set; }
         public Rol Rol { get; set; } = default!;

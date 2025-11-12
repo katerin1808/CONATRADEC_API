@@ -44,44 +44,64 @@ namespace CONATRADEC_API.Controllers
         // LOGIN
         // POST: api/Auth/login
         // ==========================
+        // POST: api/Auth/login
         [HttpPost("login")]
         public async Task<ActionResult<UsuarioLoginResponseDto>> Login([FromBody] UsuarioLoginDto req)
         {
-            if (!ModelState.IsValid)
-                return BadRequest(ModelState);
+            if (!ModelState.IsValid) return BadRequest(ModelState);
 
-            var usuario = await _db.Usuarios
-                .Include(u => u.Rol)
-                .Include(u => u.Procedencia)
-                .FirstOrDefaultAsync(u =>
-                    u.nombreUsuario == req.usuarioOEmail || u.correoUsuario == req.usuarioOEmail);
+            var u = await _db.Usuarios
+                .Include(x => x.Rol)
+                .Include(x => x.Procedencia)
+                .FirstOrDefaultAsync(x =>
+                    x.nombreUsuario == req.usuarioOEmail || x.correoUsuario == req.usuarioOEmail);
 
-            if (usuario is null)
-                return Unauthorized("Usuario o contraseña inválidos.");
+            if (u is null) return Unauthorized("Usuario o contraseña inválidos.");
+            if (!u.activo) return Unauthorized("Usuario inactivo.");
+            if (!VerifyHash(req.clave, u.claveHashUsuario)) return Unauthorized("Usuario o contraseña inválidos.");
 
-            if (!usuario.activo)
-                return Unauthorized("Usuario inactivo.");
+            // 🔹 Traer la matriz de permisos del rol del usuario
+            // Ajusta nombres de DbSet si en tu DbContext difieren (_db.RolInteraz / _db.Interfaz)
+            var permisos = await _db.RolInteraz
+                .Where(ri => ri.rolId == u.rolId)
+                .Join(
+                    _db.Interfaz.Where(i => i.activo),                      // filtra interfaces activas (si tienes esa columna)
+                    ri => ri.interfazId,
+                    i => i.interfazId,
+                    (ri, i) => new PermisoInterfazDto
+                    {
+                        interfazId = i.interfazId,
+                        nombreInterfaz = i.nombreInterfaz,
+                        leer = ri.leer,
+                        agregar = ri.agregar,
+                        actualizar = ri.actualizar,
+                        eliminar = ri.eliminar
+                    }
+                )
+                .OrderBy(p => p.nombreInterfaz)
+                .ToListAsync();
 
-            if (!VerifyHash(req.clave, usuario.claveHashUsuario))
-                return Unauthorized("Usuario o contraseña inválidos.");
-
-            var respuesta = new UsuarioLoginResponseDto
+            // 🔹 Construir respuesta
+            var resp = new UsuarioLoginResponseDto
             {
-                UsuarioId = usuario.UsuarioId,
-                nombreUsuario = usuario.nombreUsuario,
-                nombreCompletoUsuario = usuario.nombreCompletoUsuario,
-                correoUsuario = usuario.correoUsuario,
-                activo = usuario.activo,
-                rolId = usuario.rolId,
-                rolNombre = usuario.Rol.nombreRol,
-                procedenciaId = usuario.procedenciaId,
-                procedenciaNombre = usuario.Procedencia.nombreProcedencia,
-                esInterno = usuario.Procedencia.nombreProcedencia.Equals("Interno", StringComparison.OrdinalIgnoreCase)
+                UsuarioId = u.UsuarioId,
+                nombreUsuario = u.nombreUsuario,
+                nombreCompletoUsuario = u.nombreCompletoUsuario,
+                correoUsuario = u.correoUsuario,
+                activo = u.activo,
+
+                rolId = u.rolId,
+                rolNombre = u.Rol.nombreRol,
+
+                procedenciaId = u.procedenciaId,
+                procedenciaNombre = u.Procedencia.nombreProcedencia,
+                esInterno = u.Procedencia.nombreProcedencia.Equals("Interno", StringComparison.OrdinalIgnoreCase),
+                urlImagenUsuario = u.urlImagenUsuario,
+                permisos = permisos
             };
 
-            return Ok(respuesta);
-
+            return Ok(resp);
         }
-}
+    }
 }
 
