@@ -23,7 +23,7 @@ namespace CONATRADEC_API.Models
 
         public DbSet<Procedencia> Procedencia { get; set; } = null!;
         public DbSet<Usuario> Usuarios { get; set; } = null!;
-
+        public DbSet<Terreno> Terreno { get; set; } = null!;
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -201,6 +201,28 @@ namespace CONATRADEC_API.Models
                  .HasForeignKey(x => x.municipioId)
                  .OnDelete(DeleteBehavior.SetNull);
             });
+
+            modelBuilder.Entity<Terreno>(e =>
+            {
+                e.ToTable("terreno", "dbo");
+                e.HasKey(x => x.terrenoId);
+
+                e.Property(x => x.codigoTerreno).HasMaxLength(50).IsRequired();
+                e.Property(x => x.identificacionPropietarioTerreno).HasMaxLength(50).IsRequired();
+                e.Property(x => x.nombrePropietarioTerreno).HasMaxLength(150).IsRequired();
+                e.Property(x => x.direccionTerreno).HasMaxLength(300).IsRequired();
+
+                e.Property(x => x.extensionManzanaTerreno).HasPrecision(10, 2);
+                e.Property(x => x.cantidadQuintalesOro).HasPrecision(10, 2);
+                e.Property(x => x.latitud).HasPrecision(12, 8);
+                e.Property(x => x.longitud).HasPrecision(12, 8);
+
+                e.HasOne(x => x.Municipio)
+                 .WithMany()
+                 .HasForeignKey(x => x.municipioId)
+                 .OnDelete(DeleteBehavior.Restrict);
+            });
+
 
         }
 
