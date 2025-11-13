@@ -2,6 +2,7 @@ using CONATRADEC_API.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
@@ -31,14 +32,14 @@ app.UseHttpsRedirection();
 
 app.UseAuthorization();
 
-var rutaRecursos = Path.Combine(Directory.GetCurrentDirectory(), "root", "resources", "uploads", "users", "img");
+var rutaRecursos = Path.Combine(Directory.GetCurrentDirectory(), "resources", "uploads", "users", "img");
 Directory.CreateDirectory(rutaRecursos); // la crea si no existe la carpeta de resources
 
 app.UseStaticFiles(new StaticFileOptions
 {
     FileProvider = new PhysicalFileProvider(rutaRecursos),
     RequestPath = "/resources/uploads/users/img"
-});// sirve /root/resources/uploads/users/img
+});// sirve /resources/uploads/users/img
 
 app.MapControllers();
 

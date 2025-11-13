@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Security.Cryptography;
+using Microsoft.Extensions.Hosting;
 using static CONATRADEC_API.DTOs.AuthDtos;
 
 namespace CONATRADEC_API.Controllers
@@ -16,8 +17,14 @@ namespace CONATRADEC_API.Controllers
 
     public class UsuarioController : Controller
     {
+        public UsuarioController(DBContext db, IHostEnvironment env)
+        {
+            _db = db;
+            _env = env;
+        }
+
         private readonly DBContext _db;
-        public UsuarioController(DBContext db) => _db = db;
+        private readonly IHostEnvironment _env;
 
         // ==========================
         // Constantes
@@ -26,6 +33,9 @@ namespace CONATRADEC_API.Controllers
         private const string PROC_INTERNO = "Interno";
         private const string PROC_EXTERNO = "Externo";
         private const int PBKDF2_ITER = 100_000;
+
+
+
 
         // ==========================
         // Helpers de hash (PBKDF2)
@@ -109,14 +119,14 @@ namespace CONATRADEC_API.Controllers
             correoUsuario = u.correoUsuario,
             telefonoUsuario = u.telefonoUsuario,
             fechaNacimientoUsuario = u.fechaNacimientoUsuario,
-           identificacionUsuario= u.identificacionUsuario,
+            identificacionUsuario = u.identificacionUsuario,
             rolId = u.rolId,
             procedenciaId = u.procedenciaId,
             municipioId = u.municipioId,
             rolNombre = rolNombre,
             procedenciaNombre = procedenciaNombre,
             esInterno = esInterno,
-             urlImagenUsuario = u.urlImagenUsuario
+            urlImagenUsuario = u.urlImagenUsuario
         };
 
         // ==========================
@@ -230,12 +240,33 @@ namespace CONATRADEC_API.Controllers
             var basePath = AppDomain.CurrentDomain.BaseDirectory;
 
             // 🔹 Carpeta destino final
-            var uploadsRoot = Path.Combine(basePath, "root", "resources", "uploads", "users", "img");
+
+            var uploadsRoot = Path.Combine(
+                _env.ContentRootPath, "resources", "uploads", "users", "img" //base del proyecto
+            );
+
             Directory.CreateDirectory(uploadsRoot); // crea todas las subcarpetas si no existen
 
             // 🔹 Nombre único del archivo
-            var nombreArchivo = $"user_{usuarioId}_{DateTime.UtcNow:yyyyMMddHHmmssfff}{ext}";
+            var nombreArchivo = $"user_{usuario.nombreUsuario}_id_{usuario.UsuarioId}_{ext}";
             var rutaFisica = Path.Combine(uploadsRoot, nombreArchivo);
+
+
+            // 🔹 Borrar imagen anterior
+            if (!string.IsNullOrWhiteSpace(usuario.urlImagenUsuario))
+            {
+                try
+                {
+                    var uri = new Uri(usuario.urlImagenUsuario);
+                    var nombreArchivoAnterior = Path.GetFileName(uri.LocalPath);
+                    var oldPath = Path.Combine(_env.ContentRootPath, "resources", "uploads", "users", "img", nombreArchivoAnterior);
+
+                    if (System.IO.File.Exists(oldPath))
+                        System.IO.File.Delete(oldPath);
+                }
+                catch { /* log warning y continuar */ }
+            }
+
 
             // 🔹 Guardar el archivo físico
             using (var stream = new FileStream(rutaFisica, FileMode.Create))
@@ -245,20 +276,7 @@ namespace CONATRADEC_API.Controllers
             var baseUrl = $"{Request.Scheme}://{Request.Host.Value}";
             var urlPublica = $"{baseUrl}/resources/uploads/users/img/{nombreArchivo}";
 
-            // 🔹 Borrar imagen anterior (si existía)
-            if (!string.IsNullOrWhiteSpace(usuario.urlImagenUsuario))
-            {
-                try
-                {
-                    var uri = new Uri(usuario.urlImagenUsuario);
-                    var rel = uri.AbsolutePath.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
-                    var oldPath = Path.Combine(basePath, "root", rel);
-                    if (System.IO.File.Exists(oldPath))
-                        System.IO.File.Delete(oldPath);
-                }
-                catch { /* log warning y continuar */ }
-            }
-
+           
             // 🔹 Actualizar BD
             usuario.urlImagenUsuario = urlPublica;
             await _db.SaveChangesAsync();
