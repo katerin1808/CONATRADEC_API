@@ -25,6 +25,8 @@ namespace CONATRADEC_API.Models
         public DbSet<Usuario> Usuarios { get; set; } = null!;
         public DbSet<Terreno> Terreno { get; set; } = null!;
 
+        public DbSet<FuenteNutriente> FuenteNutrientes { get; set; } = null!;
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -222,6 +224,31 @@ namespace CONATRADEC_API.Models
                  .HasForeignKey(x => x.municipioId)
                  .OnDelete(DeleteBehavior.Restrict);
             });
+
+
+            modelBuilder.Entity<FuenteNutriente>(e =>
+            {
+                e.ToTable("fuenteNutriente", "dbo");
+
+                e.HasKey(x => x.fuenteNutrientesId);
+
+                e.Property(x => x.nombreNutriente)
+                    .HasMaxLength(150)
+                    .IsRequired();
+
+                e.Property(x => x.descripcionNutriente)
+                    .HasMaxLength(500)
+                    .IsRequired();
+
+                // Ajusta a la precisión real de tu columna
+                e.Property(x => x.precioNutriente)
+                    .HasPrecision(10, 2);
+
+                e.Property(x => x.activo)
+                    .IsRequired()
+                    .HasDefaultValue(true);
+            });
+
 
 
         }
