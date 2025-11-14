@@ -329,24 +329,30 @@ namespace CONATRADEC_API.Controllers
             var u = await _db.Usuarios.FirstOrDefaultAsync(x => x.UsuarioId == id);
             if (u is null) return NotFound("Usuario no encontrado.");
 
+            // === FIX DUPLICADOS ===
             var correoUp = req.correoUsuario.Trim().ToUpper();
 
-            bool correoTomado = await _db.Usuarios.AnyAsync(x => x.UsuarioId != id && x.correoUsuario == correoUp); // 👈 FIX
+            bool correoTomado = await _db.Usuarios.AnyAsync(x =>
+                x.UsuarioId != id && x.correoUsuario == correoUp);
 
             if (correoTomado) return Conflict("El correo ya está en uso por otro usuario.");
 
+            // === ACTUALIZAR CAMPOS ===
             u.nombreCompletoUsuario = req.nombreCompletoUsuario.Trim().ToUpper();
-            u.correoUsuario = req.correoUsuario.Trim().ToUpper();
+            u.correoUsuario = correoUp;
             u.telefonoUsuario = req.telefonoUsuario;
             u.fechaNacimientoUsuario = req.fechaNacimientoUsuario;
             u.municipioId = req.municipioId;
             u.identificacionUsuario = req.identificacionUsuario.Trim().ToUpper();
-            if (req.activo.HasValue) u.activo = req.activo.Value;
-            /*if (!string.IsNullOrWhiteSpace(req.urlImagenUsuario))
-                u.urlImagenUsuario = req.urlImagenUsuario.Trim();*/
+
+            if (req.activo.HasValue)
+                u.activo = req.activo.Value;
+
+            // === Procedencia ===
             await EnsureProcedenciasAsync();
             u.procedenciaId = await GetProcedenciaIdAsync(req.esInterno);
 
+            // === Rol ===
             if (!req.esInterno)
             {
                 u.rolId = await EnsureRolInvitadoAsync();
@@ -358,11 +364,34 @@ namespace CONATRADEC_API.Controllers
                 u.rolId = rol.rolId;
             }
 
+            // === Contraseña (opcional) ===
             if (!string.IsNullOrWhiteSpace(req.nuevaClave))
                 u.claveHashUsuario = BuildHash(req.nuevaClave);
 
             await _db.SaveChangesAsync();
-            return NoContent();
+
+            // === VOLVER A CARGAR DATOS ACTUALIZADOS ===
+            var (rolNombre, procNombre, interno) = await DescribeUsuarioAsync(u);
+
+            var dto = new UsuarioReadDto
+            {
+                UsuarioId = u.UsuarioId,
+                nombreUsuario = u.nombreUsuario,
+                nombreCompletoUsuario = u.nombreCompletoUsuario,
+                correoUsuario = u.correoUsuario,
+                telefonoUsuario = u.telefonoUsuario,
+                fechaNacimientoUsuario = u.fechaNacimientoUsuario,
+                identificacionUsuario = u.identificacionUsuario,
+                rolId = u.rolId,
+                procedenciaId = u.procedenciaId,
+                municipioId = u.municipioId,
+                rolNombre = rolNombre,
+                procedenciaNombre = procNombre,
+                esInterno = interno,
+                urlImagenUsuario = u.urlImagenUsuario
+            };
+
+            return Ok(dto);
         }
 
         // ==========================
