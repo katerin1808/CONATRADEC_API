@@ -49,6 +49,27 @@ namespace CONATRADEC_API.Controllers
             return $"PBKDF2${PBKDF2_ITER}${Convert.ToBase64String(salt)}${Convert.ToBase64String(hash)}";
         }
 
+
+        private static bool VerifyHash(string storedHash, string password)
+        {
+            try
+            {
+                var parts = storedHash.Split('$');
+                var iter = int.Parse(parts[1]);
+                var salt = Convert.FromBase64String(parts[2]);
+                var hashStored = Convert.FromBase64String(parts[3]);
+
+                using var pbkdf2 = new Rfc2898DeriveBytes(password, salt, iter, HashAlgorithmName.SHA256);
+                var hashNew = pbkdf2.GetBytes(32);
+
+                return hashStored.SequenceEqual(hashNew);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         // ==========================
         // Helpers Procedencia / Rol (sin esInterno)
         // ==========================
@@ -135,7 +156,11 @@ namespace CONATRADEC_API.Controllers
         [HttpGet("listar")]
         public async Task<ActionResult<IEnumerable<UsuarioReadDto>>> Listar()
         {
-            var usuarios = await _db.Usuarios.AsNoTracking().ToListAsync();
+            var usuarios = await _db.Usuarios
+                .AsNoTracking()
+                 .Where(u => u.activo)
+                 .ToListAsync();// 👈 FIX.ToListAsync();
+
             var result = new List<UsuarioReadDto>(usuarios.Count);
 
             foreach (var u in usuarios)
@@ -168,9 +193,11 @@ namespace CONATRADEC_API.Controllers
         public async Task<IActionResult> Crear([FromBody] UsuarioCrearDto req)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
+            var nombreUp = req.nombreUsuario.Trim().ToUpper();   // 👈 FIX
+            var correoUp = req.correoUsuario.Trim().ToUpper();   // 👈 FIX
 
             bool existe = await _db.Usuarios.AnyAsync(u =>
-                u.nombreUsuario == req.nombreUsuario || u.correoUsuario == req.correoUsuario);
+                  u.nombreUsuario == nombreUp || u.correoUsuario == correoUp);
             if (existe) return Conflict("El usuario o el correo ya existen.");
 
             await EnsureProcedenciasAsync();
@@ -302,7 +329,10 @@ namespace CONATRADEC_API.Controllers
             var u = await _db.Usuarios.FirstOrDefaultAsync(x => x.UsuarioId == id);
             if (u is null) return NotFound("Usuario no encontrado.");
 
-            bool correoTomado = await _db.Usuarios.AnyAsync(x => x.UsuarioId != id && x.correoUsuario == req.correoUsuario);
+            var correoUp = req.correoUsuario.Trim().ToUpper();
+
+            bool correoTomado = await _db.Usuarios.AnyAsync(x => x.UsuarioId != id && x.correoUsuario == correoUp); // 👈 FIX
+
             if (correoTomado) return Conflict("El correo ya está en uso por otro usuario.");
 
             u.nombreCompletoUsuario = req.nombreCompletoUsuario.Trim().ToUpper();
@@ -347,6 +377,30 @@ namespace CONATRADEC_API.Controllers
             u.activo = false;
             await _db.SaveChangesAsync();
             return NoContent();
+        }
+
+
+        [HttpPut("{id:int}/actualizar-clave")]
+        public async Task<IActionResult> ActualizarClave(int id, [FromBody] UsuarioActualizarClaveDto req)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            // 1) Verificar que el usuario exista y esté activo
+            var usuario = await _db.Usuarios.FirstOrDefaultAsync(u => u.UsuarioId == id && u.activo);
+            if (usuario is null)
+                return NotFound("Usuario no encontrado o inactivo.");
+
+            // 2) Verificar contraseña actual
+            if (!VerifyHash(usuario.claveHashUsuario, req.claveActual))
+                return BadRequest("La contraseña actual es incorrecta.");
+
+            // 3) Guardar la nueva contraseña
+            usuario.claveHashUsuario = BuildHash(req.nuevaClave);
+
+            await _db.SaveChangesAsync();
+
+            return Ok("Contraseña actualizada correctamente.");
         }
     }
 }

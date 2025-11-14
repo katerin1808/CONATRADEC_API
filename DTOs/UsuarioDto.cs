@@ -98,4 +98,11 @@ namespace CONATRADEC_API.DTOs
 
         public string? urlImagenUsuario { get; set; } = null;
     }
+
+
+    public class UsuarioActualizarClaveDto
+    {
+        public string claveActual { get; set; } = null!;
+        public string nuevaClave { get; set; } = null!;
+    }
 }
