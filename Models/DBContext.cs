@@ -27,6 +27,8 @@ namespace CONATRADEC_API.Models
 
         public DbSet<FuenteNutriente> FuenteNutrientes { get; set; } = null!;
 
+        public DbSet<ElementoQuimico> ElementoQuimicos { get; set; } = null!;
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -249,7 +251,29 @@ namespace CONATRADEC_API.Models
                     .HasDefaultValue(true);
             });
 
+            modelBuilder.Entity<ElementoQuimico>(e =>
+            {
+                e.ToTable("elementoQuimico", "dbo");
 
+                e.HasKey(x => x.elementoQuimicosId);
+
+                e.Property(x => x.simboloElementoQuimico)
+                    .HasMaxLength(5)
+                    .IsFixedLength()   // CHAR(N) en SQL
+                    .IsRequired();
+
+                e.Property(x => x.nombreElementoQuimico)
+                    .HasMaxLength(150)
+                    .IsRequired();
+
+                // Peso atómico: DECIMAL(10,5)
+                e.Property(x => x.pesoEquivalentEelementoQuimico)
+                    .HasPrecision(10, 5);
+
+                e.Property(x => x.activo)
+                    .HasDefaultValue(true)
+                    .IsRequired();
+            });
 
         }
 
