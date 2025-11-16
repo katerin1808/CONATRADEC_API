@@ -116,45 +116,57 @@ namespace CONATRADEC_API.Controllers
             return Ok(departamentos);
         }
 
-        [HttpPost("listar-paginado")]
-        public async Task<ActionResult> ListarPaginado([FromBody] PaginacionRequest? req)
+        [HttpPost("conteo-paginado")]
+        public async Task<ActionResult> ConteoPaginado([FromBody] ConteoPaginadoRequest req)
         {
-            if (req is null)
-                return BadRequest("Debe enviar page y pageSize en el JSON.");
+            if (req == null)
+                return BadRequest("Debe enviar datos en el JSON.");
 
-            if (req.Page <= 0)
-                return BadRequest("El número de página debe ser mayor a 0.");
-
-            if (req.PageSize <= 0)
-                return BadRequest("El tamaño de página debe ser mayor a 0.");
-
+            // Query base
             var query = _ctx.Departamento
                 .AsNoTracking()
-                .Where(d => d.Activo)
-                .OrderBy(d => d.NombreDepartamento);
+                .Where(d => d.Activo);
 
+            // Total de registros existentes
             int totalRegistros = await query.CountAsync();
             int totalPaginas = (int)Math.Ceiling(totalRegistros / (double)req.PageSize);
 
-            var data = await query
-                .Skip((req.Page - 1) * req.PageSize)
-                .Take(req.PageSize)
-                .Select(d => new DepartamentoResponse
+            // =============================
+            // ✔ CASO A: SOLO DESEA TOTALIDAD
+            // =============================
+            if (!req.ContarIntervalo || req.Inicio <= 0 || req.Fin <= 0)
+            {
+                return Ok(new
                 {
-                    DepartamentoId = d.DepartamentoId,
-                    NombreDepartamento = d.NombreDepartamento,
-                    NombrePais = d.Pais.NombrePais,
-                    Activo = d.Activo
-                })
-                .ToListAsync();
+                    totalRegistros,
+                    totalPaginas
+                });
+            }
+
+            // =============================
+            // ✔ CASO B: CONTAR INTERVALO DE PÁGINAS
+            // =============================
+
+            // corregir límites fuera de rango
+            if (req.Inicio > totalPaginas) req.Inicio = totalPaginas;
+            if (req.Fin > totalPaginas) req.Fin = totalPaginas;
+            if (req.Inicio > req.Fin) req.Inicio = req.Fin;
+
+            // Calcular los elementos entre esas páginas
+            int skip = (req.Inicio - 1) * req.PageSize;
+            int take = (req.Fin - req.Inicio + 1) * req.PageSize;
+
+            int cantidadIntervalo = await query
+                .Skip(skip)
+                .Take(take)
+                .CountAsync();
 
             return Ok(new
             {
-                page = req.Page,
+                inicio = req.Inicio,
+                fin = req.Fin,
                 pageSize = req.PageSize,
-                totalRegistros,
-                totalPaginas,
-                data
+                cantidad = cantidadIntervalo
             });
         }
 
