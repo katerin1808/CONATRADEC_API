@@ -19,12 +19,12 @@ namespace CONATRADEC_API.Controllers
         public async Task<ActionResult<IEnumerable<FuenteNutrienteListarDto>>> Listar()
         {
             var lista = await _db.FuenteNutrientes
-                .Where(x => x.activo)  // activo = 1
+                .Where(x => x.activo)
                 .Select(x => new FuenteNutrienteListarDto
                 {
                     fuenteNutrientesId = x.fuenteNutrientesId,
-                    nombreNutriente = x.nombreNutriente,
-                    descripcionNutriente = x.descripcionNutriente,
+                    nombreNutriente = x.nombreNutriente.Trim(),
+                    descripcionNutriente = x.descripcionNutriente.Trim(),
                     precioNutriente = x.precioNutriente
                 })
                 .ToListAsync();
@@ -33,7 +33,7 @@ namespace CONATRADEC_API.Controllers
         }
 
         // ============================================
-        // CREAR (CON BEGIN TRANSACTION)
+        // CREAR (VALIDAR DUPLICADO)
         // ============================================
         [HttpPost("crear")]
         public async Task<IActionResult> Crear([FromBody] FuenteNutrienteCrearDto dto)
@@ -42,10 +42,19 @@ namespace CONATRADEC_API.Controllers
 
             try
             {
+                string nombre = dto.nombreNutriente.Trim().ToUpper();
+
+                // 🔹 Validar duplicados
+                bool existe = await _db.FuenteNutrientes
+                    .AnyAsync(f => f.nombreNutriente.Trim().ToUpper() == nombre && f.activo);
+
+                if (existe)
+                    return BadRequest($"Ya existe una fuente de nutriente con el nombre '{dto.nombreNutriente}'.");
+
                 var entidad = new FuenteNutriente
                 {
-                    nombreNutriente = dto.nombreNutriente,
-                    descripcionNutriente = dto.descripcionNutriente,
+                    nombreNutriente = nombre,
+                    descripcionNutriente = dto.descripcionNutriente.Trim(),
                     precioNutriente = dto.precioNutriente,
                     activo = true
                 };
@@ -64,22 +73,49 @@ namespace CONATRADEC_API.Controllers
         }
 
         // ============================================
-        // EDITAR
+        // EDITAR (VALIDAR EXISTENCIA + DUPLICADOS)
         // ============================================
         [HttpPut("editar/{id}")]
         public async Task<IActionResult> Editar(int id, [FromBody] FuenteNutrienteEditarDto dto)
         {
-            var entidad = await _db.FuenteNutrientes.FindAsync(id);
-            if (entidad is null)
-                return NotFound("Fuente de nutrientes no encontrada.");
+            using var trans = await _db.Database.BeginTransactionAsync();
 
-            entidad.nombreNutriente = dto.nombreNutriente;
-            entidad.descripcionNutriente = dto.descripcionNutriente;
-            entidad.precioNutriente = dto.precioNutriente;
+            try
+            {
+                // 🔹 Solo elementos activos
+                var entidad = await _db.FuenteNutrientes
+                    .FirstOrDefaultAsync(f => f.fuenteNutrientesId == id && f.activo);
 
-            await _db.SaveChangesAsync();
+                if (entidad is null)
+                    return NotFound("Fuente de nutrientes no encontrada o ya eliminada.");
 
-            return Ok("Fuente de nutrientes editada correctamente.");
+                string nombre = dto.nombreNutriente.Trim().ToUpper();
+
+                // 🔹 Validar duplicados (excluyendo el mismo ID)
+                bool existe = await _db.FuenteNutrientes
+                    .AnyAsync(f =>
+                        f.fuenteNutrientesId != id &&
+                        f.activo &&
+                        f.nombreNutriente.Trim().ToUpper() == nombre);
+
+                if (existe)
+                    return BadRequest($"Ya existe una fuente de nutriente con el nombre '{dto.nombreNutriente}'.");
+
+                // 🔹 Actualizar
+                entidad.nombreNutriente = nombre;
+                entidad.descripcionNutriente = dto.descripcionNutriente.Trim();
+                entidad.precioNutriente = dto.precioNutriente;
+
+                await _db.SaveChangesAsync();
+                await trans.CommitAsync();
+
+                return Ok("Fuente de nutrientes editada correctamente.");
+            }
+            catch (Exception ex)
+            {
+                await trans.RollbackAsync();
+                return BadRequest(ex.Message);
+            }
         }
 
         // ============================================
@@ -88,7 +124,6 @@ namespace CONATRADEC_API.Controllers
         [HttpDelete("eliminar/{id}")]
         public async Task<IActionResult> Eliminar(int id)
         {
-            // Buscamos solo si está activo
             var entidad = await _db.FuenteNutrientes
                 .FirstOrDefaultAsync(f => f.fuenteNutrientesId == id && f.activo);
 

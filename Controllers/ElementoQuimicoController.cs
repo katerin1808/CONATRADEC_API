@@ -24,8 +24,12 @@ namespace CONATRADEC_API.Controllers
                 .Select(x => new ElementoQuimicoListarDto
                 {
                     elementoQuimicosId = x.elementoQuimicosId,
-                    simboloElementoQuimico = x.simboloElementoQuimico,
-                    nombreElementoQuimico = x.nombreElementoQuimico,
+
+                    // 🔹 QUITAR ESPACIOS EN BLANCO
+                    simboloElementoQuimico = x.simboloElementoQuimico.Trim(),
+
+                    nombreElementoQuimico = x.nombreElementoQuimico.Trim(),
+
                     pesoEquivalentEelementoQuimico = x.pesoEquivalentEelementoQuimico
                 })
                 .ToListAsync();
@@ -34,7 +38,7 @@ namespace CONATRADEC_API.Controllers
         }
 
         // ============================================
-        // CREAR (CON BEGIN TRANSACTION)
+        // CREAR (CON VALIDACIÓN DE DUPLICADOS)
         // ============================================
         [HttpPost("crear")]
         public async Task<IActionResult> Crear([FromBody] ElementoQuimicoCrearDto dto)
@@ -43,10 +47,19 @@ namespace CONATRADEC_API.Controllers
 
             try
             {
+                string simbolo = dto.simboloElementoQuimico.Trim().ToUpper();
+
+                // 🔹 VALIDAR DUPLICADOS POR SÍMBOLO
+                bool existe = await _db.ElementoQuimicos
+                    .AnyAsync(x => x.simboloElementoQuimico.Trim().ToUpper() == simbolo && x.activo);
+
+                if (existe)
+                    return BadRequest($"Ya existe un elemento con el símbolo '{simbolo}'.");
+
                 var entidad = new ElementoQuimico
                 {
-                    simboloElementoQuimico = dto.simboloElementoQuimico,
-                    nombreElementoQuimico = dto.nombreElementoQuimico,
+                    simboloElementoQuimico = simbolo,
+                    nombreElementoQuimico = dto.nombreElementoQuimico.Trim(),
                     pesoEquivalentEelementoQuimico = dto.pesoEquivalentEelementoQuimico,
                     activo = true
                 };
@@ -65,24 +78,50 @@ namespace CONATRADEC_API.Controllers
         }
 
         // ============================================
-        // EDITAR
+        // EDITAR (VALIDANDO EXISTENCIA + DUPLICADO + ACTIVO)
         // ============================================
         [HttpPut("editar/{id}")]
         public async Task<IActionResult> Editar(int id, [FromBody] ElementoQuimicoEditarDto dto)
         {
-            var entidad = await _db.ElementoQuimicos.FindAsync(id);
-            if (entidad is null)
-                return NotFound("Elemento químico no encontrado.");
+            using var trans = await _db.Database.BeginTransactionAsync();
 
-            entidad.simboloElementoQuimico = dto.simboloElementoQuimico;
-            entidad.nombreElementoQuimico = dto.nombreElementoQuimico;
-            entidad.pesoEquivalentEelementoQuimico = dto.pesoEquivalentEelementoQuimico;
+            try
+            {
+                // 🔹 Buscar solo elementos activos
+                var entidad = await _db.ElementoQuimicos
+                    .FirstOrDefaultAsync(x => x.elementoQuimicosId == id && x.activo);
 
-            await _db.SaveChangesAsync();
+                if (entidad is null)
+                    return NotFound("Elemento químico no encontrado o ya está eliminado.");
 
-            return Ok("Elemento químico editado correctamente.");
+                string simbolo = dto.simboloElementoQuimico.Trim().ToUpper();
+
+                // 🔹 VALIDAR DUPLICADO (excluyendo el mismo ID)
+                bool existe = await _db.ElementoQuimicos
+                    .AnyAsync(x =>
+                        x.elementoQuimicosId != id &&
+                        x.activo &&
+                        x.simboloElementoQuimico.Trim().ToUpper() == simbolo);
+
+                if (existe)
+                    return BadRequest($"Ya existe un elemento con el símbolo '{simbolo}'.");
+
+                // 🔹 Actualizar campos
+                entidad.simboloElementoQuimico = simbolo;
+                entidad.nombreElementoQuimico = dto.nombreElementoQuimico.Trim();
+                entidad.pesoEquivalentEelementoQuimico = dto.pesoEquivalentEelementoQuimico;
+
+                await _db.SaveChangesAsync();
+                await trans.CommitAsync();
+
+                return Ok("Elemento químico editado correctamente.");
+            }
+            catch (Exception ex)
+            {
+                await trans.RollbackAsync();
+                return BadRequest(ex.Message);
+            }
         }
-
         // ============================================
         // ELIMINAR (LÓGICO)
         // ============================================
@@ -93,6 +132,10 @@ namespace CONATRADEC_API.Controllers
             if (entidad is null)
                 return NotFound("Elemento químico no encontrado.");
 
+            // 🔹 EVITAR ELIMINAR MÁS DE UNA VEZ
+            if (!entidad.activo)
+                return BadRequest("El elemento ya se encuentra eliminado.");
+
             entidad.activo = false;
             await _db.SaveChangesAsync();
 
@@ -100,3 +143,4 @@ namespace CONATRADEC_API.Controllers
         }
     }
 }
+
