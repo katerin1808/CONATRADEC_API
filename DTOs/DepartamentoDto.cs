@@ -23,6 +23,12 @@ namespace CONATRADEC_API.DTOs
            
         }
 
+        public class PaginacionRequest
+        {
+            public int Page { get; set; }
+            public int PageSize { get; set; }
+        }
+
         public class DepartamentoResponse
         {
             public int DepartamentoId { get; set; }

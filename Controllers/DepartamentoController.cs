@@ -116,6 +116,48 @@ namespace CONATRADEC_API.Controllers
             return Ok(departamentos);
         }
 
+        [HttpPost("listar-paginado")]
+        public async Task<ActionResult> ListarPaginado([FromBody] PaginacionRequest? req)
+        {
+            if (req is null)
+                return BadRequest("Debe enviar page y pageSize en el JSON.");
+
+            if (req.Page <= 0)
+                return BadRequest("El número de página debe ser mayor a 0.");
+
+            if (req.PageSize <= 0)
+                return BadRequest("El tamaño de página debe ser mayor a 0.");
+
+            var query = _ctx.Departamento
+                .AsNoTracking()
+                .Where(d => d.Activo)
+                .OrderBy(d => d.NombreDepartamento);
+
+            int totalRegistros = await query.CountAsync();
+            int totalPaginas = (int)Math.Ceiling(totalRegistros / (double)req.PageSize);
+
+            var data = await query
+                .Skip((req.Page - 1) * req.PageSize)
+                .Take(req.PageSize)
+                .Select(d => new DepartamentoResponse
+                {
+                    DepartamentoId = d.DepartamentoId,
+                    NombreDepartamento = d.NombreDepartamento,
+                    NombrePais = d.Pais.NombrePais,
+                    Activo = d.Activo
+                })
+                .ToListAsync();
+
+            return Ok(new
+            {
+                page = req.Page,
+                pageSize = req.PageSize,
+                totalRegistros,
+                totalPaginas,
+                data
+            });
+        }
+
         [HttpPut("actualizar/{id:int}")]
         [Consumes("application/json")]
         public async Task<ActionResult> Update(int id, [FromBody] DepartamentoUpdateRequest? req)
