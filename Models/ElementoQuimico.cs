@@ -19,5 +19,11 @@ namespace CONATRADEC_API.Models
         public decimal pesoEquivalentEelementoQuimico { get; set; }
 
         public bool activo { get; set; } = true;
+
+        // ======== Relaciones opcionales (si se ocupan después) ========
+
+        public ICollection<AnalisisSueloElementoQuimico>? AnalisisSueloElementos { get; set; }
+        public ICollection<RangoNutrimental>? RangosNutrimentales { get; set; }
+        public ICollection<FuenteNutrienteElementoQuimico>? FuenteNutrienteElementos { get; set; }
     }
 }
