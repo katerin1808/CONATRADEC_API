@@ -23,6 +23,14 @@ namespace CONATRADEC_API.DTOs
            
         }
 
+        public class ConteoPaginadoRequest
+        {
+            public bool ContarIntervalo { get; set; }
+            public int Inicio { get; set; }
+            public int Fin { get; set; }
+            public int PageSize { get; set; } = 20; // valor por defecto
+        }
+
         public class DepartamentoResponse
         {
             public int DepartamentoId { get; set; }

@@ -7,7 +7,7 @@ using static CONATRADEC_API.DTOs.TerrenoDto;
 namespace CONATRADEC_API.Controllers
 {
     [ApiController]
-    [Route("api/ terreno ")]
+    [Route("api/terreno")]
     public class TerrenoController : ControllerBase
     {
         private readonly DBContext _db;
@@ -119,6 +119,7 @@ namespace CONATRADEC_API.Controllers
             terreno.longitud = dto.longitud;
 
             await _db.SaveChangesAsync();
+
             return Ok("Terreno editado correctamente.");
         }
 

@@ -116,6 +116,60 @@ namespace CONATRADEC_API.Controllers
             return Ok(departamentos);
         }
 
+        [HttpPost("conteo-paginado")]
+        public async Task<ActionResult> ConteoPaginado([FromBody] ConteoPaginadoRequest req)
+        {
+            if (req == null)
+                return BadRequest("Debe enviar datos en el JSON.");
+
+            // Query base
+            var query = _ctx.Departamento
+                .AsNoTracking()
+                .Where(d => d.Activo);
+
+            // Total de registros existentes
+            int totalRegistros = await query.CountAsync();
+            int totalPaginas = (int)Math.Ceiling(totalRegistros / (double)req.PageSize);
+
+            // =============================
+            // ✔ CASO A: SOLO DESEA TOTALIDAD
+            // =============================
+            if (!req.ContarIntervalo || req.Inicio <= 0 || req.Fin <= 0)
+            {
+                return Ok(new
+                {
+                    totalRegistros,
+                    totalPaginas
+                });
+            }
+
+            // =============================
+            // ✔ CASO B: CONTAR INTERVALO DE PÁGINAS
+            // =============================
+
+            // corregir límites fuera de rango
+            if (req.Inicio > totalPaginas) req.Inicio = totalPaginas;
+            if (req.Fin > totalPaginas) req.Fin = totalPaginas;
+            if (req.Inicio > req.Fin) req.Inicio = req.Fin;
+
+            // Calcular los elementos entre esas páginas
+            int skip = (req.Inicio - 1) * req.PageSize;
+            int take = (req.Fin - req.Inicio + 1) * req.PageSize;
+
+            int cantidadIntervalo = await query
+                .Skip(skip)
+                .Take(take)
+                .CountAsync();
+
+            return Ok(new
+            {
+                inicio = req.Inicio,
+                fin = req.Fin,
+                pageSize = req.PageSize,
+                cantidad = cantidadIntervalo
+            });
+        }
+
         [HttpPut("actualizar/{id:int}")]
         [Consumes("application/json")]
         public async Task<ActionResult> Update(int id, [FromBody] DepartamentoUpdateRequest? req)

@@ -31,7 +31,6 @@
             public string direccionTerreno { get; set; } = null!;
             public decimal extensionManzanaTerreno { get; set; }
             public DateOnly fechaIngresoTerreno { get; set; }
-
             public int municipioId { get; set; }
             public decimal cantidadQuintalesOro { get; set; }
             public decimal latitud { get; set; }
@@ -52,7 +51,7 @@
             public int municipioId { get; set; }
             public string nombreMunicipio { get; set; } = null!;
         }
-
+     
         public class TerrenoListarDto
         {
             public int terrenoId { get; set; }
