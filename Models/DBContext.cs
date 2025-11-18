@@ -29,6 +29,8 @@ namespace CONATRADEC_API.Models
 
         public DbSet<ElementoQuimico> ElementoQuimicos { get; set; } = null!;
 
+        public DbSet<FuenteNutrienteElementoQuimico> FuenteNutrienteElementoQuimicos { get; set; }
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
