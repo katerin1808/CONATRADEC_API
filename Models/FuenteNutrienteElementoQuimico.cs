@@ -14,13 +14,19 @@ namespace CONATRADEC_API.Models
 
         public decimal cantidadAporte { get; set; }
 
+       
+        public int fuenteNutrientesId { get; set; }
 
-        public FuenteNutriente FuenteNutriente { get; set; } = null!;
+        [ForeignKey(nameof(fuenteNutrientesId))]
+        public FuenteNutriente? FuenteNutriente { get; set; }
 
+        // ===============================
+        // FK -> ElementoQuimico
+        // ===============================
         public int elementoQuimicosId { get; set; }
 
         [ForeignKey(nameof(elementoQuimicosId))]
-        public ElementoQuimico ElementoQuimico { get; set; } = null!;
+        public ElementoQuimico? ElementoQuimico { get; set; }
 
         public bool activo { get; set; } = true;
     }

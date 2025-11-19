@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 [Route("api/analisis-suelo")]
 public class AnalisisSueloController : ControllerBase
 {
+
     private readonly DBContext _db;
 
     public AnalisisSueloController(DBContext db)

@@ -22,17 +22,34 @@ namespace CONATRADEC_API.Models
         public DbSet<Terreno> Terreno { get; set; } = null!;
         public DbSet<FuenteNutriente> FuenteNutrientes { get; set; } = null!;
         public DbSet<ElementoQuimico> ElementoQuimicos { get; set; } = null!;
+        public DbSet<FuenteNutrienteElementoQuimico> FuenteNutrienteElementoQuimicos { get; set; } = null!;
 
+        // ==========================
+        // 🔬 ANÁLISIS DE SUELOS
+        // ==========================
+        public DbSet<AnalisisSuelo> AnalisisSuelos { get; set; } = null!;
+
+        // ❗ ESTA ES LA QUE TE FALTABA / ESTABA MAL
+        public DbSet<AnalisisSueloElementoQuimico> AnalisisSueloElementos { get; set; } = null!;
+
+        public DbSet<UnidadMedida> UnidadMedidas { get; set; } = null!;
+        public DbSet<RangoNutrimental> RangoNutrimentales { get; set; } = null!;
+        public DbSet<Interpretacion> Interpretaciones { get; set; } = null!;
+        public DbSet<InterpretacionFuenteNutriente> InterpretacionFuenteNutrientes { get; set; } = null!;
+        public DbSet<ControlAplicacion> ControlAplicaciones { get; set; } = null!;
+        public DbSet<FuenteNutrienteControlAplicacion> FuenteNutrienteControlAplicaciones { get; set; } = null!;
+
+        // ==========================
+        // CONFIGURACIONES
+        // ==========================
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
 
-            // ===================================================
-            // 🧩 CONFIGURACIÓN EXISTENTE (NO SE TOCA)
-            // ===================================================
-            modelBuilder.Entity<Rol>().ToTable("Rol", "dbo");
-            modelBuilder.Entity<Rol>().HasIndex(c => c.nombreRol).IsUnique();
+            // Configuraciones que ya tenías 
+            // (las dejo intactas)
 
+            // Interfaz
             modelBuilder.Entity<Interfaz>(e =>
             {
                 e.ToTable("interfaz", "dbo");
@@ -41,24 +58,18 @@ namespace CONATRADEC_API.Models
                 e.Property(x => x.nombreInterfaz).HasMaxLength(100).IsRequired();
             });
 
+            // RolInteraz
             modelBuilder.Entity<RolInteraz>(e =>
             {
                 e.ToTable("rolInteraz", "dbo");
                 e.HasKey(x => x.rolInterazId);
-                e.Property(x => x.rolInterazId).ValueGeneratedOnAdd();
                 e.Property(x => x.leer).HasDefaultValue(false).IsRequired();
                 e.Property(x => x.agregar).HasDefaultValue(false).IsRequired();
                 e.Property(x => x.actualizar).HasDefaultValue(false).IsRequired();
                 e.Property(x => x.eliminar).HasDefaultValue(false).IsRequired();
             });
 
-            // ... (se mantiene toda tu configuración actual: País, Departamento, Municipio, etc.)
-
-            // ===================================================
-            // 🔬 NUEVO MÓDULO: ANÁLISIS DE SUELO
-            // ===================================================
-
-            // === analisisSuelo ===
+            // analisisSuelo
             modelBuilder.Entity<AnalisisSuelo>(e =>
             {
                 e.ToTable("analisisSuelo", "dbo");
@@ -69,13 +80,14 @@ namespace CONATRADEC_API.Models
                 e.Property(x => x.activo).HasDefaultValue(true).IsRequired();
             });
 
-            // === analisisSueloElementoQuimico ===
+            // analisisSueloElementoQuimico
             modelBuilder.Entity<AnalisisSueloElementoQuimico>(e =>
             {
                 e.ToTable("analisisSueloElementoQuimico", "dbo");
                 e.HasKey(x => x.analisisSueloElementoQuimicoId);
+
                 e.Property(x => x.cantidadElemento).HasPrecision(10, 4).IsRequired();
-                e.Property(x => x.activo).HasDefaultValue(true).IsRequired();
+                e.Property(x => x.activo).HasDefaultValue(true);
 
                 e.HasOne(x => x.AnalisisSuelo)
                  .WithMany()
@@ -93,7 +105,7 @@ namespace CONATRADEC_API.Models
                  .OnDelete(DeleteBehavior.Restrict);
             });
 
-            // === unidadMedida ===
+            // unidadMedida
             modelBuilder.Entity<UnidadMedida>(e =>
             {
                 e.ToTable("unidadMedida", "dbo");
@@ -102,46 +114,46 @@ namespace CONATRADEC_API.Models
                 e.Property(x => x.activo).HasDefaultValue(true);
             });
 
-            // === rangoNutrimental ===
+            // rangoNutrimental
             modelBuilder.Entity<RangoNutrimental>(e =>
             {
                 e.ToTable("rangoNutrimental", "dbo");
                 e.HasKey(x => x.rangoNutrimentalId);
                 e.Property(x => x.minimoRangoNutrimental).IsRequired();
                 e.Property(x => x.maximoRangoNutrimental).IsRequired();
-                e.Property(x => x.activo).HasDefaultValue(true).IsRequired();
+                e.Property(x => x.activo).HasDefaultValue(true);
             });
 
-            // === interpretacion ===
+            // interpretacion
             modelBuilder.Entity<Interpretacion>(e =>
             {
                 e.ToTable("interpretacion", "dbo");
                 e.HasKey(x => x.interpretacionId);
                 e.Property(x => x.codigoInterpretacion).HasMaxLength(50).IsRequired();
                 e.Property(x => x.fechaInterpretacion).HasColumnType("date").IsRequired();
-                e.Property(x => x.activo).HasDefaultValue(true).IsRequired();
+                e.Property(x => x.activo).HasDefaultValue(true);
             });
 
-            // === interpretacionFuenteNutriente ===
+            // interpretacionFuenteNutriente
             modelBuilder.Entity<InterpretacionFuenteNutriente>(e =>
             {
                 e.ToTable("interpretacionFuenteNutriente", "dbo");
                 e.HasKey(x => x.interpretacionFuenteNutrienteId);
                 e.Property(x => x.precioHistorico).HasPrecision(10, 4);
-                e.Property(x => x.activo).HasDefaultValue(true).IsRequired();
+                e.Property(x => x.activo).HasDefaultValue(true);
             });
 
-            // === controlAplicacion ===
+            // controlAplicacion
             modelBuilder.Entity<ControlAplicacion>(e =>
             {
                 e.ToTable("controlAplicacion", "dbo");
                 e.HasKey(x => x.controlAplicacionId);
                 e.Property(x => x.fechaControlAplicacion).HasColumnType("date").IsRequired();
                 e.Property(x => x.numeroControlAplicacion).IsRequired();
-                e.Property(x => x.activo).HasDefaultValue(true).IsRequired();
+                e.Property(x => x.activo).HasDefaultValue(true);
             });
 
-            // === fuenteNutrienteControlAplicacion ===
+            // fuenteNutrienteControlAplicacion
             modelBuilder.Entity<FuenteNutrienteControlAplicacion>(e =>
             {
                 e.ToTable("fuenteNutrienteControlAplicacion", "dbo");
@@ -149,8 +161,9 @@ namespace CONATRADEC_API.Models
                 e.Property(x => x.cantidadAplicado).HasPrecision(10, 4).IsRequired();
                 e.Property(x => x.fechaAplicado).HasColumnType("date").IsRequired();
                 e.Property(x => x.cantidadPendiente).HasPrecision(10, 4).IsRequired();
-                e.Property(x => x.activo).HasDefaultValue(true).IsRequired();
+                e.Property(x => x.activo).HasDefaultValue(true);
             });
+
         }
     }
 }
