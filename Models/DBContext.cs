@@ -23,21 +23,6 @@ namespace CONATRADEC_API.Models
         public DbSet<FuenteNutriente> FuenteNutrientes { get; set; } = null!;
         public DbSet<ElementoQuimico> ElementoQuimicos { get; set; } = null!;
 
-        // ==========================
-        // NUEVO MÓDULO: ANÁLISIS DE SUELO
-        // ==========================
-        public DbSet<AnalisisSuelo> AnalisisSuelos { get; set; } = null!;
-        public DbSet<AnalisisSueloElementoQuimico> AnalisisSueloElementos { get; set; } = null!;
-        public DbSet<UnidadMedida> UnidadesMedida { get; set; } = null!;
-        public DbSet<RangoNutrimental> RangoNutrimentales { get; set; } = null!;
-        public DbSet<Interpretacion> Interpretaciones { get; set; } = null!;
-        public DbSet<InterpretacionFuenteNutriente> InterpretacionFuentes { get; set; } = null!;
-        public DbSet<ControlAplicacion> ControlAplicaciones { get; set; } = null!;
-        public DbSet<FuenteNutrienteControlAplicacion> FuenteNutrienteControlAplicaciones { get; set; } = null!;
-
-        // =============================================
-        // CONFIGURACIÓN FLUENTE
-        // =============================================
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
