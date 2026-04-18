@@ -3,27 +3,27 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace CONATRADEC_API.Models
 {
-    [Table("elementoQuimico", Schema = "dbo")]
+
+    [Table("elementoQuimico")]
     public class ElementoQuimico
     {
         [Key]
         public int elementoQuimicosId { get; set; }
 
-        [Required, MaxLength(10)] // ajusta según el tamaño real de tu CHAR en la BD
-        public string simboloElementoQuimico { get; set; } = null!;
+        [Required]
+        [StringLength(10)]
+        public string simboloElementoQuimico { get; set; } = string.Empty;
 
-        [Required, MaxLength(80)]
-        public string nombreElementoQuimico { get; set; } = null!;
+        [Required]
+        [StringLength(100)]
+        public string nombreElementoQuimico { get; set; } = string.Empty;
 
-        // Ajustamos decimal (ej: DECIMAL(10,2))
-        public decimal pesoEquivalentEelementoQuimico { get; set; }
+        [Column(TypeName = "decimal(10,4)")]
+        public decimal pesoEquivalenteElementoQuimico { get; set; }
 
         public bool activo { get; set; } = true;
 
-        // ======== Relaciones opcionales (si se ocupan después) ========
-
-        public ICollection<AnalisisSueloElementoQuimico>? AnalisisSueloElementos { get; set; }
-        public ICollection<RangoNutrimental>? RangosNutrimentales { get; set; }
-        public ICollection<FuenteNutrienteElementoQuimico>? FuenteNutrienteElementos { get; set; }
+        public ICollection<FuenteNutrienteElementoQuimico> fuenteNutrienteElementoQuimico { get; set; }
+            = new List<FuenteNutrienteElementoQuimico>();
     }
 }

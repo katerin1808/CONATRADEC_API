@@ -20,9 +20,9 @@ namespace CONATRADEC_API.Models
         public DbSet<Procedencia> Procedencia { get; set; } = null!;
         public DbSet<Usuario> Usuarios { get; set; } = null!;
         public DbSet<Terreno> Terreno { get; set; } = null!;
-        public DbSet<FuenteNutriente> FuenteNutrientes { get; set; } = null!;
-        public DbSet<ElementoQuimico> ElementoQuimicos { get; set; } = null!;
-        public DbSet<FuenteNutrienteElementoQuimico> FuenteNutrienteElementoQuimicos { get; set; } = null!;
+        public DbSet<FuenteNutriente> fuenteNutriente { get; set; }
+        public DbSet<ElementoQuimico> elementoQuimico { get; set; }
+        public DbSet<FuenteNutrienteElementoQuimico> fuenteNutrienteElementoQuimico { get; set; }
 
         // ==========================
         // 🔬 ANÁLISIS DE SUELOS
@@ -164,6 +164,19 @@ namespace CONATRADEC_API.Models
                 e.Property(x => x.activo).HasDefaultValue(true);
             });
 
+            base.OnModelCreating(modelBuilder);
+
+            modelBuilder.Entity<FuenteNutrienteElementoQuimico>()
+                .HasOne(x => x.fuenteNutriente)
+                .WithMany(x => x.fuenteNutrienteElementoQuimico)
+                .HasForeignKey(x => x.fuenteNutrientesId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<FuenteNutrienteElementoQuimico>()
+                .HasOne(x => x.elementoQuimico)
+                .WithMany(x => x.fuenteNutrienteElementoQuimico)
+                .HasForeignKey(x => x.elementoQuimicosId)
+                .OnDelete(DeleteBehavior.Restrict);
         }
     }
 }

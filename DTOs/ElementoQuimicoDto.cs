@@ -1,32 +1,28 @@
 ﻿namespace CONATRADEC_API.DTOs
 {
-    public class ElementoQuimicoDto
+    public class CrearElementoQuimicoDto
     {
+        public string simboloElementoQuimico { get; set; } = string.Empty;
+        public string nombreElementoQuimico { get; set; } = string.Empty;
+        public decimal pesoEquivalenteElementoQuimico { get; set; }
+        public bool activo { get; set; } = true;
+    }
 
-        // ================= LISTAR =================
-        public class ElementoQuimicoListarDto
-        {
-            public int elementoQuimicosId { get; set; }
-            public string simboloElementoQuimico { get; set; } = null!;
-            public string nombreElementoQuimico { get; set; } = null!;
-            public decimal pesoEquivalentEelementoQuimico { get; set; }
-            // No exponemos "activo" aquí
-        }
+    public class EditarElementoQuimicoDto
+    {
+        public int elementoQuimicosId { get; set; }
+        public string simboloElementoQuimico { get; set; } = string.Empty;
+        public string nombreElementoQuimico { get; set; } = string.Empty;
+        public decimal pesoEquivalenteElementoQuimico { get; set; }
+        public bool activo { get; set; }
+    }
 
-        // ================= CREAR =================
-        public class ElementoQuimicoCrearDto
-        {
-            public string simboloElementoQuimico { get; set; } = null!;
-            public string nombreElementoQuimico { get; set; } = null!;
-            public decimal pesoEquivalentEelementoQuimico { get; set; }
-        }
-
-        // ================= EDITAR =================
-        public class ElementoQuimicoEditarDto
-        {
-            public string simboloElementoQuimico { get; set; } = null!;
-            public string nombreElementoQuimico { get; set; } = null!;
-            public decimal pesoEquivalentEelementoQuimico { get; set; }
-        }
+    public class ElementoQuimicoRespuestaDto
+    {
+        public int elementoQuimicosId { get; set; }
+        public string simboloElementoQuimico { get; set; } = string.Empty;
+        public string nombreElementoQuimico { get; set; } = string.Empty;
+        public decimal pesoEquivalenteElementoQuimico { get; set; }
+        public bool activo { get; set; }
     }
 }

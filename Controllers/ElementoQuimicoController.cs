@@ -1,145 +1,137 @@
-﻿using CONATRADEC_API.Models;
+﻿using CONATRADEC_API.DTOs;
+using CONATRADEC_API.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using static CONATRADEC_API.DTOs.ElementoQuimicoDto;
+using System;
 
 namespace CONATRADEC_API.Controllers
 {
 
     [ApiController]
-    [Route("api/elemento-quimico")]
-    public class ElementoQuimicoController : Controller
+    [Route("api/[controller]")]
+    public class ElementoQuimicoController : ControllerBase
     {
-        private readonly DBContext _db;
-        public ElementoQuimicoController(DBContext db) => _db = db;
+        private readonly DBContext _context;
 
-        // ============================================
-        // LISTAR (solo activos)
-        // ============================================
-        [HttpGet("listar")]
-        public async Task<ActionResult<IEnumerable<ElementoQuimicoListarDto>>> Listar()
+        public ElementoQuimicoController(DBContext context)
         {
-            var lista = await _db.ElementoQuimicos
-                .Where(x => x.activo)
-                .Select(x => new ElementoQuimicoListarDto
+            _context = context;
+        }
+
+        [HttpGet]
+        public async Task<ActionResult<IEnumerable<ElementoQuimicoRespuestaDto>>> Listar()
+        {
+            var data = await _context.elementoQuimico
+                .OrderBy(x => x.nombreElementoQuimico)
+                .Select(x => new ElementoQuimicoRespuestaDto
                 {
                     elementoQuimicosId = x.elementoQuimicosId,
-
-                    // 🔹 QUITAR ESPACIOS EN BLANCO
-                    simboloElementoQuimico = x.simboloElementoQuimico.Trim(),
-
-                    nombreElementoQuimico = x.nombreElementoQuimico.Trim(),
-
-                    pesoEquivalentEelementoQuimico = x.pesoEquivalentEelementoQuimico
+                    simboloElementoQuimico = x.simboloElementoQuimico,
+                    nombreElementoQuimico = x.nombreElementoQuimico,
+                    pesoEquivalenteElementoQuimico = x.pesoEquivalenteElementoQuimico,
+                    activo = x.activo
                 })
                 .ToListAsync();
 
-            return Ok(lista);
+            return Ok(data);
         }
 
-        // ============================================
-        // CREAR (CON VALIDACIÓN DE DUPLICADOS)
-        // ============================================
-        [HttpPost("crear")]
-        public async Task<IActionResult> Crear([FromBody] ElementoQuimicoCrearDto dto)
+        [HttpGet("{id:int}")]
+        public async Task<ActionResult<ElementoQuimicoRespuestaDto>> ObtenerPorId(int id)
         {
-            using var trans = await _db.Database.BeginTransactionAsync();
-
-            try
-            {
-                string simbolo = dto.simboloElementoQuimico.Trim().ToUpper();
-
-                // 🔹 VALIDAR DUPLICADOS POR SÍMBOLO
-                bool existe = await _db.ElementoQuimicos
-                    .AnyAsync(x => x.simboloElementoQuimico.Trim().ToUpper() == simbolo && x.activo);
-
-                if (existe)
-                    return BadRequest($"Ya existe un elemento con el símbolo '{simbolo}'.");
-
-                var entidad = new ElementoQuimico
+            var data = await _context.elementoQuimico
+                .Where(x => x.elementoQuimicosId == id)
+                .Select(x => new ElementoQuimicoRespuestaDto
                 {
-                    simboloElementoQuimico = simbolo,
-                    nombreElementoQuimico = dto.nombreElementoQuimico.Trim(),
-                    pesoEquivalentEelementoQuimico = dto.pesoEquivalentEelementoQuimico,
-                    activo = true
-                };
+                    elementoQuimicosId = x.elementoQuimicosId,
+                    simboloElementoQuimico = x.simboloElementoQuimico,
+                    nombreElementoQuimico = x.nombreElementoQuimico,
+                    pesoEquivalenteElementoQuimico = x.pesoEquivalenteElementoQuimico,
+                    activo = x.activo
+                })
+                .FirstOrDefaultAsync();
 
-                _db.ElementoQuimicos.Add(entidad);
-                await _db.SaveChangesAsync();
+            if (data == null)
+                return NotFound(new { mensaje = "Elemento químico no encontrado." });
 
-                await trans.CommitAsync();
-                return Ok("Elemento químico creado correctamente.");
-            }
-            catch (Exception ex)
-            {
-                await trans.RollbackAsync();
-                return BadRequest(ex.Message);
-            }
+            return Ok(data);
         }
 
-        // ============================================
-        // EDITAR (VALIDANDO EXISTENCIA + DUPLICADO + ACTIVO)
-        // ============================================
-        [HttpPut("editar/{id}")]
-        public async Task<IActionResult> Editar(int id, [FromBody] ElementoQuimicoEditarDto dto)
+        [HttpPost]
+        public async Task<ActionResult> Crear([FromBody] CrearElementoQuimicoDto dto)
         {
-            using var trans = await _db.Database.BeginTransactionAsync();
+            if (string.IsNullOrWhiteSpace(dto.simboloElementoQuimico))
+                return BadRequest(new { mensaje = "El símbolo es obligatorio." });
 
-            try
+            if (string.IsNullOrWhiteSpace(dto.nombreElementoQuimico))
+                return BadRequest(new { mensaje = "El nombre es obligatorio." });
+
+            bool existe = await _context.elementoQuimico.AnyAsync(x =>
+                x.simboloElementoQuimico.ToLower() == dto.simboloElementoQuimico.ToLower());
+
+            if (existe)
+                return BadRequest(new { mensaje = "Ya existe un elemento químico con ese símbolo." });
+
+            var entity = new ElementoQuimico
             {
-                // 🔹 Buscar solo elementos activos
-                var entidad = await _db.ElementoQuimicos
-                    .FirstOrDefaultAsync(x => x.elementoQuimicosId == id && x.activo);
+                simboloElementoQuimico = dto.simboloElementoQuimico.Trim(),
+                nombreElementoQuimico = dto.nombreElementoQuimico.Trim(),
+                pesoEquivalenteElementoQuimico = dto.pesoEquivalenteElementoQuimico,
+                activo = dto.activo
+            };
 
-                if (entidad is null)
-                    return NotFound("Elemento químico no encontrado o ya está eliminado.");
+            _context.elementoQuimico.Add(entity);
+            await _context.SaveChangesAsync();
 
-                string simbolo = dto.simboloElementoQuimico.Trim().ToUpper();
-
-                // 🔹 VALIDAR DUPLICADO (excluyendo el mismo ID)
-                bool existe = await _db.ElementoQuimicos
-                    .AnyAsync(x =>
-                        x.elementoQuimicosId != id &&
-                        x.activo &&
-                        x.simboloElementoQuimico.Trim().ToUpper() == simbolo);
-
-                if (existe)
-                    return BadRequest($"Ya existe un elemento con el símbolo '{simbolo}'.");
-
-                // 🔹 Actualizar campos
-                entidad.simboloElementoQuimico = simbolo;
-                entidad.nombreElementoQuimico = dto.nombreElementoQuimico.Trim();
-                entidad.pesoEquivalentEelementoQuimico = dto.pesoEquivalentEelementoQuimico;
-
-                await _db.SaveChangesAsync();
-                await trans.CommitAsync();
-
-                return Ok("Elemento químico editado correctamente.");
-            }
-            catch (Exception ex)
+            return Ok(new
             {
-                await trans.RollbackAsync();
-                return BadRequest(ex.Message);
-            }
+                mensaje = "Elemento químico creado correctamente.",
+                elementoQuimicosId = entity.elementoQuimicosId
+            });
         }
-        // ============================================
-        // ELIMINAR (LÓGICO)
-        // ============================================
-        [HttpDelete("eliminar/{id}")]
-        public async Task<IActionResult> Eliminar(int id)
+
+        [HttpPut("{id:int}")]
+        public async Task<ActionResult> Editar(int id, [FromBody] EditarElementoQuimicoDto dto)
         {
-            var entidad = await _db.ElementoQuimicos.FindAsync(id);
-            if (entidad is null)
-                return NotFound("Elemento químico no encontrado.");
+            if (id != dto.elementoQuimicosId)
+                return BadRequest(new { mensaje = "El ID de la ruta no coincide con el del objeto." });
 
-            // 🔹 EVITAR ELIMINAR MÁS DE UNA VEZ
-            if (!entidad.activo)
-                return BadRequest("El elemento ya se encuentra eliminado.");
+            var entity = await _context.elementoQuimico
+                .FirstOrDefaultAsync(x => x.elementoQuimicosId == id);
 
-            entidad.activo = false;
-            await _db.SaveChangesAsync();
+            if (entity == null)
+                return NotFound(new { mensaje = "Elemento químico no encontrado." });
 
-            return Ok("Elemento químico eliminado correctamente.");
+            bool existeDuplicado = await _context.elementoQuimico.AnyAsync(x =>
+                x.elementoQuimicosId != id &&
+                x.simboloElementoQuimico.ToLower() == dto.simboloElementoQuimico.ToLower());
+
+            if (existeDuplicado)
+                return BadRequest(new { mensaje = "Ya existe otro elemento químico con ese símbolo." });
+
+            entity.simboloElementoQuimico = dto.simboloElementoQuimico.Trim();
+            entity.nombreElementoQuimico = dto.nombreElementoQuimico.Trim();
+            entity.pesoEquivalenteElementoQuimico = dto.pesoEquivalenteElementoQuimico;
+            entity.activo = dto.activo;
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new { mensaje = "Elemento químico actualizado correctamente." });
+        }
+
+        [HttpDelete("{id:int}")]
+        public async Task<ActionResult> Eliminar(int id)
+        {
+            var entity = await _context.elementoQuimico
+                .FirstOrDefaultAsync(x => x.elementoQuimicosId == id);
+
+            if (entity == null)
+                return NotFound(new { mensaje = "Elemento químico no encontrado." });
+
+            entity.activo = false;
+            await _context.SaveChangesAsync();
+
+            return Ok(new { mensaje = "Elemento químico desactivado correctamente." });
         }
     }
 }

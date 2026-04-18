@@ -4,32 +4,27 @@ using System.ComponentModel.DataAnnotations.Schema;
 namespace CONATRADEC_API.Models
 {
 
-    [Table("fuenteNutrienteElementoQuimico", Schema = "dbo")]
+    [Table("fuenteNutrienteElementoQuimico")]
     public class FuenteNutrienteElementoQuimico
     {
-
         [Key]
-        [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
         public int fuenteNutrienteElementoQuimicoId { get; set; }
 
+        [Column(TypeName = "decimal(10,4)")]
         public decimal cantidadAporte { get; set; }
 
-       
+        public bool activo { get; set; } = true;
+
         public int fuenteNutrientesId { get; set; }
 
-        [ForeignKey(nameof(fuenteNutrientesId))]
-        public FuenteNutriente? FuenteNutriente { get; set; }
-
-        // ===============================
-        // FK -> ElementoQuimico
-        // ===============================
         public int elementoQuimicosId { get; set; }
 
-        [ForeignKey(nameof(elementoQuimicosId))]
-        public ElementoQuimico? ElementoQuimico { get; set; }
+        [ForeignKey("fuenteNutrientesId")]
+        public FuenteNutriente? fuenteNutriente { get; set; }
 
-        public bool activo { get; set; } = true;
+        [ForeignKey("elementoQuimicosId")]
+        public ElementoQuimico? elementoQuimico { get; set; }
     }
-
 }
+
 

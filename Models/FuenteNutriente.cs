@@ -3,20 +3,25 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace CONATRADEC_API.Models
 {
-    [Table("fuenteNutriente", Schema = "dbo")]
+    [Table("fuenteNutriente")]
     public class FuenteNutriente
     {
         [Key]
         public int fuenteNutrientesId { get; set; }
 
-        [Required, MaxLength(150)]
-        public string nombreNutriente { get; set; } = null!;
+        [Required]
+        [StringLength(100)]
+        public string nombreNutriente { get; set; } = string.Empty;
 
-        [Required, MaxLength(500)]
-        public string descripcionNutriente { get; set; } = null!;
+        [StringLength(250)]
+        public string descripcionNutriente { get; set; } = string.Empty;
 
+        [Column(TypeName = "decimal(10,2)")]
         public decimal precioNutriente { get; set; }
 
         public bool activo { get; set; } = true;
+
+        public ICollection<FuenteNutrienteElementoQuimico> fuenteNutrienteElementoQuimico { get; set; }
+            = new List<FuenteNutrienteElementoQuimico>();
     }
 }

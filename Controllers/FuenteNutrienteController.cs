@@ -10,15 +10,16 @@ namespace CONATRADEC_API.Controllers
     public class FuenteNutrienteController : ControllerBase
     {
         private readonly DBContext _db;
-        public FuenteNutrienteController(DBContext db) => _db = db;
 
-        // ============================================
-        // LISTAR (solo activos)
-        // ============================================
+        public FuenteNutrienteController(DBContext db)
+        {
+            _db = db;
+        }
+
         [HttpGet("listar")]
         public async Task<ActionResult<IEnumerable<FuenteNutrienteListarDto>>> Listar()
         {
-            var lista = await _db.FuenteNutrientes
+            var lista = await _db.fuenteNutriente
                 .Where(x => x.activo)
                 .Select(x => new FuenteNutrienteListarDto
                 {
@@ -32,24 +33,46 @@ namespace CONATRADEC_API.Controllers
             return Ok(lista);
         }
 
-        // ============================================
-        // CREAR (VALIDAR DUPLICADO)
-        // ============================================
+        [HttpGet("obtener/{id:int}")]
+        public async Task<ActionResult<FuenteNutrienteListarDto>> ObtenerPorId(int id)
+        {
+            var entidad = await _db.fuenteNutriente
+                .Where(x => x.fuenteNutrientesId == id && x.activo)
+                .Select(x => new FuenteNutrienteListarDto
+                {
+                    fuenteNutrientesId = x.fuenteNutrientesId,
+                    nombreNutriente = x.nombreNutriente.Trim(),
+                    descripcionNutriente = x.descripcionNutriente.Trim(),
+                    precioNutriente = x.precioNutriente
+                })
+                .FirstOrDefaultAsync();
+
+            if (entidad == null)
+                return NotFound(new { mensaje = "Fuente de nutrientes no encontrada o inactiva." });
+
+            return Ok(entidad);
+        }
+
         [HttpPost("crear")]
         public async Task<IActionResult> Crear([FromBody] FuenteNutrienteCrearDto dto)
         {
-            using var trans = await _db.Database.BeginTransactionAsync();
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            await using var trans = await _db.Database.BeginTransactionAsync();
 
             try
             {
                 string nombre = dto.nombreNutriente.Trim().ToUpper();
 
-                // 🔹 Validar duplicados
-                bool existe = await _db.FuenteNutrientes
+                bool existe = await _db.fuenteNutriente
                     .AnyAsync(f => f.nombreNutriente.Trim().ToUpper() == nombre && f.activo);
 
                 if (existe)
-                    return BadRequest($"Ya existe una fuente de nutriente con el nombre '{dto.nombreNutriente}'.");
+                    return BadRequest(new
+                    {
+                        mensaje = $"Ya existe una fuente de nutriente con el nombre '{dto.nombreNutriente}'."
+                    });
 
                 var entidad = new FuenteNutriente
                 {
@@ -59,49 +82,62 @@ namespace CONATRADEC_API.Controllers
                     activo = true
                 };
 
-                _db.FuenteNutrientes.Add(entidad);
+                _db.fuenteNutriente.Add(entidad);
                 await _db.SaveChangesAsync();
 
                 await trans.CommitAsync();
-                return Ok("Fuente de nutrientes creada correctamente.");
+
+                return Ok(new
+                {
+                    mensaje = "Fuente de nutrientes creada correctamente.",
+                    fuenteNutrientesId = entidad.fuenteNutrientesId,
+                    nombreNutriente = entidad.nombreNutriente,
+                    descripcionNutriente = entidad.descripcionNutriente,
+                    precioNutriente = entidad.precioNutriente,
+                    activo = entidad.activo
+                });
             }
             catch (Exception ex)
             {
                 await trans.RollbackAsync();
-                return BadRequest(ex.Message);
+                return StatusCode(500, new
+                {
+                    mensaje = "Ocurrió un error al crear la fuente de nutrientes.",
+                    detalle = ex.Message
+                });
             }
         }
 
-        // ============================================
-        // EDITAR (VALIDAR EXISTENCIA + DUPLICADOS)
-        // ============================================
-        [HttpPut("editar/{id}")]
+        [HttpPut("editar/{id:int}")]
         public async Task<IActionResult> Editar(int id, [FromBody] FuenteNutrienteEditarDto dto)
         {
-            using var trans = await _db.Database.BeginTransactionAsync();
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            await using var trans = await _db.Database.BeginTransactionAsync();
 
             try
             {
-                // 🔹 Solo elementos activos
-                var entidad = await _db.FuenteNutrientes
+                var entidad = await _db.fuenteNutriente
                     .FirstOrDefaultAsync(f => f.fuenteNutrientesId == id && f.activo);
 
-                if (entidad is null)
-                    return NotFound("Fuente de nutrientes no encontrada o ya eliminada.");
+                if (entidad == null)
+                    return NotFound(new { mensaje = "Fuente de nutrientes no encontrada o ya eliminada." });
 
                 string nombre = dto.nombreNutriente.Trim().ToUpper();
 
-                // 🔹 Validar duplicados (excluyendo el mismo ID)
-                bool existe = await _db.FuenteNutrientes
+                bool existe = await _db.fuenteNutriente
                     .AnyAsync(f =>
                         f.fuenteNutrientesId != id &&
                         f.activo &&
                         f.nombreNutriente.Trim().ToUpper() == nombre);
 
                 if (existe)
-                    return BadRequest($"Ya existe una fuente de nutriente con el nombre '{dto.nombreNutriente}'.");
+                    return BadRequest(new
+                    {
+                        mensaje = $"Ya existe una fuente de nutriente con el nombre '{dto.nombreNutriente}'."
+                    });
 
-                // 🔹 Actualizar
                 entidad.nombreNutriente = nombre;
                 entidad.descripcionNutriente = dto.descripcionNutriente.Trim();
                 entidad.precioNutriente = dto.precioNutriente;
@@ -109,33 +145,51 @@ namespace CONATRADEC_API.Controllers
                 await _db.SaveChangesAsync();
                 await trans.CommitAsync();
 
-                return Ok("Fuente de nutrientes editada correctamente.");
+                return Ok(new
+                {
+                    mensaje = "Fuente de nutrientes editada correctamente.",
+                    fuenteNutrientesId = entidad.fuenteNutrientesId,
+                    nombreNutriente = entidad.nombreNutriente,
+                    descripcionNutriente = entidad.descripcionNutriente,
+                    precioNutriente = entidad.precioNutriente,
+                    activo = entidad.activo
+                });
             }
             catch (Exception ex)
             {
                 await trans.RollbackAsync();
-                return BadRequest(ex.Message);
+                return StatusCode(500, new
+                {
+                    mensaje = "Ocurrió un error al editar la fuente de nutrientes.",
+                    detalle = ex.Message
+                });
             }
         }
 
-        // ============================================
-        // ELIMINAR (LÓGICO)
-        // ============================================
-        [HttpDelete("eliminar/{id}")]
+        [HttpDelete("eliminar/{id:int}")]
         public async Task<IActionResult> Eliminar(int id)
         {
-            var entidad = await _db.FuenteNutrientes
-                .FirstOrDefaultAsync(f => f.fuenteNutrientesId == id && f.activo);
+            try
+            {
+                var entidad = await _db.fuenteNutriente
+                    .FirstOrDefaultAsync(f => f.fuenteNutrientesId == id && f.activo);
 
-            if (entidad is null)
-                return NotFound("Fuente de nutrientes no encontrada o ya eliminada.");
+                if (entidad == null)
+                    return NotFound(new { mensaje = "Fuente de nutrientes no encontrada o ya eliminada." });
 
-            entidad.activo = false;
+                entidad.activo = false;
+                await _db.SaveChangesAsync();
 
-            await _db.SaveChangesAsync();
-
-            return Ok("Fuente de nutrientes eliminada correctamente.");
+                return Ok(new { mensaje = "Fuente de nutrientes eliminada correctamente." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new
+                {
+                    mensaje = "Ocurrió un error al eliminar la fuente de nutrientes.",
+                    detalle = ex.Message
+                });
+            }
         }
     }
-
 }
