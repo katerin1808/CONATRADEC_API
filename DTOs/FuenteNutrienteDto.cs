@@ -1,32 +1,36 @@
 ﻿namespace CONATRADEC_API.DTOs
 {
-    public class FuenteNutrienteDto
+    public class FuenteNutrienteConElementosCrearDto
     {
+        public string nombreNutriente { get; set; } = string.Empty;
+        public string descripcionNutriente { get; set; } = string.Empty;
+        public decimal precioNutriente { get; set; }
+        public List<ElementoFuenteCrearDto> elementosQuimicos { get; set; } = new();
+    }
 
-        // ================= LISTAR =================
-        public class FuenteNutrienteListarDto
-        {
-            public int fuenteNutrientesId { get; set; }
-            public string nombreNutriente { get; set; } = null!;
-            public string descripcionNutriente { get; set; } = null!;
-            public decimal precioNutriente { get; set; }
-            // No exponemos "activo" aquí (igual que con Terreno)
-        }
+    public class ElementoFuenteCrearDto
+    {
+        public int elementoQuimicosId { get; set; }
+        public decimal cantidadAporte { get; set; }
+    }
 
-        // ================= CREAR =================
-        public class FuenteNutrienteCrearDto
-        {
-            public string nombreNutriente { get; set; } = null!;
-            public string descripcionNutriente { get; set; } = null!;
-            public decimal precioNutriente { get; set; }
-        }
+    public class FuenteNutrienteConElementosRespuestaDto
+    {
+        public int fuenteNutrientesId { get; set; }
+        public string nombreNutriente { get; set; } = string.Empty;
+        public string descripcionNutriente { get; set; } = string.Empty;
+        public decimal precioNutriente { get; set; }
+        public bool activo { get; set; }
+        public List<ElementoFuenteRespuestaDto> elementosQuimicos { get; set; } = new();
+    }
 
-        // ================= EDITAR =================
-        public class FuenteNutrienteEditarDto
-        {
-            public string nombreNutriente { get; set; } = null!;
-            public string descripcionNutriente { get; set; } = null!;
-            public decimal precioNutriente { get; set; }
-        }
+    public class ElementoFuenteRespuestaDto
+    {
+        public int fuenteNutrienteElementoQuimicoId { get; set; }
+        public int elementoQuimicosId { get; set; }
+        public string nombreElementoQuimico { get; set; } = string.Empty;
+        public string simboloElementoQuimico { get; set; } = string.Empty;
+        public decimal cantidadAporte { get; set; }
     }
 }
+

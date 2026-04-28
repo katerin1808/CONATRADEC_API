@@ -1,7 +1,7 @@
-﻿using CONATRADEC_API.Models;
+﻿using CONATRADEC_API.DTOs;
+using CONATRADEC_API.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using static CONATRADEC_API.DTOs.FuenteNutrienteDto;
 
 namespace CONATRADEC_API.Controllers
 {
@@ -17,64 +17,111 @@ namespace CONATRADEC_API.Controllers
         }
 
         [HttpGet("listar")]
-        public async Task<ActionResult<IEnumerable<FuenteNutrienteListarDto>>> Listar()
+        public async Task<IActionResult> Listar()
         {
-            var lista = await _db.fuenteNutriente
+            var data = await _db.fuenteNutriente
                 .Where(x => x.activo)
-                .Select(x => new FuenteNutrienteListarDto
+                .Select(x => new FuenteNutrienteConElementosRespuestaDto
                 {
                     fuenteNutrientesId = x.fuenteNutrientesId,
-                    nombreNutriente = x.nombreNutriente.Trim(),
-                    descripcionNutriente = x.descripcionNutriente.Trim(),
-                    precioNutriente = x.precioNutriente
+                    nombreNutriente = x.nombreNutriente,
+                    descripcionNutriente = x.descripcionNutriente,
+                    precioNutriente = x.precioNutriente,
+                    activo = x.activo,
+                    elementosQuimicos = x.fuenteNutrienteElementoQuimico
+                        .Where(r => r.activo)
+                        .Select(r => new ElementoFuenteRespuestaDto
+                        {
+                            fuenteNutrienteElementoQuimicoId = r.fuenteNutrienteElementoQuimicoId,
+                            elementoQuimicosId = r.elementoQuimicosId,
+                            nombreElementoQuimico = r.elementoQuimico != null ? r.elementoQuimico.nombreElementoQuimico : "",
+                            simboloElementoQuimico = r.elementoQuimico != null ? r.elementoQuimico.simboloElementoQuimico : "",
+                            cantidadAporte = r.cantidadAporte
+                        }).ToList()
                 })
                 .ToListAsync();
 
-            return Ok(lista);
+            return Ok(data);
         }
 
         [HttpGet("obtener/{id:int}")]
-        public async Task<ActionResult<FuenteNutrienteListarDto>> ObtenerPorId(int id)
+        public async Task<IActionResult> ObtenerPorId(int id)
         {
-            var entidad = await _db.fuenteNutriente
+            var data = await _db.fuenteNutriente
                 .Where(x => x.fuenteNutrientesId == id && x.activo)
-                .Select(x => new FuenteNutrienteListarDto
+                .Select(x => new FuenteNutrienteConElementosRespuestaDto
                 {
                     fuenteNutrientesId = x.fuenteNutrientesId,
-                    nombreNutriente = x.nombreNutriente.Trim(),
-                    descripcionNutriente = x.descripcionNutriente.Trim(),
-                    precioNutriente = x.precioNutriente
+                    nombreNutriente = x.nombreNutriente,
+                    descripcionNutriente = x.descripcionNutriente,
+                    precioNutriente = x.precioNutriente,
+                    activo = x.activo,
+                    elementosQuimicos = x.fuenteNutrienteElementoQuimico
+                        .Where(r => r.activo)
+                        .Select(r => new ElementoFuenteRespuestaDto
+                        {
+                            fuenteNutrienteElementoQuimicoId = r.fuenteNutrienteElementoQuimicoId,
+                            elementoQuimicosId = r.elementoQuimicosId,
+                            nombreElementoQuimico = r.elementoQuimico != null ? r.elementoQuimico.nombreElementoQuimico : "",
+                            simboloElementoQuimico = r.elementoQuimico != null ? r.elementoQuimico.simboloElementoQuimico : "",
+                            cantidadAporte = r.cantidadAporte
+                        }).ToList()
                 })
                 .FirstOrDefaultAsync();
 
-            if (entidad == null)
-                return NotFound(new { mensaje = "Fuente de nutrientes no encontrada o inactiva." });
+            if (data == null)
+                return NotFound(new { mensaje = "Fuente nutriente no encontrada." });
 
-            return Ok(entidad);
+            return Ok(data);
         }
 
-        [HttpPost("crear")]
-        public async Task<IActionResult> Crear([FromBody] FuenteNutrienteCrearDto dto)
+        [HttpPost("crear-con-elementos")]
+        public async Task<IActionResult> CrearConElementos([FromBody] FuenteNutrienteConElementosCrearDto dto)
         {
-            if (!ModelState.IsValid)
-                return BadRequest(ModelState);
-
             await using var trans = await _db.Database.BeginTransactionAsync();
 
             try
             {
+                if (string.IsNullOrWhiteSpace(dto.nombreNutriente))
+                    return BadRequest(new { mensaje = "El nombre nutriente es obligatorio." });
+
+                if (dto.elementosQuimicos == null || !dto.elementosQuimicos.Any())
+                    return BadRequest(new { mensaje = "Debe agregar al menos un elemento químico." });
+
                 string nombre = dto.nombreNutriente.Trim().ToUpper();
 
                 bool existe = await _db.fuenteNutriente
-                    .AnyAsync(f => f.nombreNutriente.Trim().ToUpper() == nombre && f.activo);
+                    .AnyAsync(x => x.nombreNutriente.Trim().ToUpper() == nombre && x.activo);
 
                 if (existe)
+                    return BadRequest(new { mensaje = "Ya existe una fuente nutriente con ese nombre." });
+
+                bool elementosRepetidos = dto.elementosQuimicos
+                    .GroupBy(x => x.elementoQuimicosId)
+                    .Any(g => g.Count() > 1);
+
+                if (elementosRepetidos)
+                    return BadRequest(new { mensaje = "No puede repetir elementos químicos en la matriz." });
+
+                var idsElementos = dto.elementosQuimicos
+                    .Select(x => x.elementoQuimicosId)
+                    .ToList();
+
+                var idsExistentes = await _db.elementoQuimico
+                    .Where(x => idsElementos.Contains(x.elementoQuimicosId) && x.activo)
+                    .Select(x => x.elementoQuimicosId)
+                    .ToListAsync();
+
+                var faltantes = idsElementos.Except(idsExistentes).ToList();
+
+                if (faltantes.Any())
                     return BadRequest(new
                     {
-                        mensaje = $"Ya existe una fuente de nutriente con el nombre '{dto.nombreNutriente}'."
+                        mensaje = "Hay elementos químicos inválidos o inactivos.",
+                        faltantes
                     });
 
-                var entidad = new FuenteNutriente
+                var fuente = new FuenteNutriente
                 {
                     nombreNutriente = nombre,
                     descripcionNutriente = dto.descripcionNutriente.Trim(),
@@ -82,85 +129,182 @@ namespace CONATRADEC_API.Controllers
                     activo = true
                 };
 
-                _db.fuenteNutriente.Add(entidad);
+                _db.fuenteNutriente.Add(fuente);
+                await _db.SaveChangesAsync();
+
+                var relaciones = dto.elementosQuimicos.Select(e => new FuenteNutrienteElementoQuimico
+                {
+                    fuenteNutrientesId = fuente.fuenteNutrientesId,
+                    elementoQuimicosId = e.elementoQuimicosId,
+                    cantidadAporte = e.cantidadAporte,
+                    activo = true
+                }).ToList();
+
+                _db.fuenteNutrienteElementoQuimico.AddRange(relaciones);
                 await _db.SaveChangesAsync();
 
                 await trans.CommitAsync();
 
+                var respuesta = await _db.fuenteNutriente
+                    .Where(x => x.fuenteNutrientesId == fuente.fuenteNutrientesId)
+                    .Select(x => new FuenteNutrienteConElementosRespuestaDto
+                    {
+                        fuenteNutrientesId = x.fuenteNutrientesId,
+                        nombreNutriente = x.nombreNutriente,
+                        descripcionNutriente = x.descripcionNutriente,
+                        precioNutriente = x.precioNutriente,
+                        activo = x.activo,
+                        elementosQuimicos = x.fuenteNutrienteElementoQuimico
+                            .Where(r => r.activo)
+                            .Select(r => new ElementoFuenteRespuestaDto
+                            {
+                                fuenteNutrienteElementoQuimicoId = r.fuenteNutrienteElementoQuimicoId,
+                                elementoQuimicosId = r.elementoQuimicosId,
+                                nombreElementoQuimico = r.elementoQuimico != null ? r.elementoQuimico.nombreElementoQuimico : "",
+                                simboloElementoQuimico = r.elementoQuimico != null ? r.elementoQuimico.simboloElementoQuimico : "",
+                                cantidadAporte = r.cantidadAporte
+                            })
+                            .ToList()
+                    })
+                    .FirstAsync();
+
                 return Ok(new
                 {
-                    mensaje = "Fuente de nutrientes creada correctamente.",
-                    fuenteNutrientesId = entidad.fuenteNutrientesId,
-                    nombreNutriente = entidad.nombreNutriente,
-                    descripcionNutriente = entidad.descripcionNutriente,
-                    precioNutriente = entidad.precioNutriente,
-                    activo = entidad.activo
+                    mensaje = "Fuente nutriente creada correctamente con sus elementos químicos.",
+                    data = respuesta
                 });
             }
             catch (Exception ex)
             {
                 await trans.RollbackAsync();
+
                 return StatusCode(500, new
                 {
-                    mensaje = "Ocurrió un error al crear la fuente de nutrientes.",
+                    mensaje = "Error al crear fuente nutriente.",
                     detalle = ex.Message
                 });
             }
         }
 
-        [HttpPut("editar/{id:int}")]
-        public async Task<IActionResult> Editar(int id, [FromBody] FuenteNutrienteEditarDto dto)
+        [HttpPut("editar-con-elementos/{id:int}")]
+        public async Task<IActionResult> EditarConElementos(
+     int id,
+     [FromBody] FuenteNutrienteConElementosCrearDto dto)
         {
-            if (!ModelState.IsValid)
-                return BadRequest(ModelState);
-
             await using var trans = await _db.Database.BeginTransactionAsync();
 
             try
             {
-                var entidad = await _db.fuenteNutriente
-                    .FirstOrDefaultAsync(f => f.fuenteNutrientesId == id && f.activo);
+                var fuente = await _db.fuenteNutriente
+                    .FirstOrDefaultAsync(x => x.fuenteNutrientesId == id && x.activo);
 
-                if (entidad == null)
-                    return NotFound(new { mensaje = "Fuente de nutrientes no encontrada o ya eliminada." });
+                if (fuente == null)
+                    return NotFound(new { mensaje = "Fuente nutriente no encontrada." });
+
+                if (string.IsNullOrWhiteSpace(dto.nombreNutriente))
+                    return BadRequest(new { mensaje = "El nombre nutriente es obligatorio." });
+
+                if (dto.elementosQuimicos == null || !dto.elementosQuimicos.Any())
+                    return BadRequest(new { mensaje = "Debe agregar al menos un elemento químico." });
 
                 string nombre = dto.nombreNutriente.Trim().ToUpper();
 
-                bool existe = await _db.fuenteNutriente
-                    .AnyAsync(f =>
-                        f.fuenteNutrientesId != id &&
-                        f.activo &&
-                        f.nombreNutriente.Trim().ToUpper() == nombre);
+                bool existeDuplicado = await _db.fuenteNutriente
+                    .AnyAsync(x =>
+                        x.fuenteNutrientesId != id &&
+                        x.nombreNutriente.Trim().ToUpper() == nombre &&
+                        x.activo);
 
-                if (existe)
+                if (existeDuplicado)
+                    return BadRequest(new { mensaje = "Ya existe otra fuente nutriente con ese nombre." });
+
+                bool elementosRepetidos = dto.elementosQuimicos
+                    .GroupBy(x => x.elementoQuimicosId)
+                    .Any(g => g.Count() > 1);
+
+                if (elementosRepetidos)
+                    return BadRequest(new { mensaje = "No puede repetir elementos químicos en la matriz." });
+
+                var idsElementos = dto.elementosQuimicos
+                    .Select(x => x.elementoQuimicosId)
+                    .ToList();
+
+                var idsExistentes = await _db.elementoQuimico
+                    .Where(x => idsElementos.Contains(x.elementoQuimicosId) && x.activo)
+                    .Select(x => x.elementoQuimicosId)
+                    .ToListAsync();
+
+                var faltantes = idsElementos.Except(idsExistentes).ToList();
+
+                if (faltantes.Any())
                     return BadRequest(new
                     {
-                        mensaje = $"Ya existe una fuente de nutriente con el nombre '{dto.nombreNutriente}'."
+                        mensaje = "Hay elementos químicos inválidos o inactivos.",
+                        faltantes
                     });
 
-                entidad.nombreNutriente = nombre;
-                entidad.descripcionNutriente = dto.descripcionNutriente.Trim();
-                entidad.precioNutriente = dto.precioNutriente;
+                fuente.nombreNutriente = nombre;
+                fuente.descripcionNutriente = dto.descripcionNutriente.Trim();
+                fuente.precioNutriente = dto.precioNutriente;
+
+                var relacionesActuales = await _db.fuenteNutrienteElementoQuimico
+                    .Where(x => x.fuenteNutrientesId == id && x.activo)
+                    .ToListAsync();
+
+                foreach (var relacion in relacionesActuales)
+                {
+                    relacion.activo = false;
+                }
+
+                var nuevasRelaciones = dto.elementosQuimicos.Select(e => new FuenteNutrienteElementoQuimico
+                {
+                    fuenteNutrientesId = id,
+                    elementoQuimicosId = e.elementoQuimicosId,
+                    cantidadAporte = e.cantidadAporte,
+                    activo = true
+                }).ToList();
+
+                _db.fuenteNutrienteElementoQuimico.AddRange(nuevasRelaciones);
 
                 await _db.SaveChangesAsync();
                 await trans.CommitAsync();
 
+                var respuesta = await _db.fuenteNutriente
+                    .Where(x => x.fuenteNutrientesId == id)
+                    .Select(x => new FuenteNutrienteConElementosRespuestaDto
+                    {
+                        fuenteNutrientesId = x.fuenteNutrientesId,
+                        nombreNutriente = x.nombreNutriente,
+                        descripcionNutriente = x.descripcionNutriente,
+                        precioNutriente = x.precioNutriente,
+                        activo = x.activo,
+                        elementosQuimicos = x.fuenteNutrienteElementoQuimico
+                            .Where(r => r.activo)
+                            .Select(r => new ElementoFuenteRespuestaDto
+                            {
+                                fuenteNutrienteElementoQuimicoId = r.fuenteNutrienteElementoQuimicoId,
+                                elementoQuimicosId = r.elementoQuimicosId,
+                                nombreElementoQuimico = r.elementoQuimico != null ? r.elementoQuimico.nombreElementoQuimico : "",
+                                simboloElementoQuimico = r.elementoQuimico != null ? r.elementoQuimico.simboloElementoQuimico : "",
+                                cantidadAporte = r.cantidadAporte
+                            })
+                            .ToList()
+                    })
+                    .FirstAsync();
+
                 return Ok(new
                 {
-                    mensaje = "Fuente de nutrientes editada correctamente.",
-                    fuenteNutrientesId = entidad.fuenteNutrientesId,
-                    nombreNutriente = entidad.nombreNutriente,
-                    descripcionNutriente = entidad.descripcionNutriente,
-                    precioNutriente = entidad.precioNutriente,
-                    activo = entidad.activo
+                    mensaje = "Fuente nutriente actualizada correctamente con su matriz.",
+                    data = respuesta
                 });
             }
             catch (Exception ex)
             {
                 await trans.RollbackAsync();
+
                 return StatusCode(500, new
                 {
-                    mensaje = "Ocurrió un error al editar la fuente de nutrientes.",
+                    mensaje = "Error al editar fuente nutriente.",
                     detalle = ex.Message
                 });
             }
@@ -169,24 +313,51 @@ namespace CONATRADEC_API.Controllers
         [HttpDelete("eliminar/{id:int}")]
         public async Task<IActionResult> Eliminar(int id)
         {
+            await using var trans = await _db.Database.BeginTransactionAsync();
+
             try
             {
-                var entidad = await _db.fuenteNutriente
-                    .FirstOrDefaultAsync(f => f.fuenteNutrientesId == id && f.activo);
+                var fuente = await _db.fuenteNutriente
+                    .FirstOrDefaultAsync(x => x.fuenteNutrientesId == id && x.activo);
 
-                if (entidad == null)
-                    return NotFound(new { mensaje = "Fuente de nutrientes no encontrada o ya eliminada." });
+                if (fuente == null)
+                    return NotFound(new { mensaje = "Fuente nutriente no encontrada o ya eliminada." });
 
-                entidad.activo = false;
+                fuente.activo = false;
+
+                var relaciones = await _db.fuenteNutrienteElementoQuimico
+                    .Where(x => x.fuenteNutrientesId == id && x.activo)
+                    .ToListAsync();
+
+                foreach (var relacion in relaciones)
+                {
+                    relacion.activo = false;
+                }
+
                 await _db.SaveChangesAsync();
+                await trans.CommitAsync();
 
-                return Ok(new { mensaje = "Fuente de nutrientes eliminada correctamente." });
+                return Ok(new
+                {
+                    mensaje = "Fuente nutriente eliminada correctamente junto con su matriz.",
+                    data = new
+                    {
+                        fuenteNutrientesId = fuente.fuenteNutrientesId,
+                        nombreNutriente = fuente.nombreNutriente,
+                        descripcionNutriente = fuente.descripcionNutriente,
+                        precioNutriente = fuente.precioNutriente,
+                        activo = fuente.activo,
+                        relacionesDesactivadas = relaciones.Count
+                    }
+                });
             }
             catch (Exception ex)
             {
+                await trans.RollbackAsync();
+
                 return StatusCode(500, new
                 {
-                    mensaje = "Ocurrió un error al eliminar la fuente de nutrientes.",
+                    mensaje = "Error al eliminar fuente nutriente.",
                     detalle = ex.Message
                 });
             }
