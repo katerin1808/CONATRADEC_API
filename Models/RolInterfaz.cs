@@ -16,16 +16,16 @@ namespace CONATRADEC_API.Models
         public string  descripcionInterfaz { get; set; } = "";
         public bool activo { get; set; } = true;
 
-        public ICollection<RolInteraz> RolInteraz { get; set; } = new List<RolInteraz>();
+        public ICollection<RolInterfaz> RolInterfaz { get; set; } = new List<RolInterfaz>();
     }
 
-    [Table("rolInteraz", Schema = "dbo")]
-    public class RolInteraz
+    [Table("rolInterfaz", Schema = "dbo")]
+    public class RolInterfaz
     {
         [Key]
         [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
 
-        public int rolInterazId { get; set; }
+        public int rolInterfazId { get; set; }
 
         public bool? leer{ get; set; }
 

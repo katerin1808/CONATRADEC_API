@@ -1,6 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
-using static CONATRADEC_API.Models.RolInteraz;
+using static CONATRADEC_API.Models.RolInterfaz;
 
 namespace CONATRADEC_API.Models
 {
@@ -13,7 +13,7 @@ namespace CONATRADEC_API.Models
         // ==========================
         public DbSet<Rol> Roles { get; set; } = null!;
         public DbSet<Interfaz> Interfaz { get; set; } = null!;
-        public DbSet<RolInteraz> RolInteraz { get; set; } = null!;
+        public DbSet<RolInterfaz> RolInterfaz { get; set; } = null!;
         public DbSet<Pais> Pais { get; set; } = null!;
         public DbSet<Departamento> Departamento { get; set; } = null!;
         public DbSet<Municipio> Municipios { get; set; } = null!;
@@ -59,10 +59,10 @@ namespace CONATRADEC_API.Models
             });
 
             // RolInteraz
-            modelBuilder.Entity<RolInteraz>(e =>
+            modelBuilder.Entity<RolInterfaz>(e =>
             {
-                e.ToTable("rolInteraz", "dbo");
-                e.HasKey(x => x.rolInterazId);
+                e.ToTable("rolInterfaz", "dbo");
+                e.HasKey(x => x.rolInterfazId);
                 e.Property(x => x.leer).HasDefaultValue(false).IsRequired();
                 e.Property(x => x.agregar).HasDefaultValue(false).IsRequired();
                 e.Property(x => x.actualizar).HasDefaultValue(false).IsRequired();

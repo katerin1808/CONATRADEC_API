@@ -21,7 +21,7 @@ namespace CONATRADEC_API.Models
         public bool activo { get; set; } = true; // Valor por defecto al crear
 
 
-        public ICollection<RolInteraz> rolInteraz { get; set; } = new List<RolInteraz>();
+        public ICollection<RolInterfaz> rolInteraz { get; set; } = new List<RolInterfaz>();
         public ICollection<Usuario> Usuarios { get; set; } = new List<Usuario>();
     }
 

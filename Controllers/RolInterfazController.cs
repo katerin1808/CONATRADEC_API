@@ -41,7 +41,7 @@ namespace CONATRADEC_API.Controllers
             var rows = await (
                 from r in rolesQ
                 from p in interfazQ
-                join rp0 in _db.RolInteraz.AsNoTracking()
+                join rp0 in _db.RolInterfaz.AsNoTracking()
                     on new { r.rolId, p.interfazId } equals new { rp0.rolId, rp0.interfazId } into grp
                 from rp in grp.DefaultIfEmpty()
                 orderby r.nombreRol, p.nombreInterfaz
@@ -102,7 +102,7 @@ namespace CONATRADEC_API.Controllers
             var rows = await (
                 from r in rolesQ
                 from p in interfazQ
-                join rp0 in _db.RolInteraz.AsNoTracking()
+                join rp0 in _db.RolInterfaz.AsNoTracking()
                     on new { r.rolId, p.interfazId } equals new { rp0.rolId, rp0.interfazId } into grp
                 from rp in grp.DefaultIfEmpty()
                 orderby r.nombreRol, p.nombreInterfaz
@@ -179,7 +179,7 @@ namespace CONATRADEC_API.Controllers
                     .ToListAsync();
 
                 // 3️⃣ Traer las relaciones existentes del rol
-                var existentes = await _db.RolInteraz
+                var existentes = await _db.RolInterfaz
                     .Where(rp => rp.rolId == rolId)
                     .ToListAsync();
 
@@ -199,11 +199,11 @@ namespace CONATRADEC_API.Controllers
                         rp.actualizar = permiso.actualizar;
                         rp.eliminar = permiso.eliminar;
 
-                        _db.RolInteraz.Update(rp);
+                        _db.RolInterfaz.Update(rp);
                     }
                     else // INSERT
                     {
-                        var nuevo = new RolInteraz
+                        var nuevo = new RolInterfaz
                         {
                             rolId = dto.rol.rolId,
                             interfazId = permiso.interfazId,
@@ -213,7 +213,7 @@ namespace CONATRADEC_API.Controllers
                             eliminar = permiso.eliminar == true ? true : false,
                         };
                         if(nuevo.leer.Value.Equals(true) || nuevo.agregar.Value.Equals(true) || nuevo.actualizar.Value.Equals(true) || nuevo.eliminar.Value.Equals(true))
-                            _db.RolInteraz.Add(nuevo);
+                            _db.RolInterfaz.Add(nuevo);
 
                     }
                 }
@@ -262,13 +262,13 @@ namespace CONATRADEC_API.Controllers
                 return NotFound($"No se encontró el permiso '{nombrePermiso}'.");
 
             // Upsert por (rolId, permisoId)
-            var existente = await _db.RolInteraz
+            var existente = await _db.RolInterfaz
                 .FirstOrDefaultAsync(rp => rp.rolId == rol.rolId && rp.interfazId == permiso.interfazId);
 
             var accion = "actualizado";
             if (existente is null)
             {
-                var nuevo = new RolInteraz
+                var nuevo = new RolInterfaz
                 {
                     rolId = rol.rolId,
                     interfazId = permiso.interfazId,
@@ -277,7 +277,7 @@ namespace CONATRADEC_API.Controllers
                     actualizar = req.actualizar,
                     eliminar = req.eliminar
                 };
-                _db.RolInteraz.Add(nuevo);
+                _db.RolInterfaz.Add(nuevo);
                 accion = "insertado";
             }
             else
@@ -286,7 +286,7 @@ namespace CONATRADEC_API.Controllers
                 existente.agregar = req.agregar;
                 existente.actualizar = req.actualizar;
                 existente.eliminar = req.eliminar;
-                _db.RolInteraz.Update(existente);
+                _db.RolInterfaz.Update(existente);
             }
 
             await _db.SaveChangesAsync();

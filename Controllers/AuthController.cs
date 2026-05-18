@@ -62,7 +62,7 @@ namespace CONATRADEC_API.Controllers
 
             // 🔹 Traer la matriz de permisos del rol del usuario
             // Ajusta nombres de DbSet si en tu DbContext difieren (_db.RolInteraz / _db.Interfaz)
-            var permisos = await _db.RolInteraz
+            var permisos = await _db.RolInterfaz
                 .Where(ri => ri.rolId == u.rolId)
                 .Join(
                     _db.Interfaz.Where(i => i.activo),                      // filtra interfaces activas (si tienes esa columna)
