@@ -23,14 +23,15 @@ namespace CONATRADEC_API.Models
         public DbSet<FuenteNutriente> fuenteNutriente { get; set; }
         public DbSet<ElementoQuimico> elementoQuimico { get; set; }
         public DbSet<FuenteNutrienteElementoQuimico> fuenteNutrienteElementoQuimico { get; set; }
+        public DbSet<AnalisisSueloCalculoElementoQuimico> AnalisisSueloCalculoElementoQuimicos { get; set; } = null!;
 
         // ==========================
         // 🔬 ANÁLISIS DE SUELOS
         // ==========================
         public DbSet<AnalisisSuelo> AnalisisSuelos { get; set; } = null!;
-
-        // ❗ ESTA ES LA QUE TE FALTABA / ESTABA MAL
         public DbSet<AnalisisSueloElementoQuimico> AnalisisSueloElementos { get; set; } = null!;
+        public DbSet<TipoCultivo> TipoCultivos { get; set; } = null!;
+        public DbSet<TipoAnalisisSuelo> TipoAnalisisSuelos { get; set; } = null!;
 
         public DbSet<UnidadMedida> UnidadMedidas { get; set; } = null!;
         public DbSet<RangoNutrimental> RangoNutrimentales { get; set; } = null!;
@@ -38,6 +39,12 @@ namespace CONATRADEC_API.Models
         public DbSet<InterpretacionFuenteNutriente> InterpretacionFuenteNutrientes { get; set; } = null!;
         public DbSet<ControlAplicacion> ControlAplicaciones { get; set; } = null!;
         public DbSet<FuenteNutrienteControlAplicacion> FuenteNutrienteControlAplicaciones { get; set; } = null!;
+        public DbSet<AnalisisSueloCalculo> AnalisisSueloCalculos { get; set; } = null!;
+        public DbSet<AnalisisSueloCalculoElementoQuimico> AnalisisSueloCalculoElementos { get; set; } = null!;
+        public DbSet<ParametroExtraccionNutrienteCafe> ParametroExtraccionNutrienteCafe { get; set; } = null!;
+        public DbSet<ParametroRangoNutrienteCultivo> ParametroRangoNutrienteCultivo { get; set; } = null!;
+        public DbSet<ParametroEnmiendaCalcarea> ParametroEnmiendaCalcarea { get; set; } = null!;
+        public DbSet<ParametroFuenteOrganicaAporte> ParametroFuenteOrganicaAporte { get; set; } = null!;
 
         // ==========================
         // CONFIGURACIONES
@@ -79,30 +86,36 @@ namespace CONATRADEC_API.Models
                 e.Property(x => x.identificadorAnalisisSuelo).HasMaxLength(50).IsRequired();
                 e.Property(x => x.activo).HasDefaultValue(true).IsRequired();
             });
-
+            // ============================
             // analisisSueloElementoQuimico
-            modelBuilder.Entity<AnalisisSueloElementoQuimico>(e =>
+            // ============================
+            modelBuilder.Entity<AnalisisSueloElementoQuimico>(entity =>
             {
-                e.ToTable("analisisSueloElementoQuimico", "dbo");
-                e.HasKey(x => x.analisisSueloElementoQuimicoId);
+                entity.ToTable("analisisSueloElementoQuimico", "dbo");
 
-                e.Property(x => x.cantidadElemento).HasPrecision(10, 4).IsRequired();
-                e.Property(x => x.activo).HasDefaultValue(true);
+                entity.HasKey(e => e.analisisSueloElementoQuimicoId);
 
-                e.HasOne(x => x.AnalisisSuelo)
-                 .WithMany()
-                 .HasForeignKey(x => x.analisisSueloId)
-                 .OnDelete(DeleteBehavior.Restrict);
+                entity.Property(e => e.cantidadElemento)
+                    .HasPrecision(10, 4)
+                    .IsRequired();
 
-                e.HasOne(x => x.ElementoQuimicos)
-                 .WithMany()
-                 .HasForeignKey(x => x.elementoQuimicosId)
-                 .OnDelete(DeleteBehavior.Restrict);
+                entity.Property(e => e.activo)
+                    .HasDefaultValue(true);
 
-                e.HasOne(x => x.UnidadMedida)
-                 .WithMany()
-                 .HasForeignKey(x => x.unidadMedidaId)
-                 .OnDelete(DeleteBehavior.Restrict);
+                entity.HasOne(e => e.AnalisisSuelo)
+                    .WithMany(e => e.Elementos)
+                    .HasForeignKey(e => e.analisisSueloId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                entity.HasOne(e => e.ElementoQuimico)
+                    .WithMany()
+                    .HasForeignKey(e => e.elementoQuimicosId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                entity.HasOne(e => e.UnidadMedida)
+                    .WithMany(u => u.AnalisisSueloElementosQuimicos)
+                    .HasForeignKey(e => e.unidadMedidaId)
+                    .OnDelete(DeleteBehavior.Restrict);
             });
 
             // unidadMedida
@@ -177,6 +190,232 @@ namespace CONATRADEC_API.Models
                 .WithMany(x => x.fuenteNutrienteElementoQuimico)
                 .HasForeignKey(x => x.elementoQuimicosId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            // ============================
+            // analisisSueloCalculo
+            // ============================
+            modelBuilder.Entity<AnalisisSueloCalculo>(entity =>
+            {
+                entity.ToTable("analisisSueloCalculo", "dbo");
+
+                entity.HasKey(e => e.analisisSueloCalculoId);
+
+                entity.Property(e => e.cantidadQuintalesOro)
+                    .HasPrecision(10, 4)
+                    .IsRequired();
+
+                entity.Property(e => e.tamanoFinca)
+                    .HasPrecision(10, 4)
+                    .IsRequired();
+
+                entity.Property(e => e.phAnalisisSuelo)
+                    .HasPrecision(10, 4)
+                    .IsRequired();
+
+                entity.Property(e => e.acidezTotal)
+                    .HasPrecision(10, 4);
+
+                entity.Property(e => e.recomendacionGeneral)
+                    .HasMaxLength(500);
+
+                entity.Property(e => e.observacion)
+                    .HasMaxLength(500);
+
+                entity.Property(e => e.fechaCalculo)
+                    .HasColumnType("datetime");
+
+                entity.Property(e => e.activo)
+                    .HasDefaultValue(true);
+            });
+
+
+            // ============================
+            // analisisSueloCalculoElementoQuimico
+            // ============================
+            modelBuilder.Entity<AnalisisSueloCalculoElementoQuimico>(entity =>
+            {
+                entity.ToTable("analisisSueloCalculoElementoQuimico", "dbo");
+
+                entity.HasKey(e => e.analisisSueloCalculoElementoQuimicoId);
+
+                entity.Property(e => e.cantidadIngresada)
+                    .HasPrecision(10, 4)
+                    .IsRequired();
+
+                entity.Property(e => e.requerimientoCalculado)
+                    .HasPrecision(10, 4);
+
+                entity.Property(e => e.clasificacion)
+                    .HasMaxLength(50);
+
+                entity.Property(e => e.observacion)
+                    .HasMaxLength(500);
+
+                entity.Property(e => e.activo)
+                    .HasDefaultValue(true);
+
+                entity.HasOne(e => e.AnalisisSueloCalculo)
+                    .WithMany(e => e.ElementosCalculados)
+                    .HasForeignKey(e => e.analisisSueloCalculoId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                entity.HasOne(e => e.ElementoQuimico)
+                    .WithMany()
+                    .HasForeignKey(e => e.elementoQuimicosId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                entity.HasOne(e => e.UnidadMedida)
+                    .WithMany()
+                    .HasForeignKey(e => e.unidadMedidaId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // ============================
+            // parametroExtraccionNutrienteCafe
+            // ============================
+            modelBuilder.Entity<ParametroExtraccionNutrienteCafe>(entity =>
+            {
+                entity.ToTable("parametroExtraccionNutrienteCafe", "dbo");
+
+                entity.HasKey(e => e.parametroExtraccionNutrienteCafeId);
+
+                entity.Property(e => e.cantidadExtraidaPorQQOro)
+                    .HasPrecision(10, 4)
+                    .IsRequired();
+
+                entity.Property(e => e.descripcionParametro)
+                    .HasMaxLength(150)
+                    .IsRequired();
+
+                entity.Property(e => e.activo)
+                    .HasDefaultValue(true);
+
+                entity.HasOne(e => e.ElementoQuimico)
+                    .WithMany()
+                    .HasForeignKey(e => e.elementoQuimicosId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+
+            // ============================
+            // parametroRangoNutrienteCultivo
+            // ============================
+            modelBuilder.Entity<ParametroRangoNutrienteCultivo>(entity =>
+            {
+                entity.ToTable("parametroRangoNutrienteCultivo", "dbo");
+
+                entity.HasKey(e => e.parametroRangoNutrienteCultivoId);
+
+                entity.Property(e => e.valorMinimo)
+                    .HasPrecision(10, 4)
+                    .IsRequired();
+
+                entity.Property(e => e.valorMaximo)
+                    .HasPrecision(10, 4)
+                    .IsRequired();
+
+                entity.Property(e => e.unidadBase)
+                    .HasMaxLength(30)
+                    .IsRequired();
+
+                entity.Property(e => e.descripcionParametro)
+                    .HasMaxLength(150)
+                    .IsRequired();
+
+                entity.Property(e => e.activo)
+                    .HasDefaultValue(true);
+
+                entity.HasOne(e => e.TipoCultivo)
+                    .WithMany()
+                    .HasForeignKey(e => e.tipoCultivoId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                entity.HasOne(e => e.ElementoQuimico)
+                    .WithMany()
+                    .HasForeignKey(e => e.elementoQuimicosId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+
+            // ============================
+            // parametroEnmiendaCalcarea
+            // ============================
+            modelBuilder.Entity<ParametroEnmiendaCalcarea>(entity =>
+            {
+                entity.ToTable("parametroEnmiendaCalcarea", "dbo");
+
+                entity.HasKey(e => e.parametroEnmiendaCalcareaId);
+
+                entity.Property(e => e.saturacionBasesDeseada)
+                    .HasPrecision(10, 4)
+                    .IsRequired();
+
+                entity.Property(e => e.prnt)
+                    .HasPrecision(10, 4)
+                    .IsRequired();
+
+                entity.Property(e => e.factorTonHaALbHa)
+                    .HasPrecision(10, 4)
+                    .IsRequired();
+
+                entity.Property(e => e.factorHaAMz)
+                    .HasPrecision(10, 4)
+                    .IsRequired();
+
+                entity.Property(e => e.factorTonHaAKgHa)
+                    .HasPrecision(10, 4)
+                    .IsRequired();
+
+                entity.Property(e => e.descripcionParametro)
+                    .HasMaxLength(200)
+                    .IsRequired();
+
+                entity.Property(e => e.activo)
+                    .HasDefaultValue(true);
+
+                entity.HasOne(e => e.FuenteNutriente)
+                    .WithMany()
+                    .HasForeignKey(e => e.fuenteNutrientesId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+
+            // ============================
+            // parametroFuenteOrganicaAporte
+            // ============================
+            modelBuilder.Entity<ParametroFuenteOrganicaAporte>(entity =>
+            {
+                entity.ToTable("parametroFuenteOrganicaAporte", "dbo");
+
+                entity.HasKey(e => e.parametroFuenteOrganicaAporteId);
+
+                entity.Property(e => e.cantidadAportePorUnidad)
+                    .HasPrecision(10, 4)
+                    .IsRequired();
+
+                entity.Property(e => e.unidadEntrada)
+                    .HasMaxLength(30)
+                    .IsRequired();
+
+                entity.Property(e => e.descripcionParametro)
+                    .HasMaxLength(200)
+                    .IsRequired();
+
+                entity.Property(e => e.activo)
+                    .HasDefaultValue(true);
+
+                entity.HasOne(e => e.FuenteNutriente)
+                    .WithMany()
+                    .HasForeignKey(e => e.fuenteNutrientesId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                entity.HasOne(e => e.ElementoQuimico)
+                    .WithMany()
+                    .HasForeignKey(e => e.elementoQuimicosId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
         }
+
     }
 }

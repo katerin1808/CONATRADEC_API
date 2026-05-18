@@ -7,28 +7,23 @@ namespace CONATRADEC_API.Models
     public class AnalisisSueloElementoQuimico
     {
         [Key]
-        [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
         public int analisisSueloElementoQuimicoId { get; set; }
 
-        [Column(TypeName = "decimal(10,0)")]
+        [Column(TypeName = "decimal(10,4)")]
         public decimal cantidadElemento { get; set; }
 
-        public bool activo { get; set; }
+        public bool activo { get; set; } = true;
 
-        // ===============================
-        //       FK + Navegaciones
-        // ===============================
-
-        // FK -> AnalisisSuelo
         public int analisisSueloId { get; set; }
+
+        public int elementoQuimicosId { get; set; }
+
+        public int unidadMedidaId { get; set; }
+
         public AnalisisSuelo AnalisisSuelo { get; set; } = null!;
 
-        // FK -> ElementoQuimico
-        public int elementoQuimicosId { get; set; }
-        public ElementoQuimico ElementoQuimicos { get; set; } = null!;
+        public ElementoQuimico ElementoQuimico { get; set; } = null!;
 
-        // FK -> UnidadMedida
-        public int unidadMedidaId { get; set; }
         public UnidadMedida UnidadMedida { get; set; } = null!;
     }
 }
