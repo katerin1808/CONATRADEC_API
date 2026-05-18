@@ -1,4 +1,5 @@
 using CONATRADEC_API.Models;
+using CONATRADEC_API.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 
@@ -8,6 +9,7 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container.
 
 builder.Services.AddControllers();
+builder.Services.AddScoped<AnalisisSueloCalculoService>();
 builder.Services.AddDbContext<DBContext>(o =>
 {
     o.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"))
