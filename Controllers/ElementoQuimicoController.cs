@@ -57,7 +57,7 @@ namespace CONATRADEC_API.Controllers
             return Ok(data);
         }
 
-        [HttpPost]
+        [HttpPost("api/elemento-quimico/crear/{id:int}")]
         public async Task<ActionResult> Crear([FromBody] CrearElementoQuimicoDto dto)
         {
             if (string.IsNullOrWhiteSpace(dto.simboloElementoQuimico))
@@ -90,7 +90,7 @@ namespace CONATRADEC_API.Controllers
             });
         }
 
-        [HttpPut("{id:int}")]
+        [HttpPut("api/elemento-quimico/editar/{id:int}")]
         public async Task<ActionResult> Editar(int id, [FromBody] EditarElementoQuimicoDto dto)
         {
             if (id != dto.elementoQuimicosId)
@@ -119,7 +119,7 @@ namespace CONATRADEC_API.Controllers
             return Ok(new { mensaje = "Elemento químico actualizado correctamente." });
         }
 
-        [HttpDelete("{id:int}")]
+        [HttpDelete("api/elemento-quimico/eliminar/{id:int}")]
         public async Task<ActionResult> Eliminar(int id)
         {
             var entity = await _context.elementoQuimico

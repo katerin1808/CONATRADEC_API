@@ -19,6 +19,9 @@ namespace CONATRADEC_API.Models
         public decimal phAnalisisSuelo { get; set; }
 
         [Column(TypeName = "decimal(10,4)")]
+        public decimal? materiaOrganica { get; set; }
+
+        [Column(TypeName = "decimal(10,4)")]
         public decimal? acidezTotal { get; set; }
 
         [MaxLength(500)]

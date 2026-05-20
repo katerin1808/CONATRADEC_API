@@ -21,6 +21,9 @@ namespace CONATRADEC_API.Models
         [Column(TypeName = "decimal(10,4)")]
         public decimal? requerimientoCalculado { get; set; }
 
+        [Column(TypeName = "decimal(10,4)")]
+        public decimal? cantidadConvertidaLbMz { get; set; }
+
         [MaxLength(50)]
         public string? clasificacion { get; set; }
 
