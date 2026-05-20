@@ -9,7 +9,9 @@ public class AnalisisSuelo
     public int analisisSueloId { get; set; }
 
     [Required]
-    public DateOnly fechaAnalisisSuelo { get; set; }
+    public DateOnly fechaAnalisisSuelo { get; set; } // fecha del laboratorio
+
+    public DateTime fechaCreacionAnalisisSuelo { get; set; } // fecha del sistema
 
     [Required, MaxLength(80)]
     public string laboratorioAnalasisSuelo { get; set; } = null!;

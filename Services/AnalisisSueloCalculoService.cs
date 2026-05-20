@@ -78,6 +78,12 @@ namespace CONATRADEC_API.Services
                     elementosIds.Contains(x.elementoQuimicosId))
                 .ToListAsync();
 
+            var unidadResultado = await _db.UnidadMedidas
+                .FirstOrDefaultAsync(x => x.nombreUnidadMedida == "lb/Mz" && x.activo);
+
+            if (unidadResultado == null)
+                throw new Exception("No existe la unidad de medida lb/Mz configurada.");
+
             foreach (var entrada in dto.elementosQuimicos)
             {
                 var elemento = elementos
@@ -98,6 +104,15 @@ namespace CONATRADEC_API.Services
                 decimal? extraccionPorQQOro = parametroExtraccion?.cantidadExtraidaPorQQOro;
                 decimal? extraccionPorProduccion = null;
                 decimal? requerimientoCalculado = null;
+                decimal? cantidadConvertidaLbMz = ConvertirEntradaALbMz(
+                    entrada.cantidadElemento,
+                    entrada.unidadMedidaId,
+                    elemento,
+                    dto.materiaOrganica
+                );
+                decimal? rangoMinimoLbMz = null;
+                decimal? rangoMaximoLbMz = null;
+                string clasificacion = "SIN_CLASIFICACION";
 
                 if (extraccionPorQQOro.HasValue)
                 {
@@ -107,9 +122,15 @@ namespace CONATRADEC_API.Services
                     );
                 }
 
+                if (rango != null)
+                {
+                    rangoMinimoLbMz = ConvertirKgHaALbMz(rango.valorMinimo);
+                    rangoMaximoLbMz = ConvertirKgHaALbMz(rango.valorMaximo);
+                }
+
                 if (rango != null && extraccionPorProduccion.HasValue)
                 {
-                    decimal baseNutricionalMz = ConvertirKgHaALbMz(rango.valorMaximo);
+                    decimal baseNutricionalMz = rangoMaximoLbMz ?? 0;
 
                     requerimientoCalculado = Math.Round(
                         baseNutricionalMz + extraccionPorProduccion.Value,
@@ -117,46 +138,80 @@ namespace CONATRADEC_API.Services
                     );
                 }
 
-               var simboloLimpio = elemento.simboloElementoQuimico.Trim();
+                clasificacion = ClasificarElemento(
+                    cantidadConvertidaLbMz,
+                    rangoMinimoLbMz,
+                    rangoMaximoLbMz
+                );
 
-response.elementos.Add(new ResultadoElementoCalculoDto
-{
-    elementoQuimicosId = elemento.elementoQuimicosId,
-    simboloElementoQuimico = simboloLimpio,
-    nombreElementoQuimico = elemento.nombreElementoQuimico.Trim(),
-    cantidadIngresada = entrada.cantidadElemento,
+                var simboloLimpio = elemento.simboloElementoQuimico.Trim();
 
-    extraccionPorQQOro = extraccionPorQQOro,
-    extraccionPorProduccion = extraccionPorProduccion,
+                response.elementos.Add(new ResultadoElementoCalculoDto
+                {
+                    elementoQuimicosId = elemento.elementoQuimicosId,
+                    simboloElementoQuimico = simboloLimpio,
+                    nombreElementoQuimico = elemento.nombreElementoQuimico.Trim(),
+                    cantidadIngresada = entrada.cantidadElemento,
 
-    rangoMinimo = rango?.valorMinimo,
-    rangoMaximo = rango?.valorMaximo,
+                    cantidadConvertidaLbMz = cantidadConvertidaLbMz,
 
-    requerimientoCalculado = requerimientoCalculado,
-    unidadBase = rango?.unidadBase,
+                    extraccionPorQQOro = extraccionPorQQOro,
+                    extraccionPorProduccion = extraccionPorProduccion,
 
-    observacion = CrearObservacionRequerimientoAnual(
-        simboloLimpio,
-        parametroExtraccion,
-        rango,
-        requerimientoCalculado
-    )
-});
+                    rangoMinimo = rango?.valorMinimo,
+                    rangoMaximo = rango?.valorMaximo,
+
+                    rangoMinimoLbMz = rangoMinimoLbMz,
+                    rangoMaximoLbMz = rangoMaximoLbMz,
+
+                    requerimientoCalculado = requerimientoCalculado,
+                    unidadBase = rango?.unidadBase,
+
+                    unidadMedidaResultadoId = unidadResultado.unidadMedidaId,
+                    unidadResultado = "lb/Mz",
+
+                    clasificacion = clasificacion,
+
+                    observacion = CrearObservacionRequerimientoAnual(
+                        simboloLimpio,
+                        parametroExtraccion,
+                        rango,
+                        cantidadConvertidaLbMz,
+                        rangoMinimoLbMz,
+                        rangoMaximoLbMz,
+                        requerimientoCalculado,
+                        clasificacion)
+                });
             }
-
-
 
             if (!response.elementos.Any())
             {
                 response.observaciones.Add("No se calcularon elementos químicos válidos.");
             }
 
-            if (dto.ph < 5.5m)
-            {
-                response.observaciones.Add("El pH ingresado indica acidez en el suelo. Puede ser necesario evaluar enmienda calcárea.");
-            }
+            response.observaciones.Add(InterpretarPhCafe(dto.ph));
 
             return response;
+        }
+
+        private string InterpretarPhCafe(decimal ph)
+        {
+            if (ph < 4.5m)
+                return "pH muy ácido. El suelo presenta acidez severa; se recomienda evaluar enmienda calcárea.";
+
+            if (ph < 5.5m)
+                return "pH ácido. Puede limitar la disponibilidad de nutrientes; se recomienda evaluar enmienda calcárea.";
+
+            if (ph <= 6.5m)
+                return "pH adecuado para café. Se encuentra dentro del rango recomendado para el cultivo.";
+
+            if (ph <= 7.3m)
+                return "pH cercano a neutro. Revisar la disponibilidad de nutrientes antes de recomendar fertilización.";
+
+            if (ph <= 8.4m)
+                return "pH alcalino. Puede afectar la disponibilidad de micronutrientes.";
+
+            return "pH fuertemente alcalino. Se recomienda revisión técnica especializada antes de aplicar fertilización.";
         }
 
         private decimal ConvertirKgHaALbMz(decimal valorKgHa)
@@ -168,10 +223,14 @@ response.elementos.Add(new ResultadoElementoCalculoDto
         }
 
         private string CrearObservacionRequerimientoAnual(
-    string simbolo,
-    ParametroExtraccionNutrienteCafe? parametroExtraccion,
-    ParametroRangoNutrienteCultivo? rango,
-    decimal? requerimientoCalculado)
+            string simbolo,
+            ParametroExtraccionNutrienteCafe? parametroExtraccion,
+            ParametroRangoNutrienteCultivo? rango,
+            decimal? cantidadConvertidaLbMz,
+            decimal? rangoMinimoLbMz,
+            decimal? rangoMaximoLbMz,
+            decimal? requerimientoCalculado,
+            string? clasificacion)
         {
             if (parametroExtraccion == null)
                 return $"El elemento {simbolo} no tiene parámetro de extracción por QQ oro configurado.";
@@ -179,10 +238,129 @@ response.elementos.Add(new ResultadoElementoCalculoDto
             if (rango == null)
                 return $"El elemento {simbolo} no tiene rango nutricional configurado para el tipo de cultivo seleccionado.";
 
+            if (!cantidadConvertidaLbMz.HasValue)
+                return $"No fue posible convertir el valor ingresado de {simbolo} a lb/Mz.";
+
             if (!requerimientoCalculado.HasValue)
                 return $"No fue posible calcular el requerimiento anual para {simbolo}.";
 
-            return $"Requerimiento anual calculado para {simbolo}.";
+            return
+                $"Elemento {simbolo}: clasificación {clasificacion}. " +
+                $"Cantidad convertida: {cantidadConvertidaLbMz.Value:0.####} lb/Mz. " +
+                $"Rango de referencia: {rangoMinimoLbMz:0.####} - {rangoMaximoLbMz:0.####} lb/Mz. " +
+                $"Requerimiento anual calculado: {requerimientoCalculado.Value:0.####} lb/Mz.";
+        }
+
+        private decimal? ConvertirEntradaALbMz(
+            decimal cantidad,
+            int unidadMedidaId,
+            ElementoQuimico elemento,
+            decimal materiaOrganica)
+        {
+            var unidad = _db.UnidadMedidas
+                .FirstOrDefault(x => x.unidadMedidaId == unidadMedidaId && x.activo);
+
+            if (unidad == null)
+                return null;
+
+            string nombreUnidad = unidad.nombreUnidadMedida.Trim().ToLower();
+            string simbolo = elemento.simboloElementoQuimico.Trim().ToUpper();
+
+            // N según Excel:
+            // MO * N total = % N en materia orgánica
+            // masa suelo = 2,000,000 kg/Ha
+            // mineralización = 0.015
+            // kg/Ha -> lb/Ha -> lb/Mz
+            if (simbolo == "N" && nombreUnidad == "%")
+            {
+                decimal masaSueloKgHa = 2000000m;
+                decimal constanteMineralizacion = 0.015m;
+
+                decimal nitrogenoMateriaOrganicaPorcentaje = materiaOrganica * cantidad;
+
+                decimal nitrogenoTotalKgHa =
+                    masaSueloKgHa * (nitrogenoMateriaOrganicaPorcentaje / 100m);
+
+                decimal nitrogenoDisponibleKgHa =
+                    nitrogenoTotalKgHa * constanteMineralizacion;
+
+                decimal nitrogenoDisponibleLbMz =
+                    nitrogenoDisponibleKgHa * 2.2m * 0.7m;
+
+                return Math.Round(nitrogenoDisponibleLbMz, 4);
+            }
+
+            // P: ppm -> kg/Ha -> lb/Ha -> lb/Mz
+            if (nombreUnidad == "ppm")
+                return Math.Round(cantidad * 2m * 2.2m * 0.7m, 4);
+
+            // K, Ca, Mg: meq/100g -> ppm -> kg/Ha -> lb/Ha -> lb/Mz
+            if (nombreUnidad == "meq/100g" || nombreUnidad == "meq")
+            {
+                decimal pesoEquivalente = elemento.pesoEquivalenteElementoQuimico;
+
+                if (pesoEquivalente <= 0)
+                    return null;
+
+                decimal ppm = cantidad * pesoEquivalente * 10m;
+                decimal kgHa = ppm * 2m;
+                decimal lbHa = kgHa * 2.2m;
+                decimal lbMz = lbHa * 0.7m;
+
+                return Math.Round(lbMz, 4);
+            }
+
+            // Por si algún laboratorio ya entrega convertido
+            if (nombreUnidad == "kg/ha")
+                return Math.Round(cantidad * 2.2m * 0.7m, 4);
+
+            if (nombreUnidad == "lb/ha")
+                return Math.Round(cantidad * 0.7m, 4);
+
+            if (nombreUnidad == "lb/mz")
+                return Math.Round(cantidad, 4);
+
+            return null;
+        }
+
+        private string ClasificarElemento(
+            decimal? cantidadConvertidaLbMz,
+            decimal? rangoMinimoLbMz,
+            decimal? rangoMaximoLbMz)
+        {
+            if (!cantidadConvertidaLbMz.HasValue ||
+                !rangoMinimoLbMz.HasValue ||
+                !rangoMaximoLbMz.HasValue ||
+                rangoMinimoLbMz.Value <= 0 ||
+                rangoMaximoLbMz.Value <= 0)
+            {
+                return "SIN_CLASIFICACION";
+            }
+
+            decimal valor = cantidadConvertidaLbMz.Value;
+            decimal minimo = rangoMinimoLbMz.Value;
+            decimal maximo = rangoMaximoLbMz.Value;
+
+            decimal limiteMuyBajo = minimo * 0.50m;
+            decimal limiteBajo = minimo * 0.75m;
+            decimal limiteAlto = maximo * 1.50m;
+
+            if (valor < limiteMuyBajo)
+                return "MUY_BAJO";
+
+            if (valor < limiteBajo)
+                return "BAJO";
+
+            if (valor < minimo)
+                return "MEDIO_BAJO";
+
+            if (valor <= maximo)
+                return "ADECUADO";
+
+            if (valor <= limiteAlto)
+                return "ALTO";
+
+            return "EXCESIVO";
         }
 
         private void ValidarEntrada(AnalisisSueloCalculoRequestDto dto)

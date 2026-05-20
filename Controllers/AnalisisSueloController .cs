@@ -91,7 +91,12 @@ public class AnalisisSueloController : ControllerBase
             // 2. Guardar encabezado del análisis
             var analisis = new AnalisisSuelo
             {
+                // Fecha del análisis de laboratorio, enviada por el usuario
                 fechaAnalisisSuelo = dto.fechaAnalisisSuelo,
+
+                // Fecha en que el sistema registra/procesa el análisis
+                fechaCreacionAnalisisSuelo = DateTime.Now,
+
                 laboratorioAnalasisSuelo = dto.laboratorioAnalasisSuelo.Trim().ToUpper(),
                 identificadorAnalisisSuelo = dto.identificadorAnalisisSuelo.Trim().ToUpper(),
                 activo = true
@@ -123,6 +128,7 @@ public class AnalisisSueloController : ControllerBase
                 cantidadQuintalesOro = dto.cantidadQuintalesOro,
                 tamanoFinca = dto.tamanoFinca,
                 phAnalisisSuelo = dto.ph,
+                materiaOrganica = dto.materiaOrganica,
                 acidezTotal = dto.acidezTotal,
 
                 recomendacionGeneral = resultado.recomendacionGeneral,
@@ -144,7 +150,7 @@ public class AnalisisSueloController : ControllerBase
             // 5. Guardar resultado calculado por elemento químico
 
             var unidadResultado = await _db.UnidadMedidas
-    .FirstOrDefaultAsync(x => x.nombreUnidadMedida == "lb/Mz" && x.activo);
+                .FirstOrDefaultAsync(x => x.nombreUnidadMedida == "lb/Mz" && x.activo);
 
             if (unidadResultado == null)
             {
@@ -164,11 +170,11 @@ public class AnalisisSueloController : ControllerBase
                     unidadMedidaId = unidadResultado.unidadMedidaId,
 
                     cantidadIngresada = elementoCalculado.cantidadIngresada,
+                    cantidadConvertidaLbMz = elementoCalculado.cantidadConvertidaLbMz,
                     requerimientoCalculado = elementoCalculado.requerimientoCalculado,
 
-                    clasificacion = "CALCULADO",
+                    clasificacion = elementoCalculado.clasificacion,
                     observacion = elementoCalculado.observacion,
-
                     activo = true
                 };
 
@@ -262,20 +268,23 @@ public class AnalisisSueloController : ControllerBase
         if (calculo != null)
         {
             var elementosCalculadosRaw = await _db.AnalisisSueloCalculoElementoQuimicos
-                .Where(e => e.analisisSueloCalculoId == calculo.analisisSueloCalculoId && e.activo)
-                .Select(e => new
-                {
-                    e.analisisSueloCalculoElementoQuimicoId,
-                    e.elementoQuimicosId,
-                    simboloElementoQuimico = e.ElementoQuimico.simboloElementoQuimico.Trim(),
-                    nombreElementoQuimico = e.ElementoQuimico.nombreElementoQuimico.Trim(),
-                    e.cantidadIngresada,
-                    e.requerimientoCalculado,
-                    e.clasificacion,
-                    e.observacion,
-                    e.activo
-                })
-                .ToListAsync();
+             .Where(e => e.analisisSueloCalculoId == calculo.analisisSueloCalculoId && e.activo)
+            .Select(e => new
+            {
+                e.analisisSueloCalculoElementoQuimicoId,
+                e.elementoQuimicosId,
+                simboloElementoQuimico = e.ElementoQuimico.simboloElementoQuimico.Trim(),
+                nombreElementoQuimico = e.ElementoQuimico.nombreElementoQuimico.Trim(),
+                e.cantidadIngresada,
+                e.cantidadConvertidaLbMz,
+                e.requerimientoCalculado,
+                e.unidadMedidaId,
+                nombreUnidadResultado = e.UnidadMedida == null ? null : e.UnidadMedida.nombreUnidadMedida.Trim(),
+                e.clasificacion,
+                e.observacion,
+                e.activo
+            })
+            .ToListAsync();
 
             elementosCalculados = elementosCalculadosRaw
                 .Select(e => (object)e)
@@ -292,6 +301,7 @@ public class AnalisisSueloController : ControllerBase
                 {
                     analisis.analisisSueloId,
                     analisis.fechaAnalisisSuelo,
+                    analisis.fechaCreacionAnalisisSuelo,
                     analisis.laboratorioAnalasisSuelo,
                     analisis.identificadorAnalisisSuelo,
                     analisis.activo
@@ -329,6 +339,7 @@ public class AnalisisSueloController : ControllerBase
                     calculo.cantidadQuintalesOro,
                     calculo.tamanoFinca,
                     calculo.phAnalisisSuelo,
+                    calculo.materiaOrganica,
                     calculo.acidezTotal,
                     calculo.recomendacionGeneral,
                     calculo.observacion,

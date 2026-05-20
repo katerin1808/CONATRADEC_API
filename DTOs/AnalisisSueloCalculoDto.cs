@@ -24,6 +24,9 @@ namespace CONATRADEC_API.DTOs
         [Required]
         public decimal ph { get; set; }
 
+        [Required]
+        public decimal materiaOrganica { get; set; }
+
         public decimal? acidezTotal { get; set; }
 
         [Required]
@@ -107,6 +110,8 @@ namespace CONATRADEC_API.DTOs
 
         public decimal cantidadIngresada { get; set; }
 
+        public decimal? cantidadConvertidaLbMz { get; set; }
+
         public decimal? extraccionPorQQOro { get; set; }
 
         public decimal? extraccionPorProduccion { get; set; }
@@ -115,9 +120,19 @@ namespace CONATRADEC_API.DTOs
 
         public decimal? rangoMaximo { get; set; }
 
+        public decimal? rangoMinimoLbMz { get; set; }
+
+        public decimal? rangoMaximoLbMz { get; set; }
+
         public decimal? requerimientoCalculado { get; set; }
 
         public string? unidadBase { get; set; }
+
+        public int? unidadMedidaResultadoId { get; set; }
+
+        public string? unidadResultado { get; set; }
+
+        public string? clasificacion { get; set; }
 
         public string observacion { get; set; } = null!;
     }

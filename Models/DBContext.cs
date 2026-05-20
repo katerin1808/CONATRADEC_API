@@ -212,6 +212,9 @@ namespace CONATRADEC_API.Models
                     .HasPrecision(10, 4)
                     .IsRequired();
 
+                entity.Property(e => e.materiaOrganica)
+                    .HasPrecision(10, 4);
+
                 entity.Property(e => e.acidezTotal)
                     .HasPrecision(10, 4);
 
@@ -243,6 +246,9 @@ namespace CONATRADEC_API.Models
                     .IsRequired();
 
                 entity.Property(e => e.requerimientoCalculado)
+                    .HasPrecision(10, 4);
+
+                entity.Property(e => e.cantidadConvertidaLbMz)
                     .HasPrecision(10, 4);
 
                 entity.Property(e => e.clasificacion)
