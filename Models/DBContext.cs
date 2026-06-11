@@ -46,6 +46,14 @@ namespace CONATRADEC_API.Models
         public DbSet<ParametroEnmiendaCalcarea> ParametroEnmiendaCalcarea { get; set; } = null!;
         public DbSet<ParametroFuenteOrganicaAporte> ParametroFuenteOrganicaAporte { get; set; } = null!;
 
+
+        // ==========================
+        // BALANCE DE FORMULA
+        // ==========================
+
+        public DbSet<FormulaNutricional> formulaNutricional { get; set; }
+        public DbSet<FormulaNutricionalDetalle> formulaNutricionalDetalle { get; set; }
+
         // ==========================
         // CONFIGURACIONES
         // ==========================
@@ -421,6 +429,24 @@ namespace CONATRADEC_API.Models
                     .OnDelete(DeleteBehavior.Restrict);
             });
 
+
+            modelBuilder.Entity<FormulaNutricionalDetalle>()
+                    .HasOne(x => x.formulaNutricional)
+                    .WithMany(x => x.detalles)
+                    .HasForeignKey(x => x.formulaNutricionalId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<FormulaNutricionalDetalle>()
+                    .HasOne(x => x.fuenteNutriente)
+                .WithMany()
+                .HasForeignKey(x => x.fuenteNutrientesId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<FormulaNutricionalDetalle>()
+                .HasOne(x => x.elementoQuimico)
+                .WithMany()
+                .HasForeignKey(x => x.elementoQuimicosId)
+                .OnDelete(DeleteBehavior.Restrict);
         }
 
     }
