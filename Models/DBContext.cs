@@ -53,6 +53,8 @@ namespace CONATRADEC_API.Models
 
         public DbSet<FormulaNutricional> formulaNutricional { get; set; }
         public DbSet<FormulaNutricionalDetalle> formulaNutricionalDetalle { get; set; }
+        public DbSet<BalanceNutricional> balanceNutricional { get; set; }
+        public DbSet<BalanceNutricionalDetalle> balanceNutricionalDetalle { get; set; }
 
         // ==========================
         // CONFIGURACIONES
@@ -447,7 +449,29 @@ namespace CONATRADEC_API.Models
                 .WithMany()
                 .HasForeignKey(x => x.elementoQuimicosId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+
+
+            modelBuilder.Entity<BalanceNutricionalDetalle>()
+                .HasOne(x => x.balanceNutricional)
+                .WithMany(x => x.detalles)
+                .HasForeignKey(x => x.balanceNutricionalId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<BalanceNutricionalDetalle>()
+                .HasOne(x => x.fuenteNutriente)
+                .WithMany()
+                .HasForeignKey(x => x.fuenteNutrientesId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<BalanceNutricionalDetalle>()
+                .HasOne(x => x.elementoQuimico)
+                .WithMany()
+                .HasForeignKey(x => x.elementoQuimicosId)
+                .OnDelete(DeleteBehavior.Restrict);
         }
+
+
 
     }
 }
