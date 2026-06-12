@@ -22,6 +22,15 @@ namespace CONATRADEC_API.Models
         [Column(TypeName = "decimal(18,4)")]
         public decimal librasFuentePorAplicacion { get; set; }
 
+        [Column(TypeName = "decimal(18,4)")]
+        public decimal quintalesAnuales { get; set; }
+
+        [Column(TypeName = "decimal(18,4)")]
+        public decimal precioPorQuintal { get; set; }
+
+        [Column(TypeName = "decimal(18,4)")]
+        public decimal subtotalFuente { get; set; }
+
 
         public bool activo { get; set; } = true;
 

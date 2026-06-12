@@ -44,6 +44,7 @@ namespace CONATRADEC_API.Models
         public DbSet<ParametroExtraccionNutrienteCafe> ParametroExtraccionNutrienteCafe { get; set; } = null!;
         public DbSet<ParametroRangoNutrienteCultivo> ParametroRangoNutrienteCultivo { get; set; } = null!;
         public DbSet<ParametroEnmiendaCalcarea> ParametroEnmiendaCalcarea { get; set; } = null!;
+        public DbSet<EnmiendaCalcarea> enmiendaCalcarea { get; set; }
         public DbSet<ParametroFuenteOrganicaAporte> ParametroFuenteOrganicaAporte { get; set; } = null!;
 
 
@@ -394,6 +395,12 @@ namespace CONATRADEC_API.Models
                     .HasForeignKey(e => e.fuenteNutrientesId)
                     .OnDelete(DeleteBehavior.Restrict);
             });
+
+            modelBuilder.Entity<EnmiendaCalcarea>()
+                .HasOne(x => x.fuenteNutriente)
+                .WithMany()
+                .HasForeignKey(x => x.fuenteNutrientesId)
+                .OnDelete(DeleteBehavior.Restrict);
 
 
             // ============================

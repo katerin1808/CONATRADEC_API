@@ -1,5 +1,5 @@
-﻿using CONATRADEC_API.Models;
-using Microsoft.AspNetCore.Http;
+﻿using CONATRADEC_API.DTOs;
+using CONATRADEC_API.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using static CONATRADEC_API.DTOs.BalanceNutricionalDto;
@@ -8,7 +8,7 @@ namespace CONATRADEC_API.Controllers
 {
     [ApiController]
     [Route("api/balance-nutricional")]
-    public class BalanceNutricionalController : Controller
+    public class BalanceNutricionalController : ControllerBase
     {
         private readonly DBContext _db;
 
@@ -62,6 +62,8 @@ namespace CONATRADEC_API.Controllers
                     .ToList();
 
                 decimal totalLibras = 0;
+                decimal precioTotalFormula = 0;
+
                 var aportesAcumulados = new Dictionary<string, decimal>();
 
                 var detallesGuardar = new List<BalanceNutricionalDetalle>();
@@ -110,7 +112,12 @@ namespace CONATRADEC_API.Controllers
                     decimal librasFuentePorAplicacion = librasFuenteAnual / dto.totalAplicaciones;
                     decimal onzasFuenteAnual = librasFuenteAnual * 16m;
 
+                    decimal quintalesAnuales = librasFuenteAnual / 100m;
+                    decimal precioPorQuintal = fuente.precioNutriente;
+                    decimal subtotalFuente = quintalesAnuales * precioPorQuintal;
+
                     totalLibras += librasFuenteAnual;
+                    precioTotalFormula += subtotalFuente;
 
                     foreach (var comp in composicionFuente)
                     {
@@ -130,6 +137,9 @@ namespace CONATRADEC_API.Controllers
                         requerimientoLibras = item.requerimientoLibras,
                         librasFuenteAnual = librasFuenteAnual,
                         librasFuentePorAplicacion = librasFuentePorAplicacion,
+                        quintalesAnuales = quintalesAnuales,
+                        precioPorQuintal = precioPorQuintal,
+                        subtotalFuente = subtotalFuente,
                         activo = true
                     });
 
@@ -138,16 +148,23 @@ namespace CONATRADEC_API.Controllers
                         fuente = fuente.nombreNutriente,
                         elemento = simboloPrincipal,
                         requerimientoLibras = Math.Round(item.requerimientoLibras, 4),
+
                         librasAnuales = Math.Round(librasFuenteAnual, 4),
                         onzasAnuales = Math.Round(onzasFuenteAnual, 4),
+
                         dosAplicaciones = Math.Round(onzasFuenteAnual / 2m, 4),
-                        tresAplicaciones = Math.Round(onzasFuenteAnual / 3m, 4)
+                        tresAplicaciones = Math.Round(onzasFuenteAnual / 3m, 4),
+
+                        quintalesAnuales = Math.Round(quintalesAnuales, 4),
+                        precioPorQuintal = Math.Round(precioPorQuintal, 4),
+                        subtotalFuente = Math.Round(subtotalFuente, 4)
                     });
                 }
 
                 decimal totalOnzas = totalLibras * 16m;
                 decimal dosisPlantaAnualOz = totalOnzas / dto.totalPlantas;
                 decimal dosisPlantaPorAplicacionOz = dosisPlantaAnualOz / dto.totalAplicaciones;
+                decimal totalMezclaQq = totalLibras / 100m;
 
                 var balance = new BalanceNutricional
                 {
@@ -156,6 +173,8 @@ namespace CONATRADEC_API.Controllers
                     totalAplicaciones = dto.totalAplicaciones,
                     totalLibras = totalLibras,
                     totalOnzas = totalOnzas,
+                    totalMezclaQq = totalMezclaQq,
+                    precioTotalFormula = precioTotalFormula,
                     onzasPorPlantaAnual = dosisPlantaAnualOz,
                     onzasPorPlantaPorAplicacion = dosisPlantaPorAplicacionOz,
                     activo = true
@@ -179,6 +198,9 @@ namespace CONATRADEC_API.Controllers
 
                     totalMezclaLb = Math.Round(balance.totalLibras, 4),
                     totalMezclaOz = Math.Round(balance.totalOnzas, 4),
+                    totalMezclaQq = Math.Round(balance.totalMezclaQq, 4),
+                    precioTotalFormula = Math.Round(balance.precioTotalFormula, 4),
+                    precioPorAplicacion = Math.Round(balance.precioTotalFormula / balance.totalAplicaciones, 4),
 
                     librasPorDosAplicaciones = Math.Round(balance.totalLibras / 2m, 4),
                     librasPorTresAplicaciones = Math.Round(balance.totalLibras / 3m, 4),
@@ -206,7 +228,8 @@ namespace CONATRADEC_API.Controllers
                 return StatusCode(500, new
                 {
                     mensaje = "Error al calcular balance nutricional.",
-                    detalle = ex.Message
+                    detalle = ex.Message,
+                    inner = ex.InnerException?.Message
                 });
             }
         }
@@ -234,8 +257,13 @@ namespace CONATRADEC_API.Controllers
                     requerimientoLibras = Math.Round(x.requerimientoLibras, 4),
                     librasAnuales = Math.Round(x.librasFuenteAnual, 4),
                     onzasAnuales = Math.Round(x.librasFuenteAnual * 16m, 4),
+
                     dosAplicaciones = Math.Round((x.librasFuenteAnual * 16m) / 2m, 4),
-                    tresAplicaciones = Math.Round((x.librasFuenteAnual * 16m) / 3m, 4)
+                    tresAplicaciones = Math.Round((x.librasFuenteAnual * 16m) / 3m, 4),
+
+                    quintalesAnuales = Math.Round(x.quintalesAnuales, 4),
+                    precioPorQuintal = Math.Round(x.precioPorQuintal, 4),
+                    subtotalFuente = Math.Round(x.subtotalFuente, 4)
                 })
                 .ToListAsync();
 
@@ -246,6 +274,9 @@ namespace CONATRADEC_API.Controllers
 
                 totalMezclaLb = Math.Round(balance.totalLibras, 4),
                 totalMezclaOz = Math.Round(balance.totalOnzas, 4),
+                totalMezclaQq = Math.Round(balance.totalMezclaQq, 4),
+                precioTotalFormula = Math.Round(balance.precioTotalFormula, 4),
+                precioPorAplicacion = Math.Round(balance.precioTotalFormula / balance.totalAplicaciones, 4),
 
                 librasPorDosAplicaciones = Math.Round(balance.totalLibras / 2m, 4),
                 librasPorTresAplicaciones = Math.Round(balance.totalLibras / 3m, 4),
@@ -266,6 +297,5 @@ namespace CONATRADEC_API.Controllers
                 detalle = detalle
             });
         }
-
     }
 }

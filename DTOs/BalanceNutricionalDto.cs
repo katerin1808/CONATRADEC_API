@@ -30,6 +30,9 @@
 
             public int totalPlantas { get; set; }
             public decimal dosisPlantaAnualOz { get; set; }
+            public decimal totalMezclaQq { get; set; }
+            public decimal precioTotalFormula { get; set; }
+            public decimal precioPorAplicacion { get; set; }
 
             public AplicacionResumenDto dosAplicaciones { get; set; } = new();
             public AplicacionResumenDto tresAplicaciones { get; set; } = new();
@@ -54,6 +57,9 @@
 
             public decimal dosAplicaciones { get; set; }
             public decimal tresAplicaciones { get; set; }
+            public decimal quintalesAnuales { get; set; }
+            public decimal precioPorQuintal { get; set; }
+            public decimal subtotalFuente { get; set; }
         }
     }
 }

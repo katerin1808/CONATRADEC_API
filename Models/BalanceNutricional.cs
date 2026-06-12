@@ -29,6 +29,12 @@ namespace CONATRADEC_API.Models
         [Column(TypeName = "decimal(18,4)")]
         public decimal onzasPorPlantaPorAplicacion { get; set; }
 
+        [Column(TypeName = "decimal(18,4)")]
+        public decimal totalMezclaQq { get; set; }
+
+        [Column(TypeName = "decimal(18,4)")]
+        public decimal precioTotalFormula { get; set; }
+
         public bool activo { get; set; } = true;
 
         public ICollection<BalanceNutricionalDetalle> detalles { get; set; }
