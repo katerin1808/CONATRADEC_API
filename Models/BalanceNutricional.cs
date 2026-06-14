@@ -37,6 +37,11 @@ namespace CONATRADEC_API.Models
 
         public bool activo { get; set; } = true;
 
+        public int? terrenoId { get; set; }
+
+        [ForeignKey(nameof(terrenoId))]
+        public Terreno? terreno { get; set; }
+
         public ICollection<BalanceNutricionalDetalle> detalles { get; set; }
             = new List<BalanceNutricionalDetalle>();
     }

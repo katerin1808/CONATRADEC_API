@@ -24,8 +24,18 @@ namespace CONATRADEC_API.Controllers
 
             try
             {
-                if (dto.totalPlantas <= 0)
-                    return BadRequest(new { mensaje = "El total de plantas debe ser mayor a cero." });
+                var terreno = await _db.Terreno
+                .FirstOrDefaultAsync(x => x.terrenoId == dto.terrenoId && x.activo);
+
+                if (terreno == null)
+                    return BadRequest(new { mensaje = "El terreno no existe o está inactivo." });
+
+                int totalPlantasUsadas = dto.totalPlantas.HasValue && dto.totalPlantas.Value > 0
+                    ? dto.totalPlantas.Value
+                    : terreno.cantidadPlantasTerreno;
+
+                if (totalPlantasUsadas <= 0)
+                    return BadRequest(new { mensaje = "Debe ingresar la cantidad de plantas o configurar la cantidad en el terreno." });
 
                 if (dto.totalAplicaciones <= 0)
                     return BadRequest(new { mensaje = "El total de aplicaciones debe ser mayor a cero." });
@@ -162,14 +172,15 @@ namespace CONATRADEC_API.Controllers
                 }
 
                 decimal totalOnzas = totalLibras * 16m;
-                decimal dosisPlantaAnualOz = totalOnzas / dto.totalPlantas;
+                decimal dosisPlantaAnualOz = totalOnzas / totalPlantasUsadas;
                 decimal dosisPlantaPorAplicacionOz = dosisPlantaAnualOz / dto.totalAplicaciones;
                 decimal totalMezclaQq = totalLibras / 100m;
 
                 var balance = new BalanceNutricional
                 {
                     nombreFormula = dto.nombreFormula,
-                    totalPlantas = dto.totalPlantas,
+                    terrenoId = terreno.terrenoId,
+                    totalPlantas = totalPlantasUsadas,
                     totalAplicaciones = dto.totalAplicaciones,
                     totalLibras = totalLibras,
                     totalOnzas = totalOnzas,

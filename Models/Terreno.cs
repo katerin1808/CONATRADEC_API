@@ -26,6 +26,7 @@ namespace CONATRADEC_API.Models
 
         public decimal extensionManzanaTerreno { get; set; }
         public DateOnly fechaIngresoTerreno { get; set; }
+        public int cantidadPlantasTerreno { get; set; }
 
         public bool activo { get; set; }
 
@@ -35,6 +36,8 @@ namespace CONATRADEC_API.Models
         public decimal cantidadQuintalesOro { get; set; }
         public decimal latitud { get; set; }
         public decimal longitud { get; set; }
+        public virtual ICollection<FotoTerreno> FotosTerreno { get; set; }
+    = new List<FotoTerreno>();
     }
 }
 

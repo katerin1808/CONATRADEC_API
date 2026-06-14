@@ -20,6 +20,7 @@ namespace CONATRADEC_API.Models
         public DbSet<Procedencia> Procedencia { get; set; } = null!;
         public DbSet<Usuario> Usuarios { get; set; } = null!;
         public DbSet<Terreno> Terreno { get; set; } = null!;
+        public DbSet<FotoTerreno> FotoTerreno { get; set; }
         public DbSet<FuenteNutriente> fuenteNutriente { get; set; }
         public DbSet<ElementoQuimico> elementoQuimico { get; set; }
         public DbSet<FuenteNutrienteElementoQuimico> fuenteNutrienteElementoQuimico { get; set; }
@@ -147,6 +148,12 @@ namespace CONATRADEC_API.Models
                 e.Property(x => x.maximoRangoNutrimental).IsRequired();
                 e.Property(x => x.activo).HasDefaultValue(true);
             });
+
+
+            modelBuilder.Entity<FotoTerreno>()
+             .HasOne(x => x.Terreno)
+             .WithMany(x => x.FotosTerreno)
+             .HasForeignKey(x => x.terrenoId);
 
             // interpretacion
             modelBuilder.Entity<Interpretacion>(e =>

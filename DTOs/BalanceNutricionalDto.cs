@@ -5,8 +5,13 @@
         public class BalanceNutricionalCrearDto
         {
             public string? nombreFormula { get; set; }
-            public int totalPlantas { get; set; }
+
+            public int terrenoId { get; set; }
+
+            public int? totalPlantas { get; set; }
+
             public int totalAplicaciones { get; set; }
+
             public List<BalanceNutricionalItemDto> items { get; set; } = new();
         }
 

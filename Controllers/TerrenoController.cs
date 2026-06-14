@@ -37,6 +37,7 @@ namespace CONATRADEC_API.Controllers
                     fechaIngresoTerreno = x.fechaIngresoTerreno,
                     municipioId = x.municipioId,
                     cantidadQuintalesOro = x.cantidadQuintalesOro,
+                    cantidadPlantasTerreno = x.cantidadPlantasTerreno,
                     latitud = x.latitud,
                     longitud = x.longitud,
 
@@ -77,6 +78,7 @@ namespace CONATRADEC_API.Controllers
                     fechaIngresoTerreno = dto.fechaIngresoTerreno,
                     municipioId = dto.municipioId,
                     cantidadQuintalesOro = dto.cantidadQuintalesOro,
+                    cantidadPlantasTerreno = dto.cantidadPlantasTerreno,
                     latitud = dto.latitud,
                     longitud = dto.longitud,
                     activo = true
@@ -115,6 +117,7 @@ namespace CONATRADEC_API.Controllers
             terreno.fechaIngresoTerreno = dto.fechaIngresoTerreno;
             terreno.municipioId = dto.municipioId;
             terreno.cantidadQuintalesOro = dto.cantidadQuintalesOro;
+            terreno.cantidadPlantasTerreno = dto.cantidadPlantasTerreno;
             terreno.latitud = dto.latitud;
             terreno.longitud = dto.longitud;
 

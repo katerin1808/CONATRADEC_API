@@ -14,6 +14,8 @@
             public decimal extensionManzanaTerreno { get; set; }
             public DateOnly fechaIngresoTerreno { get; set; }
 
+            public int cantidadPlantasTerreno { get; set; }
+
             public int municipioId { get; set; }
             public decimal cantidadQuintalesOro { get; set; }
             public decimal latitud { get; set; }
@@ -31,6 +33,7 @@
             public string direccionTerreno { get; set; } = null!;
             public decimal extensionManzanaTerreno { get; set; }
             public DateOnly fechaIngresoTerreno { get; set; }
+            public int cantidadPlantasTerreno { get; set; }
             public int municipioId { get; set; }
             public decimal cantidadQuintalesOro { get; set; }
             public decimal latitud { get; set; }
@@ -63,6 +66,7 @@
             public string direccionTerreno { get; set; } = null!;
             public decimal extensionManzanaTerreno { get; set; }
             public DateOnly fechaIngresoTerreno { get; set; }
+            public int cantidadPlantasTerreno { get; set; }
             public int municipioId { get; set; }
             public decimal cantidadQuintalesOro { get; set; }
             public decimal latitud { get; set; }
@@ -70,7 +74,9 @@
 
             // DTO único para la ubicación
             public TerrenoUbicacionDto ubicacion { get; set; } = null!;
+           
         }
 
+      
     }
 }
