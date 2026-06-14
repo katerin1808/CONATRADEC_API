@@ -57,7 +57,7 @@ namespace CONATRADEC_API.Controllers
             return Ok(data);
         }
 
-        [HttpPost("api/elemento-quimico/crear/{id:int}")]
+        [HttpPost("api/elemento-quimico/crear/")]
         public async Task<ActionResult> Crear([FromBody] CrearElementoQuimicoDto dto)
         {
             if (string.IsNullOrWhiteSpace(dto.simboloElementoQuimico))
