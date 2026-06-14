@@ -35,6 +35,8 @@ namespace CONATRADEC_API.Models
         public decimal cantidadQuintalesOro { get; set; }
         public decimal latitud { get; set; }
         public decimal longitud { get; set; }
+
+        public int CantidadPlantasTerreno { get; set; }
     }
 }
 
