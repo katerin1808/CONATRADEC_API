@@ -12,6 +12,10 @@
             public decimal mg { get; set; }
             public decimal k { get; set; }
             public decimal acidezTotal { get; set; }
+
+           public int terrenoId { get; set; }
+           public int? totalPlantas { get; set; }
+           public int totalAplicaciones { get; set; }
         }
 
         public class EnmiendaCalcareaRespuestaDto
@@ -20,6 +24,7 @@
             public string nombreAnalisis { get; set; } = string.Empty;
 
             public string fuenteNutriente { get; set; } = string.Empty;
+
 
             public decimal ph { get; set; }
             public decimal ca { get; set; }
@@ -37,5 +42,14 @@
             public decimal necesidadEncaladoTonHa { get; set; }
             public decimal necesidadEncaladoKgHa { get; set; }
             public decimal necesidadEncaladoLbHa { get; set; }
-        }
+
+            public int? terrenoId { get; set; }
+            public int totalPlantas { get; set; }
+            public int totalAplicaciones { get; set; }
+
+            public decimal necesidadEncaladoLbMz { get; set; }
+            public decimal necesidadEncaladoOzMz { get; set; }
+            public decimal dosisPlantaAnualOz { get; set; }
+            public decimal dosisPlantaPorAplicacionOz { get; set; }
+    }
 }

@@ -362,5 +362,50 @@ namespace CONATRADEC_API.Controllers
                 });
             }
         }
+
+        [HttpGet("aportes-tabla")]
+        public async Task<IActionResult> AportesTabla()
+        {
+            var fuentes = await _db.fuenteNutriente
+                .Where(f => f.activo)
+                .ToListAsync();
+
+            var aportes = await _db.fuenteNutrienteElementoQuimico
+                .Include(a => a.elementoQuimico)
+                .Where(a => a.activo)
+                .ToListAsync();
+
+            var data = fuentes.Select(f =>
+            {
+                var ap = aportes
+                    .Where(a => a.fuenteNutrientesId == f.fuenteNutrientesId)
+                    .ToList();
+
+                decimal Valor(string simbolo)
+                {
+                    return ap
+                        .Where(x => x.elementoQuimico!.simboloElementoQuimico.Trim().ToUpper() == simbolo)
+                        .Select(x => x.cantidadAporte)
+                        .FirstOrDefault();
+                }
+
+                return new FuenteNutrienteAporteTablaDto
+                {
+                    fuenteNutrientesId = f.fuenteNutrientesId,
+                    fuente = f.nombreNutriente,
+
+                    n = Valor("N"),
+                    p = Valor("P"),
+                    k = Valor("K"),
+                    ca = Valor("CA"),
+                    mg = Valor("MG"),
+                    zn = Valor("ZN"),
+                    s = Valor("S"),
+                    b = Valor("B")
+                };
+            }).ToList();
+
+            return Ok(data);
+        }
     }
 }

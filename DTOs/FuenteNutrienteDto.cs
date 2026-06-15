@@ -32,5 +32,20 @@
         public string simboloElementoQuimico { get; set; } = string.Empty;
         public decimal cantidadAporte { get; set; }
     }
+
+    public class FuenteNutrienteAporteTablaDto
+    {
+        public int fuenteNutrientesId { get; set; }
+        public string fuente { get; set; } = string.Empty;
+
+        public decimal n { get; set; }
+        public decimal p { get; set; }
+        public decimal k { get; set; }
+        public decimal ca { get; set; }
+        public decimal mg { get; set; }
+        public decimal zn { get; set; }
+        public decimal s { get; set; }
+        public decimal b { get; set; }
+    }
 }
 

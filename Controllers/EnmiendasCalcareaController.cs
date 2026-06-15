@@ -38,6 +38,15 @@ namespace CONATRADEC_API.Controllers
                 if (fuente == null)
                     return BadRequest(new { mensaje = "La fuente nutriente no existe o está inactiva." });
 
+                var terreno = await _db.Terreno
+                   .FirstOrDefaultAsync(x => x.terrenoId == dto.terrenoId && x.activo);
+
+                if (terreno == null)
+                    return BadRequest(new { mensaje = "El terreno no existe." });
+
+                if (dto.totalAplicaciones <= 0)
+                    return BadRequest(new { mensaje = "El total de aplicaciones debe ser mayor a cero." });
+
                 var parametro = await _db.ParametroEnmiendaCalcarea
                     .FirstOrDefaultAsync(x =>
                         x.fuenteNutrientesId == dto.fuenteNutrientesId &&
@@ -71,6 +80,18 @@ namespace CONATRADEC_API.Controllers
                 decimal necesidadLbHa =
                     necesidadTonHa * parametro.factorTonHaALbHa;
 
+                int totalPlantas = dto.totalPlantas.HasValue && dto.totalPlantas.Value > 0
+                 ? dto.totalPlantas.Value
+    :            terreno.cantidadPlantasTerreno;
+
+                if (totalPlantas <= 0)
+                    return BadRequest(new { mensaje = "Debe ingresar la cantidad de plantas o configurar la cantidad en el terreno." });
+
+                decimal necesidadLbMz = necesidadLbHa * parametro.factorHaAMz;
+                decimal necesidadOzMz = necesidadLbMz * 16m;
+                decimal dosisPlantaAnualOz = necesidadOzMz / totalPlantas;
+                decimal dosisPlantaPorAplicacionOz = dosisPlantaAnualOz / dto.totalAplicaciones;
+
                 var entity = new EnmiendaCalcarea
                 {
                     nombreAnalisis = dto.nombreAnalisis.Trim(),
@@ -88,6 +109,14 @@ namespace CONATRADEC_API.Controllers
                     sumaBases = sumaBases,
                     cice = cice,
                     saturacionActual = saturacionActual,
+                    terrenoId = dto.terrenoId,
+                    totalPlantas = totalPlantas,
+                    totalAplicaciones = dto.totalAplicaciones,
+
+                    necesidadEncaladoLbMz = necesidadLbMz,
+                    necesidadEncaladoOzMz = necesidadOzMz,
+                    dosisPlantaAnualOz = dosisPlantaAnualOz,
+                    dosisPlantaPorAplicacionOz = dosisPlantaPorAplicacionOz,
 
                     necesidadEncaladoTonHa = necesidadTonHa,
                     necesidadEncaladoKgHa = necesidadKgHa,
@@ -120,7 +149,15 @@ namespace CONATRADEC_API.Controllers
 
                     necesidadEncaladoTonHa = Math.Round(entity.necesidadEncaladoTonHa, 4),
                     necesidadEncaladoKgHa = Math.Round(entity.necesidadEncaladoKgHa, 4),
-                    necesidadEncaladoLbHa = Math.Round(entity.necesidadEncaladoLbHa, 4)
+                    necesidadEncaladoLbHa = Math.Round(entity.necesidadEncaladoLbHa, 4),
+                    terrenoId = dto.terrenoId,
+                    totalPlantas = totalPlantas,
+                    totalAplicaciones = dto.totalAplicaciones,
+
+                    necesidadEncaladoLbMz = Math.Round(entity.necesidadEncaladoLbMz, 4),
+                    necesidadEncaladoOzMz = Math.Round(entity.necesidadEncaladoOzMz, 4),
+                    dosisPlantaAnualOz = Math.Round(entity.dosisPlantaAnualOz, 4),
+                    dosisPlantaPorAplicacionOz = Math.Round(entity.dosisPlantaPorAplicacionOz, 4),
                 });
             }
             catch (Exception ex)
@@ -158,10 +195,16 @@ namespace CONATRADEC_API.Controllers
                     sumaBases = x.sumaBases,
                     cice = x.cice,
                     saturacionActual = x.saturacionActual,
-
+                    terrenoId = x.terrenoId,
+                    totalPlantas = x.totalPlantas,
+                    totalAplicaciones = x.totalAplicaciones,
                     necesidadEncaladoTonHa = x.necesidadEncaladoTonHa,
                     necesidadEncaladoKgHa = x.necesidadEncaladoKgHa,
-                    necesidadEncaladoLbHa = x.necesidadEncaladoLbHa
+                    necesidadEncaladoLbHa = x.necesidadEncaladoLbHa,
+                    necesidadEncaladoLbMz = Math.Round(x.necesidadEncaladoLbMz, 4),
+                    necesidadEncaladoOzMz = Math.Round(x.necesidadEncaladoOzMz, 4),
+                    dosisPlantaAnualOz = Math.Round(x.dosisPlantaAnualOz, 4),
+                    dosisPlantaPorAplicacionOz = Math.Round(x.dosisPlantaPorAplicacionOz, 4),
                 })
                 .FirstOrDefaultAsync();
 
@@ -196,10 +239,16 @@ namespace CONATRADEC_API.Controllers
                     sumaBases = x.sumaBases,
                     cice = x.cice,
                     saturacionActual = x.saturacionActual,
-
+                    terrenoId = x.terrenoId,
+                    totalPlantas = x.totalPlantas,
+                    totalAplicaciones = x.totalAplicaciones,
                     necesidadEncaladoTonHa = x.necesidadEncaladoTonHa,
                     necesidadEncaladoKgHa = x.necesidadEncaladoKgHa,
-                    necesidadEncaladoLbHa = x.necesidadEncaladoLbHa
+                    necesidadEncaladoLbHa = x.necesidadEncaladoLbHa,
+                    necesidadEncaladoLbMz = Math.Round(x.necesidadEncaladoLbMz, 4),
+                    necesidadEncaladoOzMz = Math.Round(x.necesidadEncaladoOzMz, 4),
+                    dosisPlantaAnualOz = Math.Round(x.dosisPlantaAnualOz, 4),
+                    dosisPlantaPorAplicacionOz = Math.Round(x.dosisPlantaPorAplicacionOz, 4),
                 })
                 .ToListAsync();
 
