@@ -118,7 +118,8 @@ namespace CONATRADEC_API.Controllers
                     if (requerimientoPendiente < 0)
                         requerimientoPendiente = 0;
 
-                    decimal librasFuenteAnual = requerimientoPendiente / (aportePrincipal.cantidadAporte / 100m);
+                    decimal requerimientoQuintales = requerimientoPendiente / 100m;
+                    decimal librasFuenteAnual = requerimientoQuintales * aportePrincipal.cantidadAporte;
                     decimal librasFuentePorAplicacion = librasFuenteAnual / dto.totalAplicaciones;
                     decimal onzasFuenteAnual = librasFuenteAnual * 16m;
 
