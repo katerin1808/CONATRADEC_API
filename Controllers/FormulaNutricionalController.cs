@@ -18,241 +18,167 @@ namespace CONATRADEC_API.Controllers
                 _db = db;
             }
 
-            [HttpPost("calcular")]
-            public async Task<IActionResult> Calcular([FromBody] FormulaNutricionalCrearDto dto)
+        [HttpPost("calcular")]
+        public async Task<IActionResult> Calcular([FromBody] FormulaNutricionalCrearDto dto)
+        {
+            await using var trans = await _db.Database.BeginTransactionAsync();
+
+            try
             {
-                await using var trans = await _db.Database.BeginTransactionAsync();
+                if (dto.items == null || !dto.items.Any())
+                    return BadRequest(new { mensaje = "Debe enviar al menos un item." });
 
-                try
+                decimal totalLibras = dto.items.Sum(x => x.libras);
+                decimal mezclaTotalQq = totalLibras / 100m;
+
+                if (mezclaTotalQq <= 0)
+                    return BadRequest(new { mensaje = "La mezcla total en QQ debe ser mayor a cero." });
+                var itemsOrdenados = dto.items
+                .OrderByDescending(x => x.libras)
+                .ToList();
+
+                var totalesFormula = new Dictionary<string, decimal>();
+
+                var detallesGuardar = new List<FormulaNutricionalDetalle>();
+                var detallesRespuesta = new List<FormulaNutricionalDetalleRespuestaDto>();
+
+                foreach (var item in itemsOrdenados)
                 {
-                    if (dto.items == null || !dto.items.Any())
-                        return BadRequest(new { mensaje = "Debe enviar al menos un item." });
+                    if (item.libras <= 0)
+                        return BadRequest(new { mensaje = "Las libras deben ser mayores a cero." });
 
-                    decimal totalLibras = dto.items.Sum(x => x.libras);
-                    decimal mezclaTotalQq = totalLibras / 100m;
+                    var fuente = await _db.fuenteNutriente
+                        .FirstOrDefaultAsync(x => x.fuenteNutrientesId == item.fuenteNutrientesId && x.activo);
 
-                    if (mezclaTotalQq <= 0)
-                        return BadRequest(new { mensaje = "La mezcla total en QQ debe ser mayor a cero." });
+                    if (fuente == null)
+                        return BadRequest(new { mensaje = $"La fuente nutriente con ID {item.fuenteNutrientesId} no existe o está inactiva." });
 
-                    decimal totalN = 0;
-                    decimal totalP = 0;
-                    decimal totalK = 0;
-                    decimal totalCa = 0;
-                    decimal totalMg = 0;
-                    decimal totalS = 0;
-                    decimal totalZn = 0;
-                    decimal totalB = 0;
+                    var elementoBase = await _db.elementoQuimico
+                        .FirstOrDefaultAsync(x => x.elementoQuimicosId == item.elementoQuimicosId && x.activo);
 
-                    var detallesGuardar = new List<FormulaNutricionalDetalle>();
-                    var detallesRespuesta = new List<FormulaNutricionalDetalleRespuestaDto>();
+                    if (elementoBase == null)
+                        return BadRequest(new { mensaje = $"El elemento químico con ID {item.elementoQuimicosId} no existe o está inactivo." });
 
-                    foreach (var item in dto.items)
+                    var composicionFuente = await _db.fuenteNutrienteElementoQuimico
+                        .Include(x => x.elementoQuimico)
+                        .Where(x => x.fuenteNutrientesId == item.fuenteNutrientesId && x.activo)
+                        .ToListAsync();
+
+                    if (!composicionFuente.Any())
+                        return BadRequest(new { mensaje = $"La fuente {fuente.nombreNutriente} no tiene aportes registrados." });
+
+                    bool fuenteAportaElementoBase = composicionFuente
+                        .Any(x => x.elementoQuimicosId == item.elementoQuimicosId);
+
+                    if (!fuenteAportaElementoBase)
                     {
-                        if (item.libras <= 0)
-                            return BadRequest(new { mensaje = "Las libras deben ser mayores a cero." });
+                        return BadRequest(new
+                        {
+                            mensaje = $"La fuente {fuente.nombreNutriente} no aporta el elemento {elementoBase.simboloElementoQuimico}."
+                        });
+                    }
 
-                        var fuente = await _db.fuenteNutriente
-                            .FirstOrDefaultAsync(x => x.fuenteNutrientesId == item.fuenteNutrientesId && x.activo);
+                    decimal qq = item.libras / 100m;
 
-                        if (fuente == null)
-                            return BadRequest(new { mensaje = $"La fuente nutriente con ID {item.fuenteNutrientesId} no existe o está inactiva." });
+                    var aportesRespuesta = new Dictionary<string, decimal>();
+                    var aportesGuardar = new List<FormulaNutricionalAporte>();
 
-                        var elementoBase = await _db.elementoQuimico
-                            .FirstOrDefaultAsync(x => x.elementoQuimicosId == item.elementoQuimicosId && x.activo);
+                    foreach (var comp in composicionFuente)
+                    {
+                        string simbolo = comp.elementoQuimico!.simboloElementoQuimico.Trim().ToLower();
 
-                        if (elementoBase == null)
-                            return BadRequest(new { mensaje = $"El elemento químico con ID {item.elementoQuimicosId} no existe o está inactivo." });
+                        decimal aporte = qq * comp.cantidadAporte;
 
-                        var composicionFuente = await _db.fuenteNutrienteElementoQuimico
-                            .Include(x => x.elementoQuimico)
-                            .Where(x => x.fuenteNutrientesId == item.fuenteNutrientesId && x.activo)
-                            .ToListAsync();
+                        if (aporte > 0)
+                        {
+                            aportesRespuesta[simbolo] = Math.Round(aporte, 4);
 
-                        if (!composicionFuente.Any())
-                            return BadRequest(new { mensaje = $"La fuente {fuente.nombreNutriente} no tiene aportes registrados." });
+                            if (!totalesFormula.ContainsKey(simbolo))
+                                totalesFormula[simbolo] = 0;
 
-                        bool fuenteAportaElementoBase = composicionFuente.Any(x => x.elementoQuimicosId == item.elementoQuimicosId);
+                            totalesFormula[simbolo] += aporte;
 
-                        if (!fuenteAportaElementoBase)
-                            return BadRequest(new
+                            aportesGuardar.Add(new FormulaNutricionalAporte
                             {
-                                mensaje = $"La fuente {fuente.nombreNutriente} no aporta el elemento {elementoBase.simboloElementoQuimico}."
+                                elementoQuimicosId = comp.elementoQuimicosId,
+                                valor = aporte,
+                                activo = true
                             });
-
-                        decimal qq = item.libras / 100m;
-
-                        decimal aporteN = 0;
-                        decimal aporteP = 0;
-                        decimal aporteK = 0;
-                        decimal aporteCa = 0;
-                        decimal aporteMg = 0;
-                        decimal aporteS = 0;
-                        decimal aporteZn = 0;
-                        decimal aporteB = 0;
-
-                        var aportesRespuesta = new Dictionary<string, decimal>
-                    {
-                        { "n", 0 },
-                        { "p", 0 },
-                        { "k", 0 },
-                        { "ca", 0 },
-                        { "mg", 0 },
-                        { "s", 0 },
-                        { "zn", 0 },
-                        { "b", 0 }
-                    };
-
-                        foreach (var comp in composicionFuente)
-                        {
-                            string simbolo = comp.elementoQuimico!.simboloElementoQuimico.Trim().ToLower();
-
-                            decimal aporte = qq * comp.cantidadAporte;
-
-                            switch (simbolo)
-                            {
-                                case "n":
-                                    aporteN = aporte;
-                                    aportesRespuesta["n"] = Math.Round(aporte, 4);
-                                    break;
-
-                                case "p":
-                                    aporteP = aporte;
-                                    aportesRespuesta["p"] = Math.Round(aporte, 4);
-                                    break;
-
-                                case "k":
-                                    aporteK = aporte;
-                                    aportesRespuesta["k"] = Math.Round(aporte, 4);
-                                    break;
-
-                                case "ca":
-                                    aporteCa = aporte;
-                                    aportesRespuesta["ca"] = Math.Round(aporte, 4);
-                                    break;
-
-                                case "mg":
-                                    aporteMg = aporte;
-                                    aportesRespuesta["mg"] = Math.Round(aporte, 4);
-                                    break;
-
-                                case "s":
-                                    aporteS = aporte;
-                                    aportesRespuesta["s"] = Math.Round(aporte, 4);
-                                    break;
-
-                                case "zn":
-                                    aporteZn = aporte;
-                                    aportesRespuesta["zn"] = Math.Round(aporte, 4);
-                                    break;
-
-                                case "b":
-                                    aporteB = aporte;
-                                    aportesRespuesta["b"] = Math.Round(aporte, 4);
-                                    break;
-                            }
                         }
-
-                        totalN += aporteN;
-                        totalP += aporteP;
-                        totalK += aporteK;
-                        totalCa += aporteCa;
-                        totalMg += aporteMg;
-                        totalS += aporteS;
-                        totalZn += aporteZn;
-                        totalB += aporteB;
-
-                        detallesGuardar.Add(new FormulaNutricionalDetalle
-                        {
-                            fuenteNutrientesId = item.fuenteNutrientesId,
-                            elementoQuimicosId = item.elementoQuimicosId,
-                            libras = item.libras,
-                            qq = qq,
-                            aporteN = aporteN,
-                            aporteP = aporteP,
-                            aporteK = aporteK,
-                            aporteCa = aporteCa,
-                            aporteMg = aporteMg,
-                            aporteS = aporteS,
-                            aporteZn = aporteZn,
-                            aporteB = aporteB,
-                            activo = true
-                        });
-
-                        detallesRespuesta.Add(new FormulaNutricionalDetalleRespuestaDto
-                        {
-                            fuente = fuente.nombreNutriente,
-                            elemento = elementoBase.simboloElementoQuimico,
-                            lb = item.libras,
-                            qq = Math.Round(qq, 4),
-                            aportes = aportesRespuesta
-                        });
                     }
 
-                    var formula = new FormulaNutricional
+                    var detalle = new FormulaNutricionalDetalle
                     {
-                        nombreFormula = dto.nombreFormula,
-                        totalLibras = totalLibras,
-                        mezclaTotalQq = mezclaTotalQq,
-
-                        n = Math.Round(totalN / mezclaTotalQq, 4),
-                        p = Math.Round(totalP / mezclaTotalQq, 4),
-                        k = Math.Round(totalK / mezclaTotalQq, 4),
-                        ca = Math.Round(totalCa / mezclaTotalQq, 4),
-                        mg = Math.Round(totalMg / mezclaTotalQq, 4),
-                        s = Math.Round(totalS / mezclaTotalQq, 4),
-                        zn = Math.Round(totalZn / mezclaTotalQq, 4),
-                        b = Math.Round(totalB / mezclaTotalQq, 4),
-
-                        activo = true
+                        fuenteNutrientesId = item.fuenteNutrientesId,
+                        elementoQuimicosId = item.elementoQuimicosId,
+                        libras = item.libras,
+                        qq = qq,
+                        activo = true,
+                        aportes = aportesGuardar
                     };
 
-                    _db.formulaNutricional.Add(formula);
-                    await _db.SaveChangesAsync();
+                    detallesGuardar.Add(detalle);
 
-                    foreach (var d in detallesGuardar)
+                    detallesRespuesta.Add(new FormulaNutricionalDetalleRespuestaDto
                     {
-                        d.formulaNutricionalId = formula.formulaNutricionalId;
-                    }
-
-                    _db.formulaNutricionalDetalle.AddRange(detallesGuardar);
-                    await _db.SaveChangesAsync();
-
-                    await trans.CommitAsync();
-
-                    var response = new FormulaNutricionalRespuestaDto
-                    {
-                        formulaNutricionalId = formula.formulaNutricionalId,
-                        nombreFormula = formula.nombreFormula,
-                        totalLibras = Math.Round(formula.totalLibras, 4),
-                        mezclaTotalQq = Math.Round(formula.mezclaTotalQq, 4),
-                        formulaComercial = new Dictionary<string, decimal>
-                    {
-                        { "n", formula.n },
-                        { "p", formula.p },
-                        { "k", formula.k },
-                        { "ca", formula.ca },
-                        { "mg", formula.mg },
-                        { "s", formula.s },
-                        { "zn", formula.zn },
-                        { "b", formula.b }
-                    },
-                        detalle = detallesRespuesta
-                    };
-
-                    return Ok(response);
-                }
-                catch (Exception ex)
-                {
-                    await trans.RollbackAsync();
-
-                    return StatusCode(500, new
-                    {
-                        mensaje = "Error al calcular fórmula nutricional.",
-                        detalle = ex.Message
+                        fuente = fuente.nombreNutriente,
+                        elemento = elementoBase.simboloElementoQuimico,
+                        lb = item.libras,
+                        qq = Math.Round(qq, 4),
+                        aportes = aportesRespuesta
                     });
                 }
-            }
 
+                var formula = new FormulaNutricional
+                {
+                    nombreFormula = dto.nombreFormula ?? "",
+                    totalLibras = totalLibras,
+                    mezclaTotalQq = mezclaTotalQq,
+                    activo = true
+                };
+
+                _db.formulaNutricional.Add(formula);
+                await _db.SaveChangesAsync();
+
+                foreach (var d in detallesGuardar)
+                {
+                    d.formulaNutricionalId = formula.formulaNutricionalId;
+                }
+
+                _db.formulaNutricionalDetalle.AddRange(detallesGuardar);
+                await _db.SaveChangesAsync();
+
+                await trans.CommitAsync();
+
+                var response = new FormulaNutricionalRespuestaDto
+                {
+                    formulaNutricionalId = formula.formulaNutricionalId,
+                    nombreFormula = formula.nombreFormula,
+                    totalLibras = Math.Round(formula.totalLibras, 4),
+                    mezclaTotalQq = Math.Round(formula.mezclaTotalQq, 4),
+                    formulaComercial = totalesFormula
+                        .Where(x => x.Value > 0)
+                        .ToDictionary(
+                            x => x.Key,
+                            x => Math.Round(x.Value / mezclaTotalQq, 4)
+                        ),
+                    detalle = detallesRespuesta
+                };
+
+                return Ok(response);
+            }
+            catch (Exception ex)
+            {
+                await trans.RollbackAsync();
+
+                return StatusCode(500, new
+                {
+                    mensaje = "Error al calcular fórmula nutricional.",
+                    detalle = ex.Message,
+                    inner = ex.InnerException?.Message
+                });
+            }
+        }
         [HttpGet("ultima-total")]
         public async Task<IActionResult> UltimaSoloTotal()
         {
@@ -264,23 +190,28 @@ namespace CONATRADEC_API.Controllers
             if (formula == null)
                 return NotFound(new { mensaje = "No hay fórmulas registradas." });
 
+            var aportes = await _db.formulaNutricionalDetalle
+                .Where(d => d.formulaNutricionalId == formula.formulaNutricionalId && d.activo)
+                .SelectMany(d => d.aportes!)
+                .Where(a => a.activo)
+                .Include(a => a.elementoQuimico)
+                .ToListAsync();
+
+            var formulaComercial = aportes
+                .Where(a => a.valor > 0)
+                .GroupBy(a => a.elementoQuimico!.simboloElementoQuimico.Trim().ToLower())
+                .ToDictionary(
+                    g => g.Key,
+                    g => Math.Round(g.Sum(a => a.valor) / formula.mezclaTotalQq, 4)
+                );
+
             return Ok(new
             {
                 formula.formulaNutricionalId,
                 formula.nombreFormula,
-                formula.totalLibras,
-                formula.mezclaTotalQq,
-                formulaComercial = new
-                {
-                    formula.n,
-                    formula.p,
-                    formula.k,
-                    formula.ca,
-                    formula.mg,
-                    formula.s,
-                    formula.zn,
-                    formula.b
-                }
+                totalLibras = Math.Round(formula.totalLibras, 4),
+                mezclaTotalQq = Math.Round(formula.mezclaTotalQq, 4),
+                formulaComercial
             });
         }
 
@@ -295,49 +226,49 @@ namespace CONATRADEC_API.Controllers
             if (formula == null)
                 return NotFound(new { mensaje = "No hay fórmulas registradas." });
 
-            var detalle = await _db.formulaNutricionalDetalle
+            var detalles = await _db.formulaNutricionalDetalle
                 .Include(x => x.fuenteNutriente)
                 .Include(x => x.elementoQuimico)
+                .Include(x => x.aportes!)
+                    .ThenInclude(a => a.elementoQuimico)
                 .Where(x => x.formulaNutricionalId == formula.formulaNutricionalId && x.activo)
-                .Select(x => new
-                {
-                    x.formulaNutricionalDetalleId,
-                    fuente = x.fuenteNutriente != null ? x.fuenteNutriente.nombreNutriente : "",
-                    elemento = x.elementoQuimico != null ? x.elementoQuimico.simboloElementoQuimico : "",
-                    lb = x.libras,
-                    qq = x.qq,
-                    aportes = new
-                    {
-                        n = x.aporteN,
-                        p = x.aporteP,
-                        k = x.aporteK,
-                        ca = x.aporteCa,
-                        mg = x.aporteMg,
-                        s = x.aporteS,
-                        zn = x.aporteZn,
-                        b = x.aporteB
-                    }
-                })
                 .ToListAsync();
+
+            var detalleRespuesta = detalles.Select(x => new
+            {
+                x.formulaNutricionalDetalleId,
+                fuente = x.fuenteNutriente != null ? x.fuenteNutriente.nombreNutriente : "",
+                elemento = x.elementoQuimico != null ? x.elementoQuimico.simboloElementoQuimico : "",
+                lb = Math.Round(x.libras, 4),
+                qq = Math.Round(x.qq, 4),
+                aportes = x.aportes!
+                    .Where(a => a.activo && a.valor > 0)
+                    .ToDictionary(
+                        a => a.elementoQuimico!.simboloElementoQuimico.Trim().ToLower(),
+                        a => Math.Round(a.valor, 4)
+                    )
+            }).ToList();
+
+            var todosAportes = detalles
+                .SelectMany(x => x.aportes ?? new List<FormulaNutricionalAporte>())
+                .Where(a => a.activo && a.valor > 0)
+                .ToList();
+
+            var formulaComercial = todosAportes
+                .GroupBy(a => a.elementoQuimico!.simboloElementoQuimico.Trim().ToLower())
+                .ToDictionary(
+                    g => g.Key,
+                    g => Math.Round(g.Sum(a => a.valor) / formula.mezclaTotalQq, 4)
+                );
 
             return Ok(new
             {
                 formula.formulaNutricionalId,
                 formula.nombreFormula,
-                formula.totalLibras,
-                formula.mezclaTotalQq,
-                formulaComercial = new
-                {
-                    formula.n,
-                    formula.p,
-                    formula.k,
-                    formula.ca,
-                    formula.mg,
-                    formula.s,
-                    formula.zn,
-                    formula.b
-                },
-                detalle
+                totalLibras = Math.Round(formula.totalLibras, 4),
+                mezclaTotalQq = Math.Round(formula.mezclaTotalQq, 4),
+                formulaComercial,
+                detalle = detalleRespuesta
             });
         }
     }

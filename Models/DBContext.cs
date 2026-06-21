@@ -55,8 +55,10 @@ namespace CONATRADEC_API.Models
 
         public DbSet<FormulaNutricional> formulaNutricional { get; set; }
         public DbSet<FormulaNutricionalDetalle> formulaNutricionalDetalle { get; set; }
+        public DbSet<FormulaNutricionalAporte> formulaNutricionalAporte { get; set; }
         public DbSet<BalanceNutricional> balanceNutricional { get; set; }
         public DbSet<BalanceNutricionalDetalle> balanceNutricionalDetalle { get; set; }
+
 
         // ==========================
         // CONFIGURACIONES
