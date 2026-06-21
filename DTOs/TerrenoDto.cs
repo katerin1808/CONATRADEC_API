@@ -18,6 +18,7 @@
 
             public int municipioId { get; set; }
             public decimal cantidadQuintalesOro { get; set; }
+
             public decimal latitud { get; set; }
             public decimal longitud { get; set; }
         }

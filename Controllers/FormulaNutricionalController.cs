@@ -126,6 +126,9 @@ namespace CONATRADEC_API.Controllers
                         lb = item.libras,
                         qq = Math.Round(qq, 4),
                         aportes = aportesRespuesta
+                          .OrderBy(x => OrdenElemento(x.Key))
+                         .ToDictionary(x => x.Key, x => x.Value)
+
                     });
                 }
 
@@ -178,6 +181,21 @@ namespace CONATRADEC_API.Controllers
                     inner = ex.InnerException?.Message
                 });
             }
+        }
+
+        private int OrdenElemento(string simbolo)
+        {
+            simbolo = simbolo.Trim().ToUpper();
+
+            return simbolo switch
+            {
+                "N" => 1,
+                "K" => 2,
+                "MG" => 3,
+                "CA" => 4,
+                "P" => 5,
+                _ => 99
+            };
         }
         [HttpGet("ultima-total")]
         public async Task<IActionResult> UltimaSoloTotal()

@@ -1,4 +1,5 @@
-﻿using System.ComponentModel.DataAnnotations;
+﻿using Microsoft.EntityFrameworkCore.Metadata.Internal;
+using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace CONATRADEC_API.Models
@@ -34,7 +35,10 @@ namespace CONATRADEC_API.Models
         public Municipio Municipio { get; set; } = null!;
 
         public decimal cantidadQuintalesOro { get; set; }
+
+        [Column(TypeName = "decimal(20,17)")]
         public decimal latitud { get; set; }
+        [Column(TypeName = "decimal(20,17)")]
         public decimal longitud { get; set; }
 
         public virtual ICollection<FotoTerreno> FotosTerreno { get; set; }
