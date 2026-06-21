@@ -160,11 +160,14 @@ namespace CONATRADEC_API.Controllers
                     totalLibras = Math.Round(formula.totalLibras, 4),
                     mezclaTotalQq = Math.Round(formula.mezclaTotalQq, 4),
                     formulaComercial = totalesFormula
-                        .Where(x => x.Value > 0)
-                        .ToDictionary(
-                            x => x.Key,
-                            x => Math.Round(x.Value / mezclaTotalQq, 4)
-                        ),
+                  .Where(x => x.Value > 0)
+                   .Select(x => new
+                     {
+                   Elemento = x.Key,
+                  Valor = Math.Round(x.Value / mezclaTotalQq, 4)
+                     })
+                 .OrderBy(x => OrdenElemento(x.Elemento))
+                  .ToDictionary(x => x.Elemento, x => x.Valor),
                     detalle = detallesRespuesta
                 };
 
@@ -216,12 +219,15 @@ namespace CONATRADEC_API.Controllers
                 .ToListAsync();
 
             var formulaComercial = aportes
-                .Where(a => a.valor > 0)
-                .GroupBy(a => a.elementoQuimico!.simboloElementoQuimico.Trim().ToLower())
-                .ToDictionary(
-                    g => g.Key,
-                    g => Math.Round(g.Sum(a => a.valor) / formula.mezclaTotalQq, 4)
-                );
+      .Where(a => a.valor > 0)
+      .GroupBy(a => a.elementoQuimico!.simboloElementoQuimico.Trim().ToLower())
+      .Select(g => new
+      {
+          Elemento = g.Key,
+          Valor = Math.Round(g.Sum(a => a.valor) / formula.mezclaTotalQq, 4)
+      })
+      .OrderBy(x => OrdenElemento(x.Elemento))
+      .ToDictionary(x => x.Elemento, x => x.Valor);
 
             return Ok(new
             {
@@ -260,11 +266,12 @@ namespace CONATRADEC_API.Controllers
                 lb = Math.Round(x.libras, 4),
                 qq = Math.Round(x.qq, 4),
                 aportes = x.aportes!
-                    .Where(a => a.activo && a.valor > 0)
-                    .ToDictionary(
-                        a => a.elementoQuimico!.simboloElementoQuimico.Trim().ToLower(),
-                        a => Math.Round(a.valor, 4)
-                    )
+               .Where(a => a.activo && a.valor > 0)
+               .OrderBy(a => OrdenElemento(a.elementoQuimico!.simboloElementoQuimico))
+                .ToDictionary(
+        a => a.elementoQuimico!.simboloElementoQuimico.Trim().ToLower(),
+        a => Math.Round(a.valor, 4)
+    )
             }).ToList();
 
             var todosAportes = detalles
@@ -273,11 +280,14 @@ namespace CONATRADEC_API.Controllers
                 .ToList();
 
             var formulaComercial = todosAportes
-                .GroupBy(a => a.elementoQuimico!.simboloElementoQuimico.Trim().ToLower())
-                .ToDictionary(
-                    g => g.Key,
-                    g => Math.Round(g.Sum(a => a.valor) / formula.mezclaTotalQq, 4)
-                );
+      .GroupBy(a => a.elementoQuimico!.simboloElementoQuimico.Trim().ToLower())
+      .Select(g => new
+      {
+          Elemento = g.Key,
+          Valor = Math.Round(g.Sum(a => a.valor) / formula.mezclaTotalQq, 4)
+      })
+      .OrderBy(x => OrdenElemento(x.Elemento))
+      .ToDictionary(x => x.Elemento, x => x.Valor);
 
             return Ok(new
             {
