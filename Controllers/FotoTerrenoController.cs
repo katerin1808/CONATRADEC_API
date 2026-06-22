@@ -67,7 +67,7 @@ namespace CONATRADEC_API.Controllers
                     await foto.CopyToAsync(stream);
                 }
 
-                string url = $"/uploads/terrenos/{nombreArchivo}";
+                string url = $"{Request.Scheme}://{Request.Host}/uploads/terrenos/{nombreArchivo}";
 
                 var fotoTerreno = new FotoTerreno
                 {
@@ -149,7 +149,7 @@ namespace CONATRADEC_API.Controllers
                 await dto.foto.CopyToAsync(stream);
             }
 
-            fotoTerreno.urlFotoTerreno = $"/uploads/terrenos/{nombreArchivo}";
+            fotoTerreno.urlFotoTerreno =$"{Request.Scheme}://{Request.Host}/uploads/terrenos/{nombreArchivo}";
 
             await _db.SaveChangesAsync();
 
