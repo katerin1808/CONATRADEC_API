@@ -141,5 +141,179 @@ namespace CONATRADEC_API.Controllers
 
             return Ok("Terreno eliminado correctamente.");
         }
+
+
+        [HttpGet("buscar")]
+        public async Task<IActionResult> Buscar(
+    string? texto,
+    string? codigoTerreno,
+    string? nombrePropietario,
+    string? identificacionPropietario,
+    string? direccion,
+    int? paisId,
+    int? departamentoId,
+    int? municipioId,
+    int page = 1,
+    int pageSize = 20)
+        {
+            if (page < 1)
+                page = 1;
+
+            if (pageSize < 1)
+                pageSize = 20;
+
+            if (pageSize > 100)
+                pageSize = 100;
+
+            var query = _db.Terreno
+                .Include(x => x.Municipio)
+                    .ThenInclude(m => m.Departamento)
+                        .ThenInclude(d => d.Pais)
+                .Where(x => x.activo)
+                .AsQueryable();
+
+            if (!string.IsNullOrWhiteSpace(texto))
+            {
+                texto = texto.Trim();
+
+                query = query.Where(x =>
+                    x.codigoTerreno.Contains(texto) ||
+                    x.nombrePropietarioTerreno.Contains(texto) ||
+                    x.identificacionPropietarioTerreno.Contains(texto) ||
+                    x.direccionTerreno.Contains(texto));
+            }
+
+            if (!string.IsNullOrWhiteSpace(codigoTerreno))
+            {
+                codigoTerreno = codigoTerreno.Trim();
+                query = query.Where(x => x.codigoTerreno.Contains(codigoTerreno));
+            }
+
+            if (!string.IsNullOrWhiteSpace(nombrePropietario))
+            {
+                nombrePropietario = nombrePropietario.Trim();
+                query = query.Where(x => x.nombrePropietarioTerreno.Contains(nombrePropietario));
+            }
+
+            if (!string.IsNullOrWhiteSpace(identificacionPropietario))
+            {
+                identificacionPropietario = identificacionPropietario.Trim();
+                query = query.Where(x => x.identificacionPropietarioTerreno.Contains(identificacionPropietario));
+            }
+
+            if (!string.IsNullOrWhiteSpace(direccion))
+            {
+                direccion = direccion.Trim();
+                query = query.Where(x => x.direccionTerreno.Contains(direccion));
+            }
+            if (paisId.HasValue)
+            {
+                bool existePais = await _db.Pais
+                    .AnyAsync(x => x.PaisId == paisId.Value && x.Activo);
+
+                if (!existePais)
+                    return BadRequest(new { mensaje = "El país no existe o está inactivo." });
+            }
+
+            if (departamentoId.HasValue)
+            {
+                var departamento = await _db.Departamento
+                    .FirstOrDefaultAsync(x => x.DepartamentoId == departamentoId.Value && x.Activo);
+
+                if (departamento == null)
+                    return BadRequest(new { mensaje = "El departamento no existe o está inactivo." });
+
+                if (paisId.HasValue && departamento.PaisId != paisId.Value)
+                    return BadRequest(new { mensaje = "El departamento no pertenece al país seleccionado." });
+            }
+
+            if (municipioId.HasValue)
+            {
+                var municipio = await _db.Municipios
+                    .FirstOrDefaultAsync(x => x.MunicipioId == municipioId.Value && x.Activo);
+
+                if (municipio == null)
+                    return BadRequest(new { mensaje = "El municipio no existe o está inactivo." });
+
+                if (departamentoId.HasValue && municipio.DepartamentoId != departamentoId.Value)
+                    return BadRequest(new { mensaje = "El municipio no pertenece al departamento seleccionado." });
+
+                if (paisId.HasValue)
+                {
+                    bool municipioPertenecePais = await _db.Departamento
+                        .AnyAsync(x =>
+                            x.DepartamentoId == municipio.DepartamentoId &&
+                            x.PaisId == paisId.Value &&
+                            x.Activo);
+
+                    if (!municipioPertenecePais)
+                        return BadRequest(new { mensaje = "El municipio no pertenece al país seleccionado." });
+                }
+            }
+            if (paisId.HasValue)
+            {
+                query = query.Where(x =>
+            x.Municipio != null &&
+            x.Municipio.Departamento != null &&
+            x.Municipio.Departamento.PaisId == paisId.Value);
+            }
+
+            if (departamentoId.HasValue)
+            {
+                query = query.Where(x =>
+                    x.Municipio != null &&
+                    x.Municipio.DepartamentoId == departamentoId.Value);
+            }
+
+            if (municipioId.HasValue)
+            {
+                query = query.Where(x => x.municipioId == municipioId.Value);
+            }
+
+            int total = await query.CountAsync();
+
+            var data = await query
+                .OrderBy(x => x.codigoTerreno)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(x => new
+                {
+                    x.terrenoId,
+                    x.codigoTerreno,
+                    x.identificacionPropietarioTerreno,
+                    x.nombrePropietarioTerreno,
+                    x.telefonoPropietario,
+                    x.correoPropietario,
+                    x.direccionTerreno,
+                    x.extensionManzanaTerreno,
+                    x.fechaIngresoTerreno,
+                    x.cantidadPlantasTerreno,
+                    x.cantidadQuintalesOro,
+                    x.latitud,
+                    x.longitud,
+                    x.municipioId,
+
+                    ubicacion = new
+                    {
+                        paisId = x.Municipio.Departamento.Pais.PaisId,
+                        nombrePais = x.Municipio.Departamento.Pais.NombrePais,
+                        departamentoId = x.Municipio.Departamento.DepartamentoId,
+                        nombreDepartamento = x.Municipio.Departamento.NombreDepartamento,
+                        municipioId = x.Municipio.MunicipioId,
+                        nombreMunicipio = x.Municipio.NombreMunicipio
+                    }
+                })
+                .ToListAsync();
+
+            return Ok(new
+            {
+                total,
+                page,
+                pageSize,
+                totalPages = (int)Math.Ceiling(total / (decimal)pageSize),
+                data
+            });
+        }
+
     }
 }

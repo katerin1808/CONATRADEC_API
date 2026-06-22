@@ -20,6 +20,21 @@ namespace CONATRADEC_API.Models
 
         public bool activo { get; set; } = true;
 
+
+        [Column(TypeName = "decimal(18,4)")]
+        public decimal requerimientoLibras { get; set; }
+
+    
+
+        [Column(TypeName = "decimal(18,4)")]
+        public decimal precioPorQuintal { get; set; }
+
+        [Column(TypeName = "decimal(18,4)")]
+        public decimal subtotalFuente { get; set; }
+
+        public decimal onzasAnuales { get; set; }
+        public decimal onzasPorAplicacion { get; set; }
+
         [ForeignKey(nameof(formulaNutricionalId))]
         public FormulaNutricional? formulaNutricional { get; set; }
 

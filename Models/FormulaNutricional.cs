@@ -20,7 +20,32 @@ namespace CONATRADEC_API.Models
 
             public bool activo { get; set; } = true;
 
-            public ICollection<FormulaNutricionalDetalle>? detalles { get; set; }
+            public int totalPlantas { get; set; }
+
+            public int totalAplicaciones { get; set; }
+
+           [Column(TypeName = "decimal(18,4)")]
+           public decimal totalOnzas { get; set; }
+
+            [Column(TypeName = "decimal(18,4)")]
+            public decimal dosisPlantaAnualOz { get; set; }
+    
+           [Column(TypeName = "decimal(18,4)")]
+           public decimal dosisPlantaPorAplicacionOz { get; set; }
+
+           [Column(TypeName = "decimal(18,4)")]
+           public decimal precioTotalFormula { get; set; }
+
+          [Column(TypeName = "decimal(18,4)")]
+           public decimal precioPorAplicacion { get; set; }
+ 
+           public int? terrenoId { get; set; }
+
+          [ForeignKey(nameof(terrenoId))]
+           public Terreno? terreno { get; set; }
+
+
+        public ICollection<FormulaNutricionalDetalle>? detalles { get; set; }
         
     }
 

@@ -28,6 +28,20 @@ namespace CONATRADEC_API.Controllers
                 if (dto.items == null || !dto.items.Any())
                     return BadRequest(new { mensaje = "Debe enviar al menos un item." });
 
+
+                var terreno = await _db.Terreno
+               .FirstOrDefaultAsync(x => x.terrenoId == dto.terrenoId && x.activo);
+
+                if (terreno == null)
+                    return BadRequest(new { mensaje = "El terreno no existe o está inactivo." });
+
+                int totalPlantasUsadas = dto.totalPlantas.HasValue && dto.totalPlantas.Value > 0
+                    ? dto.totalPlantas.Value
+                    : terreno.cantidadPlantasTerreno;
+
+                if (dto.totalAplicaciones < 1 || dto.totalAplicaciones > 4)
+                    return BadRequest(new { mensaje = "El total de aplicaciones debe estar entre 1 y 4." });
+
                 decimal totalLibras = dto.items.Sum(x => x.libras);
                 decimal mezclaTotalQq = totalLibras / 100m;
 
@@ -52,6 +66,7 @@ namespace CONATRADEC_API.Controllers
 
                     if (fuente == null)
                         return BadRequest(new { mensaje = $"La fuente nutriente con ID {item.fuenteNutrientesId} no existe o está inactiva." });
+
 
                     var elementoBase = await _db.elementoQuimico
                         .FirstOrDefaultAsync(x => x.elementoQuimicosId == item.elementoQuimicosId && x.activo);
@@ -79,6 +94,11 @@ namespace CONATRADEC_API.Controllers
                     }
 
                     decimal qq = item.libras / 100m;
+                    decimal onzasAnuales = item.libras * 16m;
+                    decimal librasPorAplicacion = item.libras / dto.totalAplicaciones;
+                    decimal onzasPorAplicacion = onzasAnuales / dto.totalAplicaciones;
+                    decimal precioPorQuintal = fuente.precioNutriente;
+                    decimal subtotalFuente = qq * precioPorQuintal;
 
                     var aportesRespuesta = new Dictionary<string, decimal>();
                     var aportesGuardar = new List<FormulaNutricionalAporte>();
@@ -107,11 +127,18 @@ namespace CONATRADEC_API.Controllers
                         }
                     }
 
+
+
                     var detalle = new FormulaNutricionalDetalle
                     {
                         fuenteNutrientesId = item.fuenteNutrientesId,
                         elementoQuimicosId = item.elementoQuimicosId,
                         libras = item.libras,
+                        requerimientoLibras = item.libras,
+                        onzasAnuales = onzasAnuales,
+                        onzasPorAplicacion = onzasPorAplicacion,
+                        precioPorQuintal = precioPorQuintal,
+                        subtotalFuente = subtotalFuente,
                         qq = qq,
                         activo = true,
                         aportes = aportesGuardar
@@ -127,16 +154,39 @@ namespace CONATRADEC_API.Controllers
                         qq = Math.Round(qq, 4),
                         aportes = aportesRespuesta
                           .OrderBy(x => OrdenElemento(x.Key))
-                         .ToDictionary(x => x.Key, x => x.Value)
+                         .ToDictionary(x => x.Key, x => x.Value),
+                       requerimientoLibras = Math.Round(item.libras, 4),
+                        librasPorAplicacion = Math.Round(librasPorAplicacion, 4),
+                        onzasAnuales = Math.Round(onzasAnuales, 4),
+                        onzasPorAplicacion = Math.Round(onzasPorAplicacion, 4),
+                        precioPorQuintal = Math.Round(precioPorQuintal, 4),
+                        subtotalFuente = Math.Round(subtotalFuente, 4),
 
                     });
                 }
 
+                decimal totalOnzas = totalLibras * 16m;
+                decimal precioTotalFormula = detallesGuardar.Sum(x => x.subtotalFuente);
+                decimal precioPorAplicacion = precioTotalFormula / dto.totalAplicaciones;
+                decimal dosisPlantaAnualOz = totalOnzas / totalPlantasUsadas;
+                decimal dosisPlantaPorAplicacionOz = dosisPlantaAnualOz / dto.totalAplicaciones;
                 var formula = new FormulaNutricional
                 {
                     nombreFormula = dto.nombreFormula ?? "",
+                    terrenoId = terreno.terrenoId,
+                    totalPlantas = totalPlantasUsadas,
+                    totalAplicaciones = dto.totalAplicaciones,
+
                     totalLibras = totalLibras,
                     mezclaTotalQq = mezclaTotalQq,
+                    totalOnzas = totalOnzas,
+
+                    precioTotalFormula = precioTotalFormula,
+                    precioPorAplicacion = precioPorAplicacion,
+
+                    dosisPlantaAnualOz = dosisPlantaAnualOz,
+                    dosisPlantaPorAplicacionOz = dosisPlantaPorAplicacionOz,
+
                     activo = true
                 };
 
@@ -168,6 +218,14 @@ namespace CONATRADEC_API.Controllers
                      })
                  .OrderBy(x => OrdenElemento(x.Elemento))
                   .ToDictionary(x => x.Elemento, x => x.Valor),
+                    totalPlantas = formula.totalPlantas,
+                    totalAplicaciones = formula.totalAplicaciones,
+                    totalOnzas = Math.Round(formula.totalOnzas, 4),
+                    precioTotalFormula = Math.Round(formula.precioTotalFormula, 4),
+                    precioPorAplicacion = Math.Round(formula.precioPorAplicacion, 4),
+                    dosisPlantaAnualOz = Math.Round(formula.dosisPlantaAnualOz, 4),
+                    dosisPlantaPorAplicacionOz = Math.Round(formula.dosisPlantaPorAplicacionOz, 4),
+                  
                     detalle = detallesRespuesta
                 };
 
@@ -233,8 +291,20 @@ namespace CONATRADEC_API.Controllers
             {
                 formula.formulaNutricionalId,
                 formula.nombreFormula,
+
                 totalLibras = Math.Round(formula.totalLibras, 4),
                 mezclaTotalQq = Math.Round(formula.mezclaTotalQq, 4),
+                totalOnzas = Math.Round(formula.totalOnzas, 4),
+
+                totalPlantas = formula.totalPlantas,
+                totalAplicaciones = formula.totalAplicaciones,
+
+                precioTotalFormula = Math.Round(formula.precioTotalFormula, 4),
+                precioPorAplicacion = Math.Round(formula.precioPorAplicacion, 4),
+
+                dosisPlantaAnualOz = Math.Round(formula.dosisPlantaAnualOz, 4),
+                dosisPlantaPorAplicacionOz = Math.Round(formula.dosisPlantaPorAplicacionOz, 4),
+
                 formulaComercial
             });
         }
@@ -265,6 +335,9 @@ namespace CONATRADEC_API.Controllers
                 elemento = x.elementoQuimico != null ? x.elementoQuimico.simboloElementoQuimico : "",
                 lb = Math.Round(x.libras, 4),
                 qq = Math.Round(x.qq, 4),
+                requerimientoLibras = Math.Round(x.requerimientoLibras, 4),
+                precioPorQuintal = Math.Round(x.precioPorQuintal, 4),
+                subtotalFuente = Math.Round(x.subtotalFuente, 4),
                 aportes = x.aportes!
                .Where(a => a.activo && a.valor > 0)
                .OrderBy(a => OrdenElemento(a.elementoQuimico!.simboloElementoQuimico))
@@ -291,10 +364,21 @@ namespace CONATRADEC_API.Controllers
 
             return Ok(new
             {
-                formula.formulaNutricionalId,
                 formula.nombreFormula,
+
                 totalLibras = Math.Round(formula.totalLibras, 4),
                 mezclaTotalQq = Math.Round(formula.mezclaTotalQq, 4),
+                totalOnzas = Math.Round(formula.totalOnzas, 4),
+
+                totalPlantas = formula.totalPlantas,
+                totalAplicaciones = formula.totalAplicaciones,
+
+                precioTotalFormula = Math.Round(formula.precioTotalFormula, 4),
+                precioPorAplicacion = Math.Round(formula.precioPorAplicacion, 4),
+
+                dosisPlantaAnualOz = Math.Round(formula.dosisPlantaAnualOz, 4),
+                dosisPlantaPorAplicacionOz = Math.Round(formula.dosisPlantaPorAplicacionOz, 4),
+
                 formulaComercial,
                 detalle = detalleRespuesta
             });
