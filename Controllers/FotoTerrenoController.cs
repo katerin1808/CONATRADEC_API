@@ -40,11 +40,25 @@ namespace CONATRADEC_API.Controllers
             var fotosRespuesta = new List<FotoTerrenoListarDto>();
 
             foreach (var foto in dto.fotos)
+
             {
+                var extensionesPermitidas = new[] { ".jpg", ".jpeg", ".png", ".webp" };
+                var tiposPermitidos = new[] { "image/jpeg", "image/png", "image/webp" };
+
+                string extension = Path.GetExtension(foto.FileName).ToLower();
+
+                if (!extensionesPermitidas.Contains(extension) ||
+                    !tiposPermitidos.Contains(foto.ContentType.ToLower()))
+                {
+                    return BadRequest(new
+                    {
+                        mensaje = "Solo se permiten archivos de imagen: JPG, JPEG, PNG o WEBP."
+                    });
+                }
+
                 if (foto.Length <= 0)
                     continue;
 
-                string extension = Path.GetExtension(foto.FileName).ToLower();
                 string nombreArchivo = $"{Guid.NewGuid()}{extension}";
                 string rutaArchivo = Path.Combine(carpeta, nombreArchivo);
 
@@ -109,12 +123,24 @@ namespace CONATRADEC_API.Controllers
             if (dto.foto == null || dto.foto.Length <= 0)
                 return BadRequest(new { mensaje = "Debe subir una foto." });
 
+            var extensionesPermitidas = new[] { ".jpg", ".jpeg", ".png", ".webp" };
+            var tiposPermitidos = new[] { "image/jpeg", "image/png", "image/webp" };
+
+            string extension = Path.GetExtension(dto.foto.FileName).ToLower();
+
+            if (!extensionesPermitidas.Contains(extension) ||
+                !tiposPermitidos.Contains(dto.foto.ContentType.ToLower()))
+            {
+                return BadRequest(new
+                {
+                    mensaje = "Solo se permiten archivos de imagen: JPG, JPEG, PNG o WEBP."
+                });
+            }
             string carpeta = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "terrenos");
 
             if (!Directory.Exists(carpeta))
                 Directory.CreateDirectory(carpeta);
 
-            string extension = Path.GetExtension(dto.foto.FileName).ToLower();
             string nombreArchivo = $"{Guid.NewGuid()}{extension}";
             string rutaArchivo = Path.Combine(carpeta, nombreArchivo);
 
