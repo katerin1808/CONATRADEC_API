@@ -32,7 +32,7 @@ namespace CONATRADEC_API.Controllers
             if (dto.fotos == null || !dto.fotos.Any())
                 return BadRequest(new { mensaje = "Debe subir al menos una foto." });
 
-            string carpeta = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "terrenos");
+            string carpeta = Path.Combine( Directory.GetCurrentDirectory(), "resources", "uploads", "terrenos");
 
             if (!Directory.Exists(carpeta))
                 Directory.CreateDirectory(carpeta);
@@ -67,7 +67,7 @@ namespace CONATRADEC_API.Controllers
                     await foto.CopyToAsync(stream);
                 }
 
-                string url = $"{Request.Scheme}://{Request.Host}/uploads/terrenos/{nombreArchivo}";
+                string url = $"{Request.Scheme}://{Request.Host}/resources/uploads/terrenos/{nombreArchivo}";
 
                 var fotoTerreno = new FotoTerreno
                 {
@@ -136,7 +136,7 @@ namespace CONATRADEC_API.Controllers
                     mensaje = "Solo se permiten archivos de imagen: JPG, JPEG, PNG o WEBP."
                 });
             }
-            string carpeta = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "terrenos");
+            string carpeta = Path.Combine(  Directory.GetCurrentDirectory(),  "resources",  "uploads",  "terrenos" );
 
             if (!Directory.Exists(carpeta))
                 Directory.CreateDirectory(carpeta);
@@ -149,7 +149,7 @@ namespace CONATRADEC_API.Controllers
                 await dto.foto.CopyToAsync(stream);
             }
 
-            fotoTerreno.urlFotoTerreno =$"{Request.Scheme}://{Request.Host}/uploads/terrenos/{nombreArchivo}";
+            fotoTerreno.urlFotoTerreno = $"{Request.Scheme}://{Request.Host}/resources/uploads/terrenos/{nombreArchivo}";
 
             await _db.SaveChangesAsync();
 

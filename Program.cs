@@ -40,9 +40,22 @@ Directory.CreateDirectory(rutaRecursos); // la crea si no existe la carpeta de r
 app.UseStaticFiles(new StaticFileOptions
 {
     FileProvider = new PhysicalFileProvider(rutaRecursos),
-    RequestPath = "/resources/uploads/users/img"
+    RequestPath = "/resources/uploads/users/img",
+  
 });// sirve /resources/uploads/users/img
+var rutaTerrenos = Path.Combine(
+    Directory.GetCurrentDirectory(),
+    "resources",
+    "uploads",
+    "terrenos");
 
+Directory.CreateDirectory(rutaTerrenos);
+
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(rutaTerrenos),
+    RequestPath = "/resources/uploads/terrenos"
+});
 app.MapControllers();
 
 app.Run();
