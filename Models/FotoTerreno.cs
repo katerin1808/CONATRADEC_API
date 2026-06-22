@@ -3,7 +3,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace CONATRADEC_API.Models
 {
-    [Table("fotoTerreno", Schema = "dbo")]
+    [Table("FotoTerreno")]
     public class FotoTerreno
     {
         [Key]
@@ -11,13 +11,14 @@ namespace CONATRADEC_API.Models
 
         [Required]
         [MaxLength(500)]
-        public string urlFotoTerreno { get; set; } = null!;
+        public string urlFotoTerreno { get; set; } = string.Empty;
 
         public bool activo { get; set; } = true;
 
         public int terrenoId { get; set; }
 
         [ForeignKey(nameof(terrenoId))]
-        public virtual Terreno Terreno { get; set; } = null!;
+        public Terreno? Terreno { get; set; }
     }
 }
+
