@@ -273,26 +273,18 @@ namespace CONATRADEC_API.Services
             // kg/Ha -> lb/Ha -> lb/Mz
             if (simbolo == "N" && nombreUnidad == "%")
             {
-                decimal masaSueloKgHa = 2000000m;
                 decimal constanteMineralizacion = 0.015m;
 
-                // materiaOrganica viene como porcentaje, ejemplo: 2.5
-                // cantidad también viene como porcentaje, ejemplo: 5
-                decimal fraccionMateriaOrganica = materiaOrganica / 100m;
                 decimal fraccionNitrogeno = cantidad / 100m;
 
-                decimal nitrogenoTotalKgHa =
-                    masaSueloKgHa * fraccionMateriaOrganica * fraccionNitrogeno;
-
                 decimal nitrogenoDisponibleKgHa =
-                    nitrogenoTotalKgHa * constanteMineralizacion;
+                    materiaOrganica * fraccionNitrogeno * constanteMineralizacion;
 
                 decimal nitrogenoDisponibleLbMz =
                     nitrogenoDisponibleKgHa * 2.2m * 0.7m;
 
                 return Math.Round(nitrogenoDisponibleLbMz, 4);
             }
-
             // P: ppm -> kg/Ha -> lb/Ha -> lb/Mz
             if (nombreUnidad == "ppm")
                 return Math.Round(cantidad * 2m * 2.2m * 0.7m, 4);
