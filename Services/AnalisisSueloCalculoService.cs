@@ -276,10 +276,13 @@ namespace CONATRADEC_API.Services
                 decimal masaSueloKgHa = 2000000m;
                 decimal constanteMineralizacion = 0.015m;
 
-                decimal nitrogenoMateriaOrganicaPorcentaje = materiaOrganica * cantidad;
+                // materiaOrganica viene como porcentaje, ejemplo: 2.5
+                // cantidad también viene como porcentaje, ejemplo: 5
+                decimal fraccionMateriaOrganica = materiaOrganica / 100m;
+                decimal fraccionNitrogeno = cantidad / 100m;
 
                 decimal nitrogenoTotalKgHa =
-                    masaSueloKgHa * (nitrogenoMateriaOrganicaPorcentaje / 100m);
+                    masaSueloKgHa * fraccionMateriaOrganica * fraccionNitrogeno;
 
                 decimal nitrogenoDisponibleKgHa =
                     nitrogenoTotalKgHa * constanteMineralizacion;

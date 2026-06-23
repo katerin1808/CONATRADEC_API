@@ -231,6 +231,27 @@ namespace CONATRADEC_API.Controllers
             });
         }
 
+
+        [HttpGet("enmiendas-calcareas")]
+        public async Task<IActionResult> ObtenerEnmiendasCalcareas()
+        {
+            var data = await _db.ParametroEnmiendaCalcarea
+                .Include(x => x.FuenteNutriente)
+                .Where(x => x.activo && x.FuenteNutriente != null && x.FuenteNutriente.activo)
+                .Select(x => new
+                {
+                    x.parametroEnmiendaCalcareaId,
+                    x.fuenteNutrientesId,
+                    nombreNutriente = x.FuenteNutriente!.nombreNutriente,
+                    precioNutriente = x.FuenteNutriente.precioNutriente,
+                    x.prnt,
+                    x.descripcionParametro
+                })
+                .ToListAsync();
+
+            return Ok(data);
+        }
+
         [HttpPut("editar-con-elementos/{id:int}")]
         public async Task<IActionResult> EditarConElementos(
      int id,
