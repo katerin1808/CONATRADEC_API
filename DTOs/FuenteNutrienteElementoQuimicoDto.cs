@@ -44,4 +44,10 @@ namespace CONATRADEC_API.DTOs
         [Required(ErrorMessage = "El elemento químico es obligatorio.")]
         public int elementoQuimicosId { get; set; }
     }
+
+    public class HabilitarEnmiendaCalcareaDto
+    {
+        public decimal prnt { get; set; }
+        public string? descripcionParametro { get; set; }
+    }
 }

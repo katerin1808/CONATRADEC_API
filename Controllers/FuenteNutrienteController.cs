@@ -186,6 +186,51 @@ namespace CONATRADEC_API.Controllers
             }
         }
 
+        [HttpPost("{fuenteNutrientesId}/habilitar-enmienda-calcarea")]
+        public async Task<IActionResult> HabilitarEnmiendaCalcarea(
+    int fuenteNutrientesId,
+    [FromBody] HabilitarEnmiendaCalcareaDto dto)
+        {
+            var fuente = await _db.fuenteNutriente
+                .FirstOrDefaultAsync(x => x.fuenteNutrientesId == fuenteNutrientesId && x.activo);
+
+            if (fuente == null)
+                return NotFound(new { mensaje = "La fuente nutriente no existe o está inactiva." });
+
+            if (dto.prnt <= 0)
+                return BadRequest(new { mensaje = "El PRNT debe ser mayor a cero." });
+
+            var yaExiste = await _db.ParametroEnmiendaCalcarea
+                .AnyAsync(x => x.fuenteNutrientesId == fuenteNutrientesId && x.activo);
+
+            if (yaExiste)
+                return BadRequest(new { mensaje = "Esta fuente ya está habilitada para cálculo de enmienda calcárea." });
+
+            var parametro = new ParametroEnmiendaCalcarea
+            {
+                fuenteNutrientesId = fuenteNutrientesId,
+                saturacionBasesDeseada = 70,
+                prnt = dto.prnt,
+                factorTonHaALbHa = 2200,
+                factorHaAMz = 0.7026m,
+                factorTonHaAKgHa = 1000,
+                descripcionParametro = dto.descripcionParametro ?? "Fuente utilizada para cálculo de enmienda calcárea",
+                activo = true
+            };
+
+            _db.ParametroEnmiendaCalcarea.Add(parametro);
+            await _db.SaveChangesAsync();
+
+            return Ok(new
+            {
+                mensaje = "Fuente habilitada para cálculo de enmienda calcárea.",
+                fuente.fuenteNutrientesId,
+                fuente.nombreNutriente,
+                parametro.parametroEnmiendaCalcareaId,
+                parametro.prnt
+            });
+        }
+
         [HttpPut("editar-con-elementos/{id:int}")]
         public async Task<IActionResult> EditarConElementos(
      int id,
