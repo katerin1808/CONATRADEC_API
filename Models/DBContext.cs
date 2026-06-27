@@ -56,7 +56,13 @@ namespace CONATRADEC_API.Models
         public DbSet<FormulaNutricional> formulaNutricional { get; set; }
         public DbSet<FormulaNutricionalDetalle> formulaNutricionalDetalle { get; set; }
         public DbSet<FormulaNutricionalAporte> formulaNutricionalAporte { get; set; }
+
+
        
+        public DbSet<FertilizacionMixta> fertilizacionMixta { get; set; }
+        public DbSet<FertilizacionMixtaFuente> fertilizacionMixtaFuente { get; set; }
+        public DbSet<FertilizacionMixtaDetalle> fertilizacionMixtaDetalle { get; set; }
+
 
         // ==========================
         // CONFIGURACIONES

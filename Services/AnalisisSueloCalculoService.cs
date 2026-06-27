@@ -53,10 +53,9 @@ namespace CONATRADEC_API.Services
                 tipoAnalisisSuelo = tipoAnalisis.nombreTipoAnalisisSuelo,
                 cantidadQuintalesOro = dto.cantidadQuintalesOro,
                 tamanoFinca = dto.tamanoFinca,
-                ph = dto.ph,
-                acidezTotal = dto.acidezTotal,
                 recomendacionGeneral = "Cálculo de requerimiento anual generado con base en extracción por QQ oro y rangos nutricionales del cultivo."
             };
+           
 
             var elementosIds = dto.elementosQuimicos
                 .Select(x => x.elementoQuimicosId)
@@ -83,6 +82,7 @@ namespace CONATRADEC_API.Services
 
             if (unidadResultado == null)
                 throw new Exception("No existe la unidad de medida lb/Mz configurada.");
+      
 
             foreach (var entrada in dto.elementosQuimicos)
             {
@@ -92,6 +92,14 @@ namespace CONATRADEC_API.Services
                 if (elemento == null)
                 {
                     response.observaciones.Add($"No se encontró el elemento químico con ID {entrada.elementoQuimicosId}.");
+                    continue;
+                }
+
+                var errorUnidad = ValidarUnidadElemento(elemento, entrada.unidadMedidaId);
+
+                if (errorUnidad != null)
+                {
+                    response.observaciones.Add(errorUnidad);
                     continue;
                 }
 
@@ -275,10 +283,22 @@ namespace CONATRADEC_API.Services
             {
                 decimal constanteMineralizacion = 0.015m;
 
+                if (materiaOrganica <= 0)
+                    return null;
+
+                if (cantidad <= 0 || cantidad > 100)
+                    return null;
+
+                // Ejemplo:
+                // materiaOrganica = 2 significa 2,000,000 kg/Ha
+                decimal masaSueloKgHa = materiaOrganica * 1000000m;
+
                 decimal fraccionNitrogeno = cantidad / 100m;
 
                 decimal nitrogenoDisponibleKgHa =
-                    materiaOrganica * fraccionNitrogeno * constanteMineralizacion;
+                    masaSueloKgHa *
+                    fraccionNitrogeno *
+                    constanteMineralizacion;
 
                 decimal nitrogenoDisponibleLbMz =
                     nitrogenoDisponibleKgHa * 2.2m * 0.7m;
@@ -375,11 +395,51 @@ namespace CONATRADEC_API.Services
             if (dto.tamanoFinca <= 0)
                 throw new Exception("El tamaño de la finca debe ser mayor que cero.");
 
+            if (dto.materiaOrganica <= 0)
+                throw new Exception("La materia orgánica debe ser mayor a cero y debe ingresarse en porcentaje. Ejemplo: 2 para 2%.");
+
             if (dto.ph <= 0 || dto.ph > 14)
                 throw new Exception("El pH debe estar entre 0 y 14.");
 
             if (dto.elementosQuimicos == null || !dto.elementosQuimicos.Any())
                 throw new Exception("Debe ingresar al menos un elemento químico.");
+        }
+
+        private string? ValidarUnidadElemento(
+    ElementoQuimico elemento,
+    int unidadMedidaId)
+        {
+            var unidad = _db.UnidadMedidas
+                .FirstOrDefault(x => x.unidadMedidaId == unidadMedidaId && x.activo);
+
+            if (unidad == null)
+                return "La unidad de medida no existe o está inactiva.";
+
+            string simbolo = elemento.simboloElementoQuimico.Trim().ToUpper();
+            string nombreUnidad = unidad.nombreUnidadMedida.Trim().ToLower();
+
+            var unidadesPermitidas = simbolo switch
+            {
+                "N" => new[] { "%" },
+
+                "P" => new[] { "ppm", "kg/ha", "lb/ha", "lb/mz" },
+
+                "K" => new[] { "meq/100g", "meq", "kg/ha", "lb/ha", "lb/mz" },
+
+                "CA" => new[] { "meq/100g", "meq", "kg/ha", "lb/ha", "lb/mz" },
+
+                "MG" => new[] { "meq/100g", "meq", "kg/ha", "lb/ha", "lb/mz" },
+
+                _ => new[] { "ppm", "kg/ha", "lb/ha", "lb/mz" }
+            };
+
+            if (!unidadesPermitidas.Contains(nombreUnidad))
+            {
+                return $"La unidad '{unidad.nombreUnidadMedida}' no es válida para el elemento {simbolo}. " +
+                       $"Unidades permitidas: {string.Join(", ", unidadesPermitidas)}.";
+            }
+
+            return null;
         }
     }
 }
