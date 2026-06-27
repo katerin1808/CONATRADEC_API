@@ -28,6 +28,15 @@ namespace CONATRADEC_API.Controllers
                     descripcionNutriente = x.descripcionNutriente,
                     precioNutriente = x.precioNutriente,
                     activo = x.activo,
+                    habilitadaEnmiendaCalcarea = _db.ParametroEnmiendaCalcarea
+                .Any(e =>
+                    e.fuenteNutrientesId == x.fuenteNutrientesId &&
+                    e.activo == true),
+
+                    habilitadaFertilizacionMixta = _db.fuenteFertilizacionMixta
+                .Any(f =>
+                    f.fuenteNutrientesId == x.fuenteNutrientesId &&
+                    f.activo == true),
                     elementosQuimicos = x.fuenteNutrienteElementoQuimico
                         .Where(r => r.activo)
                         .Select(r => new ElementoFuenteRespuestaDto
@@ -75,31 +84,7 @@ namespace CONATRADEC_API.Controllers
             return Ok(data);
         }
 
-        [HttpGet("listar habilitadas")]
-        public async Task<IActionResult> ListarHabilitadas()
-        {
-            var data = await _db.fuenteNutriente
-                .Where(x => x.activo == true)
-                .Select(x => new
-                {
-                    x.fuenteNutrientesId,
-                    x.nombreNutriente,
-                    x.activo,
-
-                    habilitadaEnmiendaCalcarea = _db.ParametroEnmiendaCalcarea
-                        .Any(p =>
-                            p.fuenteNutrientesId == x.fuenteNutrientesId &&
-                            p.activo == true),
-
-                    habilitadaFertilizacionMixta = _db.fuenteFertilizacionMixta
-                        .Any(f =>
-                            f.fuenteNutrientesId == x.fuenteNutrientesId &&
-                            f.activo == true)
-                })
-                .ToListAsync();
-
-            return Ok(data);
-        }
+    
 
         [HttpPost("crear-con-elementos")]
         public async Task<IActionResult> CrearConElementos([FromBody] FuenteNutrienteConElementosCrearDto dto)

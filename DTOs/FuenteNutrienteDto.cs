@@ -21,6 +21,8 @@
         public string descripcionNutriente { get; set; } = string.Empty;
         public decimal precioNutriente { get; set; }
         public bool activo { get; set; }
+        public bool habilitadaEnmiendaCalcarea { get; set; }
+        public bool habilitadaFertilizacionMixta { get; set; }
         public List<ElementoFuenteRespuestaDto> elementosQuimicos { get; set; } = new();
     }
 
@@ -31,6 +33,7 @@
         public string nombreElementoQuimico { get; set; } = string.Empty;
         public string simboloElementoQuimico { get; set; } = string.Empty;
         public decimal cantidadAporte { get; set; }
+     
     }
 
     public class FuenteNutrienteAporteTablaDto

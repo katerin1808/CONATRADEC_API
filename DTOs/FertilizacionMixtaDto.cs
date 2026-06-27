@@ -48,7 +48,7 @@
 
             public string elemento { get; set; } = string.Empty;
 
-            public decimal requerimientoOriginal { get; set; }
+            public decimal exportable { get; set; }
 
             public decimal aporteOrganico { get; set; }
 
@@ -57,6 +57,21 @@
             public decimal deficit { get; set; }
 
             public decimal sobrante { get; set; }
+
+            public List<FertilizacionMixtaFuenteElementoDetalleDto> fuentes { get; set; } = new();
+        }
+
+        public class FertilizacionMixtaFuenteElementoDetalleDto
+        {
+            public int fuenteNutrientesId { get; set; }
+
+            public string nombreFuente { get; set; } = string.Empty;
+
+            public decimal cantidadQq { get; set; }
+
+            public decimal aportePorUnidad { get; set; }
+
+            public decimal aporteTotal { get; set; }
         }
     }
 }
