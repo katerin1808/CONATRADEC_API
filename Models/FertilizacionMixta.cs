@@ -3,7 +3,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace CONATRADEC_API.Models
 {
-    [Table("fuenteFertilizacionMixta")]
+    [Table("fertilizacionMixta")]
     public class FertilizacionMixta
     {
         [Key]
@@ -23,6 +23,8 @@ namespace CONATRADEC_API.Models
         public ICollection<FertilizacionMixtaFuente>? fuentes { get; set; }
 
         public ICollection<FertilizacionMixtaDetalle>? detalles { get; set; }
+       
+
 
     }
 }

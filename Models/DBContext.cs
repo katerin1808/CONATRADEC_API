@@ -61,6 +61,7 @@ namespace CONATRADEC_API.Models
        
         public DbSet<FertilizacionMixta> fertilizacionMixta { get; set; }
         public DbSet<FertilizacionMixtaFuente> fertilizacionMixtaFuente { get; set; }
+        public DbSet<FuenteFertilizacionMixta> fuenteFertilizacionMixta { get; set; } = null!;
         public DbSet<FertilizacionMixtaDetalle> fertilizacionMixtaDetalle { get; set; }
 
 

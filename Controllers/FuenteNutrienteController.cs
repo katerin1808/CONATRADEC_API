@@ -75,6 +75,32 @@ namespace CONATRADEC_API.Controllers
             return Ok(data);
         }
 
+        [HttpGet("listar habilitadas")]
+        public async Task<IActionResult> ListarHabilitadas()
+        {
+            var data = await _db.fuenteNutriente
+                .Where(x => x.activo == true)
+                .Select(x => new
+                {
+                    x.fuenteNutrientesId,
+                    x.nombreNutriente,
+                    x.activo,
+
+                    habilitadaEnmiendaCalcarea = _db.ParametroEnmiendaCalcarea
+                        .Any(p =>
+                            p.fuenteNutrientesId == x.fuenteNutrientesId &&
+                            p.activo == true),
+
+                    habilitadaFertilizacionMixta = _db.fuenteFertilizacionMixta
+                        .Any(f =>
+                            f.fuenteNutrientesId == x.fuenteNutrientesId &&
+                            f.activo == true)
+                })
+                .ToListAsync();
+
+            return Ok(data);
+        }
+
         [HttpPost("crear-con-elementos")]
         public async Task<IActionResult> CrearConElementos([FromBody] FuenteNutrienteConElementosCrearDto dto)
         {
@@ -231,6 +257,114 @@ namespace CONATRADEC_API.Controllers
             });
         }
 
+        [HttpPut("deshabilitar-enmienda-calcarea/{fuenteNutrientesId:int}")]
+        public async Task<IActionResult> DeshabilitarEnmiendaCalcarea(int fuenteNutrientesId)
+        {
+            var parametro = await _db.ParametroEnmiendaCalcarea
+                .FirstOrDefaultAsync(x => x.fuenteNutrientesId == fuenteNutrientesId);
+
+            if (parametro == null)
+            {
+                return NotFound(new
+                {
+                    mensaje = "La fuente no existe en la configuración de enmienda calcárea."
+                });
+            }
+
+            parametro.activo = false;
+
+            await _db.SaveChangesAsync();
+
+            return Ok(new
+            {
+                mensaje = "Fuente deshabilitada para enmienda calcárea.",
+                parametro.fuenteNutrientesId,
+                parametro.activo
+            });
+        }
+        [HttpPost("habilitar-fertilizacion-mixta/{fuenteNutrientesId:int}")]
+        public async Task<IActionResult> HabilitarFertilizacionMixta(int fuenteNutrientesId)
+        {
+            var fuente = await _db.fuenteNutriente
+                .FirstOrDefaultAsync(x =>
+                    x.fuenteNutrientesId == fuenteNutrientesId &&
+                    x.activo == true);
+
+            if (fuente == null)
+            {
+                return NotFound(new
+                {
+                    mensaje = "La fuente nutriente no existe o está inactiva."
+                });
+            }
+
+            var yaExiste = await _db.fuenteFertilizacionMixta
+                .FirstOrDefaultAsync(x =>
+                    x.fuenteNutrientesId == fuenteNutrientesId);
+
+            if (yaExiste != null)
+            {
+                if (yaExiste.activo == true)
+                {
+                    return BadRequest(new
+                    {
+                        mensaje = "Esta fuente ya está habilitada para fertilización mixta."
+                    });
+                }
+
+                yaExiste.activo = true;
+
+                await _db.SaveChangesAsync();
+
+                return Ok(new
+                {
+                    mensaje = "Fuente habilitada nuevamente para fertilización mixta.",
+                    fuente.fuenteNutrientesId,
+                    fuente.nombreNutriente
+                });
+            }
+
+            var fuenteMixta = new FuenteFertilizacionMixta
+            {
+                fuenteNutrientesId = fuenteNutrientesId,
+                activo = true
+            };
+
+            _db.fuenteFertilizacionMixta.Add(fuenteMixta);
+            await _db.SaveChangesAsync();
+
+            return Ok(new
+            {
+                mensaje = "Fuente habilitada para fertilización mixta.",
+                fuente.fuenteNutrientesId,
+                fuente.nombreNutriente
+            });
+        }
+        [HttpPut("deshabilitar-fertilizacion-mixta/{fuenteNutrientesId:int}")]
+        public async Task<IActionResult> DeshabilitarFertilizacionMixta(int fuenteNutrientesId)
+        {
+            var fuenteMixta = await _db.fuenteFertilizacionMixta
+                .FirstOrDefaultAsync(x => x.fuenteNutrientesId == fuenteNutrientesId);
+
+            if (fuenteMixta == null)
+            {
+                return NotFound(new
+                {
+                    mensaje = "La fuente no existe en la configuración de fertilización mixta."
+                });
+            }
+
+            fuenteMixta.activo = false;
+
+            await _db.SaveChangesAsync();
+
+            return Ok(new
+            {
+                mensaje = "Fuente deshabilitada para fertilización mixta.",
+                fuenteMixta.fuenteNutrientesId,
+                fuenteMixta.activo
+            });
+        }
 
         [HttpGet("enmiendas-calcareas")]
         public async Task<IActionResult> ObtenerEnmiendasCalcareas()
