@@ -129,6 +129,7 @@ public class AnalisisSueloController : ControllerBase
                 tamanoFinca = dto.tamanoFinca,
                 phAnalisisSuelo = dto.ph,
                 materiaOrganica = dto.materiaOrganica,
+                unidadMedidaMateriaOrganicaId = dto.unidadMedidaMateriaOrganicaId,
                 acidezTotal = dto.acidezTotal,
 
                 recomendacionGeneral = resultado.recomendacionGeneral,

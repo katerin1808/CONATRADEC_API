@@ -17,6 +17,8 @@ namespace CONATRADEC_API.Services
         {
             ValidarEntrada(dto);
 
+            decimal materiaOrganicaPorcentaje = ConvertirMateriaOrganicaAPorcentaje( dto.materiaOrganica, dto.unidadMedidaMateriaOrganicaId);
+
             var tipoCultivo = await _db.TipoCultivos
                 .FirstOrDefaultAsync(x => x.tipoCultivoId == dto.tipoCultivoId && x.activo);
 
@@ -29,20 +31,22 @@ namespace CONATRADEC_API.Services
             if (tipoAnalisis == null)
                 throw new Exception("El tipo de análisis de suelo no existe o está inactivo.");
 
+            if (dto.materiaOrganica <= 0)
+                throw new Exception("La materia orgánica debe ser mayor a cero.");
+
+            if (dto.unidadMedidaMateriaOrganicaId <= 0)
+                throw new Exception("Debe seleccionar la unidad de medida de la materia orgánica.");
+
             string nombreTipoAnalisis = tipoAnalisis.nombreTipoAnalisisSuelo.Trim().ToUpper();
 
             if (nombreTipoAnalisis == "REQUERIMIENTO_ANUAL")
             {
-                return await CalcularRequerimientoAnualAsync(dto, tipoCultivo, tipoAnalisis);
+                return await CalcularRequerimientoAnualAsync(dto, tipoCultivo, tipoAnalisis, materiaOrganicaPorcentaje);
             }
 
             throw new Exception($"El tipo de análisis {tipoAnalisis.nombreTipoAnalisisSuelo} aún no está implementado.");
         }
-
-        private async Task<AnalisisSueloCalculoResponseDto> CalcularRequerimientoAnualAsync(
-    AnalisisSueloCalculoRequestDto dto,
-    TipoCultivo tipoCultivo,
-    TipoAnalisisSuelo tipoAnalisis)
+        private async Task<AnalisisSueloCalculoResponseDto> CalcularRequerimientoAnualAsync(  AnalisisSueloCalculoRequestDto dto, TipoCultivo tipoCultivo,  TipoAnalisisSuelo tipoAnalisis, decimal materiaOrganicaPorcentaje)
         {
             var response = new AnalisisSueloCalculoResponseDto
             {
@@ -53,6 +57,8 @@ namespace CONATRADEC_API.Services
                 tipoAnalisisSuelo = tipoAnalisis.nombreTipoAnalisisSuelo,
                 cantidadQuintalesOro = dto.cantidadQuintalesOro,
                 tamanoFinca = dto.tamanoFinca,
+                materiaOrganica = dto.materiaOrganica,
+                unidadMedidaMateriaOrganicaId = dto.unidadMedidaMateriaOrganicaId,
                 recomendacionGeneral = "Cálculo de requerimiento anual generado con base en extracción por QQ oro y rangos nutricionales del cultivo."
             };
            
@@ -98,10 +104,8 @@ namespace CONATRADEC_API.Services
                 var errorUnidad = ValidarUnidadElemento(elemento, entrada.unidadMedidaId);
 
                 if (errorUnidad != null)
-                {
-                    response.observaciones.Add(errorUnidad);
-                    continue;
-                }
+                    throw new Exception(errorUnidad);
+
 
                 var parametroExtraccion = parametrosExtraccion
                     .FirstOrDefault(x => x.elementoQuimicosId == entrada.elementoQuimicosId);
@@ -113,11 +117,10 @@ namespace CONATRADEC_API.Services
                 decimal? extraccionPorProduccion = null;
                 decimal? requerimientoCalculado = null;
                 decimal? cantidadConvertidaLbMz = ConvertirEntradaALbMz(
-                    entrada.cantidadElemento,
-                    entrada.unidadMedidaId,
-                    elemento,
-                    dto.materiaOrganica
-                );
+                entrada.cantidadElemento,
+                entrada.unidadMedidaId,
+                elemento,
+                materiaOrganicaPorcentaje);
                 decimal? rangoMinimoLbMz = null;
                 decimal? rangoMaximoLbMz = null;
                 string clasificacion = "SIN_CLASIFICACION";
@@ -259,11 +262,7 @@ namespace CONATRADEC_API.Services
                 $"Requerimiento anual calculado: {requerimientoCalculado.Value:0.####} lb/Mz.";
         }
 
-        private decimal? ConvertirEntradaALbMz(
-            decimal cantidad,
-            int unidadMedidaId,
-            ElementoQuimico elemento,
-            decimal materiaOrganica)
+        private decimal? ConvertirEntradaALbMz( decimal cantidad, int unidadMedidaId, ElementoQuimico elemento,decimal materiaOrganica)
         {
             var unidad = _db.UnidadMedidas
                 .FirstOrDefault(x => x.unidadMedidaId == unidadMedidaId && x.activo);
@@ -403,6 +402,37 @@ namespace CONATRADEC_API.Services
 
             if (dto.elementosQuimicos == null || !dto.elementosQuimicos.Any())
                 throw new Exception("Debe ingresar al menos un elemento químico.");
+        }
+
+        private decimal ConvertirMateriaOrganicaAPorcentaje( decimal materiaOrganica, int unidadMedidaMateriaOrganicaId)
+        {
+            var unidad = _db.UnidadMedidas
+                .FirstOrDefault(x =>
+                    x.unidadMedidaId == unidadMedidaMateriaOrganicaId &&
+                    x.activo == true);
+
+            if (unidad == null)
+                throw new Exception("La unidad de medida de la materia orgánica no existe o está inactiva.");
+
+            if (materiaOrganica <= 0)
+                throw new Exception("La materia orgánica debe ser mayor a cero.");
+
+            string nombreUnidad = unidad.nombreUnidadMedida.Trim().ToLower();
+
+            return nombreUnidad switch
+            {
+                "%" => materiaOrganica,
+
+                "g/100g" => materiaOrganica,
+
+                "ppm" => materiaOrganica / 10000m,
+
+                "mg/kg" => materiaOrganica / 10000m,
+
+                _ => throw new Exception(
+                    $"La unidad '{unidad.nombreUnidadMedida}' no es válida para materia orgánica. " +
+                    "Unidades permitidas: %, g/100g, ppm, mg/kg.")
+            };
         }
 
         private string? ValidarUnidadElemento(

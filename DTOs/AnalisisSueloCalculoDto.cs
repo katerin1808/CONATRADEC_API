@@ -27,13 +27,15 @@ namespace CONATRADEC_API.DTOs
         [Required]
         public decimal materiaOrganica { get; set; }
 
+        public int unidadMedidaMateriaOrganicaId { get; set; }
+
         public decimal? acidezTotal { get; set; }
 
         [Required]
         [MinLength(1, ErrorMessage = "Debe ingresar al menos un elemento químico.")]
         public List<AnalisisSueloElementoEntradaDto> elementosQuimicos { get; set; } = new();
 
-        public List<FuenteOrganicaEntradaDto> fuentesOrganicas { get; set; } = new();
+    
     }
 
     public class AnalisisSueloGuardarRequestDto : AnalisisSueloCalculoRequestDto
@@ -62,15 +64,7 @@ namespace CONATRADEC_API.DTOs
         public decimal cantidadElemento { get; set; }
     }
 
-    public class FuenteOrganicaEntradaDto
-    {
-        [Required]
-        public int fuenteNutrientesId { get; set; }
-
-        [Required]
-        public decimal cantidadAplicada { get; set; }
-    }
-
+ 
     public class AnalisisSueloCalculoResponseDto
     {
         public int terrenoId { get; set; }
@@ -87,13 +81,12 @@ namespace CONATRADEC_API.DTOs
         public decimal ph { get; set; }
         public decimal? acidezTotal { get; set; }
 
+        public decimal materiaOrganica { get; set; }
+
+        public int unidadMedidaMateriaOrganicaId { get; set; }
+
         public List<ResultadoElementoCalculoDto> elementos { get; set; } = new();
 
-        public List<ResultadoFuenteFertilizanteDto> fuentesFertilizantes { get; set; } = new();
-
-        public ResultadoEnmiendaCalcareaDto? enmiendaCalcarea { get; set; }
-
-        public List<ResultadoFuenteOrganicaDto> fuentesOrganicas { get; set; } = new();
 
         public string recomendacionGeneral { get; set; } = null!;
 
@@ -137,18 +130,7 @@ namespace CONATRADEC_API.DTOs
         public string observacion { get; set; } = null!;
     }
 
-    public class ResultadoFuenteFertilizanteDto
-    {
-        public int fuenteNutrientesId { get; set; }
-
-        public string nombreNutriente { get; set; } = null!;
-
-        public decimal cantidadFuente { get; set; }
-
-        public string unidadResultado { get; set; } = "lb";
-
-        public List<AporteFuenteElementoDto> aportes { get; set; } = new();
-    }
+ 
 
     public class AporteFuenteElementoDto
     {
@@ -161,49 +143,6 @@ namespace CONATRADEC_API.DTOs
         public decimal cantidadAportada { get; set; }
     }
 
-    public class ResultadoEnmiendaCalcareaDto
-    {
-        public int fuenteNutrientesId { get; set; }
-
-        public string nombreFuente { get; set; } = null!;
-
-        public decimal calcio { get; set; }
-
-        public decimal magnesio { get; set; }
-
-        public decimal potasio { get; set; }
-
-        public decimal acidezTotal { get; set; }
-
-        public decimal cice { get; set; }
-
-        public decimal sumaBases { get; set; }
-
-        public decimal saturacionBasesActual { get; set; }
-
-        public decimal saturacionBasesDeseada { get; set; }
-
-        public decimal prnt { get; set; }
-
-        public decimal necesidadEnmiendaTonHa { get; set; }
-
-        public decimal necesidadEnmiendaLbHa { get; set; }
-
-        public decimal necesidadEnmiendaKgHa { get; set; }
-
-        public decimal necesidadEnmiendaLbMz { get; set; }
-    }
-
-    public class ResultadoFuenteOrganicaDto
-    {
-        public int fuenteNutrientesId { get; set; }
-
-        public string nombreFuente { get; set; } = null!;
-
-        public decimal cantidadAplicada { get; set; }
-
-        public List<AporteOrganicoElementoDto> aportes { get; set; } = new();
-    }
 
     public class AporteOrganicoElementoDto
     {

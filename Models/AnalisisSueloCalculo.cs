@@ -44,6 +44,11 @@ namespace CONATRADEC_API.Models
 
         public int? usuarioId { get; set; }
 
+        public int? unidadMedidaMateriaOrganicaId { get; set; }
+
+        [ForeignKey(nameof(unidadMedidaMateriaOrganicaId))]
+        public UnidadMedida? unidadMedidaMateriaOrganica { get; set; }
+
         public ICollection<AnalisisSueloCalculoElementoQuimico> ElementosCalculados { get; set; }
             = new List<AnalisisSueloCalculoElementoQuimico>();
     }
