@@ -18,6 +18,8 @@ namespace CONATRADEC_API.Services
             ValidarEntrada(dto);
 
             decimal materiaOrganicaPorcentaje = ConvertirMateriaOrganicaAPorcentaje( dto.materiaOrganica, dto.unidadMedidaMateriaOrganicaId);
+            if (materiaOrganicaPorcentaje <= 0 || materiaOrganicaPorcentaje > 20)
+                throw new Exception("La materia orgánica debe estar entre 0 y 20%.");
 
             var tipoCultivo = await _db.TipoCultivos
                 .FirstOrDefaultAsync(x => x.tipoCultivoId == dto.tipoCultivoId && x.activo);
@@ -283,24 +285,24 @@ namespace CONATRADEC_API.Services
                 decimal constanteMineralizacion = 0.015m;
 
                 if (materiaOrganica <= 0)
-                    return null;
+                    throw new Exception("La materia orgánica debe ser mayor a cero.");
 
                 if (cantidad <= 0 || cantidad > 100)
-                    return null;
+                    throw new Exception("El nitrógeno en porcentaje debe ser mayor a cero y menor o igual a 100.");
 
-                // Ejemplo:
-                // materiaOrganica = 2 significa 2,000,000 kg/Ha
-                decimal masaSueloKgHa = materiaOrganica * 1000000m;
 
-                decimal fraccionNitrogeno = cantidad / 100m;
+                if (materiaOrganica <= 0 || materiaOrganica > 20)
+                    throw new Exception("La materia orgánica debe estar entre 0 y 20%.");
 
-                decimal nitrogenoDisponibleKgHa =
-                    masaSueloKgHa *
-                    fraccionNitrogeno *
-                    constanteMineralizacion;
+                decimal materiaOrganicaKgHa = materiaOrganica * 1000000m;
 
-                decimal nitrogenoDisponibleLbMz =
-                    nitrogenoDisponibleKgHa * 2.2m * 0.7m;
+                decimal nitrogenoMateriaOrganica = materiaOrganica * cantidad;
+
+                decimal nitrogenoTotalKgHa = (nitrogenoMateriaOrganica * materiaOrganicaKgHa) / 100m;
+
+                decimal nitrogenoDisponibleKgHa = nitrogenoTotalKgHa * constanteMineralizacion;
+
+                decimal nitrogenoDisponibleLbMz = nitrogenoDisponibleKgHa * 2.2m * 0.7m;
 
                 return Math.Round(nitrogenoDisponibleLbMz, 4);
             }
@@ -417,6 +419,8 @@ namespace CONATRADEC_API.Services
             if (materiaOrganica <= 0)
                 throw new Exception("La materia orgánica debe ser mayor a cero.");
 
+
+
             string nombreUnidad = unidad.nombreUnidadMedida.Trim().ToLower();
 
             return nombreUnidad switch
@@ -429,9 +433,11 @@ namespace CONATRADEC_API.Services
 
                 "mg/kg" => materiaOrganica / 10000m,
 
+                "kg/ha mo" => materiaOrganica / 1000000m,
+
                 _ => throw new Exception(
                     $"La unidad '{unidad.nombreUnidadMedida}' no es válida para materia orgánica. " +
-                    "Unidades permitidas: %, g/100g, ppm, mg/kg.")
+                    "Unidades permitidas: %, g/100g, ppm, mg/kg, kg/ha mo")
             };
         }
 
