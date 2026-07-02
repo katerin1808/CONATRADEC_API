@@ -24,6 +24,27 @@
         public bool habilitadaEnmiendaCalcarea { get; set; }
         public bool habilitadaFertilizacionMixta { get; set; }
         public List<ElementoFuenteRespuestaDto> elementosQuimicos { get; set; } = new();
+        public List<ParametroEnmiendaCalcareaFuenteDto> parametrosEnmiendaCalcarea { get; set; } = new();
+    }
+    public class FuenteFertilizacionMixtaListadoDto
+    {
+
+        public int fuenteNutrientesId { get; set; }
+
+        public string nombreNutriente { get; set; } = string.Empty;
+
+        public string? descripcionNutriente { get; set; }
+
+        public decimal precioNutriente { get; set; }
+        public bool activo { get; set; }
+
+        public List<ElementoFuenteRespuestaDto> elementosQuimicos { get; set; } = new();
+    }
+    public class ParametroEnmiendaCalcareaFuenteDto
+    {
+        public decimal prnt { get; set; }
+
+        public string? descripcionParametro { get; set; }
     }
 
     public class ElementoFuenteRespuestaDto

@@ -15,7 +15,6 @@ namespace CONATRADEC_API.Controllers
         {
             _db = db;
         }
-
         [HttpGet("listar")]
         public async Task<IActionResult> Listar()
         {
@@ -28,15 +27,28 @@ namespace CONATRADEC_API.Controllers
                     descripcionNutriente = x.descripcionNutriente,
                     precioNutriente = x.precioNutriente,
                     activo = x.activo,
+
                     habilitadaEnmiendaCalcarea = _db.ParametroEnmiendaCalcarea
-                .Any(e =>
-                    e.fuenteNutrientesId == x.fuenteNutrientesId &&
-                    e.activo == true),
+                        .Any(e =>
+                            e.fuenteNutrientesId == x.fuenteNutrientesId &&
+                            e.activo == true),
 
                     habilitadaFertilizacionMixta = _db.fuenteFertilizacionMixta
-                .Any(f =>
-                    f.fuenteNutrientesId == x.fuenteNutrientesId &&
-                    f.activo == true),
+                        .Any(f =>
+                            f.fuenteNutrientesId == x.fuenteNutrientesId &&
+                            f.activo == true),
+
+                    parametrosEnmiendaCalcarea = _db.ParametroEnmiendaCalcarea
+                      .Where(e =>
+                    e.fuenteNutrientesId == x.fuenteNutrientesId &&
+                    e.activo == true)
+                   .Select(e => new ParametroEnmiendaCalcareaFuenteDto
+    {
+                    prnt = e.prnt,
+                    descripcionParametro = e.descripcionParametro
+                     })
+                   .ToList(),
+
                     elementosQuimicos = x.fuenteNutrienteElementoQuimico
                         .Where(r => r.activo)
                         .Select(r => new ElementoFuenteRespuestaDto
@@ -349,6 +361,44 @@ namespace CONATRADEC_API.Controllers
                 fuenteMixta.fuenteNutrientesId,
                 fuenteMixta.activo
             });
+        }
+
+        [HttpGet("listar-fertilizacion-mixta")]
+        public async Task<IActionResult> ListarFertilizacionMixta()
+        {
+            var data = await _db.fuenteNutriente
+                .Where(x =>
+                    x.activo == true &&
+                    _db.fuenteFertilizacionMixta.Any(f =>
+                        f.fuenteNutrientesId == x.fuenteNutrientesId &&
+                        f.activo == true))
+                .Select(x => new FuenteFertilizacionMixtaListadoDto
+                {
+                    fuenteNutrientesId = x.fuenteNutrientesId,
+                    nombreNutriente = x.nombreNutriente,
+                    descripcionNutriente = x.descripcionNutriente,
+                    precioNutriente = x.precioNutriente,
+                    activo = x.activo,
+
+                    elementosQuimicos = x.fuenteNutrienteElementoQuimico
+                        .Where(r => r.activo == true)
+                        .Select(r => new ElementoFuenteRespuestaDto
+                        {
+                            fuenteNutrienteElementoQuimicoId = r.fuenteNutrienteElementoQuimicoId,
+                            elementoQuimicosId = r.elementoQuimicosId,
+                            nombreElementoQuimico = r.elementoQuimico != null
+                                ? r.elementoQuimico.nombreElementoQuimico
+                                : "",
+                            simboloElementoQuimico = r.elementoQuimico != null
+                                ? r.elementoQuimico.simboloElementoQuimico
+                                : "",
+                            cantidadAporte = r.cantidadAporte
+                        })
+                        .ToList()
+                })
+                .ToListAsync();
+
+            return Ok(data);
         }
 
         [HttpGet("enmiendas-calcareas")]
