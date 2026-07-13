@@ -17,13 +17,14 @@ namespace CONATRADEC_API.Controllers
         }
 
         [HttpPost("calcular")]
-        public async Task<IActionResult> Calcular([FromBody] FertilizacionMixtaCrearDto dto)
+        public async Task<IActionResult> Calcular(
+            [FromBody] FertilizacionMixtaCrearDto dto)
         {
-            if (dto.analisisSueloCalculoId <= 0)
+            if (dto.elementos == null || !dto.elementos.Any())
             {
                 return BadRequest(new
                 {
-                    mensaje = "Debe seleccionar un cálculo de análisis de suelo válido."
+                    mensaje = "Debe enviar al menos un elemento calculado."
                 });
             }
 
@@ -35,230 +36,241 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
-            var analisisCalculo = await _db.AnalisisSueloCalculos
-                .FirstOrDefaultAsync(x =>
-                    x.analisisSueloCalculoId == dto.analisisSueloCalculoId &&
-                    x.activo == true);
-
-            if (analisisCalculo == null)
+            if (dto.elementos.Any(x => x.elementoQuimicosId <= 0))
             {
                 return BadRequest(new
                 {
-                    mensaje = "El cálculo de análisis de suelo no existe o está inactivo."
+                    mensaje = "Uno de los elementos químicos no es válido."
                 });
             }
 
-            var requerimientos = await _db.AnalisisSueloCalculoElementoQuimicos
-                .Include(x => x.ElementoQuimico)
+            if (dto.elementos.Any(x => x.exportable < 0))
+            {
+                return BadRequest(new
+                {
+                    mensaje = "El valor exportable no puede ser negativo."
+                });
+            }
+
+            if (dto.fuentes.Any(x => x.fuenteNutrientesId <= 0))
+            {
+                return BadRequest(new
+                {
+                    mensaje = "Una de las fuentes nutrientes no es válida."
+                });
+            }
+
+            if (dto.fuentes.Any(x => x.cantidadQq <= 0))
+            {
+                return BadRequest(new
+                {
+                    mensaje = "La cantidad en quintales debe ser mayor a cero."
+                });
+            }
+
+            var fuentesIds = dto.fuentes
+                .Select(x => x.fuenteNutrientesId)
+                .Distinct()
+                .ToList();
+
+            var elementosIds = dto.elementos
+                .Select(x => x.elementoQuimicosId)
+                .Distinct()
+                .ToList();
+
+            var fuentesActivas = await _db.fuenteNutriente
                 .Where(x =>
-                    x.analisisSueloCalculoId == dto.analisisSueloCalculoId &&
+                    fuentesIds.Contains(x.fuenteNutrientesId) &&
                     x.activo == true)
                 .ToListAsync();
 
-            if (!requerimientos.Any())
+            var fuentesHabilitadas = await _db.fuenteFertilizacionMixta
+                .Where(x =>
+                    fuentesIds.Contains(x.fuenteNutrientesId) &&
+                    x.activo == true)
+                .ToListAsync();
+
+            var elementosActivos = await _db.elementoQuimico
+                .Where(x =>
+                    elementosIds.Contains(x.elementoQuimicosId) &&
+                    x.activo == true)
+                .ToListAsync();
+
+            var aportesRegistrados = await _db.fuenteNutrienteElementoQuimico
+                .Where(x =>
+                    fuentesIds.Contains(x.fuenteNutrientesId) &&
+                    elementosIds.Contains(x.elementoQuimicosId) &&
+                    x.activo == true)
+                .ToListAsync();
+
+            foreach (var fuenteItem in dto.fuentes)
             {
-                return BadRequest(new
-                {
-                    mensaje = "El cálculo seleccionado no tiene elementos guardados."
-                });
-            }
-
-            foreach (var item in dto.fuentes)
-            {
-                if (item.fuenteNutrientesId <= 0)
-                {
-                    return BadRequest(new
-                    {
-                        mensaje = "Una fuente nutriente no es válida."
-                    });
-                }
-
-                if (item.cantidadQq <= 0)
-                {
-                    return BadRequest(new
-                    {
-                        mensaje = "La cantidad en quintales debe ser mayor a cero."
-                    });
-                }
-
-                bool fuenteExiste = await _db.fuenteNutriente
-                    .AnyAsync(x =>
-                        x.fuenteNutrientesId == item.fuenteNutrientesId &&
-                        x.activo == true);
+                var fuenteExiste = fuentesActivas.Any(x =>
+                    x.fuenteNutrientesId ==
+                    fuenteItem.fuenteNutrientesId);
 
                 if (!fuenteExiste)
                 {
                     return BadRequest(new
                     {
-                        mensaje = $"La fuente con ID {item.fuenteNutrientesId} no existe o está inactiva."
+                        mensaje =
+                            $"La fuente con ID {fuenteItem.fuenteNutrientesId} no existe o está inactiva."
                     });
                 }
 
-                bool fuenteHabilitada = await _db.fuenteFertilizacionMixta
-                    .AnyAsync(x =>
-                        x.fuenteNutrientesId == item.fuenteNutrientesId &&
-                        x.activo == true);
+                var fuenteHabilitada = fuentesHabilitadas.Any(x =>
+                    x.fuenteNutrientesId ==
+                    fuenteItem.fuenteNutrientesId);
 
                 if (!fuenteHabilitada)
                 {
                     return BadRequest(new
                     {
-                        mensaje = $"La fuente con ID {item.fuenteNutrientesId} no está habilitada para fertilización mixta."
+                        mensaje =
+                            $"La fuente con ID {fuenteItem.fuenteNutrientesId} no está habilitada para fertilización mixta."
                     });
                 }
             }
 
-            var fertilizacion = new FertilizacionMixta
+            foreach (var elementoItem in dto.elementos)
             {
-                analisisSueloCalculoId = dto.analisisSueloCalculoId,
-                fechaCalculo = DateTime.Now,
-                observacion = dto.observacion,
-                activo = true
-            };
+                var elementoExiste = elementosActivos.Any(x =>
+                    x.elementoQuimicosId ==
+                    elementoItem.elementoQuimicosId);
 
-            _db.fertilizacionMixta.Add(fertilizacion);
-            await _db.SaveChangesAsync();
-
-            var fuentesRespuesta = new List<FertilizacionMixtaFuenteRespuestaDto>();
-
-            foreach (var item in dto.fuentes)
-            {
-                var fuente = await _db.fuenteNutriente
-                    .FirstOrDefaultAsync(x =>
-                        x.fuenteNutrientesId == item.fuenteNutrientesId &&
-                        x.activo == true);
-
-                var fuenteUsada = new FertilizacionMixtaFuente
+                if (!elementoExiste)
                 {
-                    fertilizacionMixtaId = fertilizacion.fertilizacionMixtaId,
-                    fuenteNutrientesId = item.fuenteNutrientesId,
-                    cantidadQq = item.cantidadQq,
-                    activo = true
-                };
-
-                _db.fertilizacionMixtaFuente.Add(fuenteUsada);
-
-                fuentesRespuesta.Add(new FertilizacionMixtaFuenteRespuestaDto
-                {
-                    fuenteNutrientesId = item.fuenteNutrientesId,
-                    nombreFuente = fuente?.nombreNutriente ?? "",
-                    cantidadQq = Math.Round(item.cantidadQq, 4)
-                });
+                    return BadRequest(new
+                    {
+                        mensaje =
+                            $"El elemento con ID {elementoItem.elementoQuimicosId} no existe o está inactivo."
+                    });
+                }
             }
 
-            await _db.SaveChangesAsync();
+            var fuentesRespuesta =
+                new List<FertilizacionMixtaFuenteRespuestaDto>();
 
-            var detallesRespuesta = new List<FertilizacionMixtaDetalleRespuestaDto>();
-
-            foreach (var req in requerimientos)
+            foreach (var fuenteItem in dto.fuentes)
             {
-                var rango = await _db.ParametroRangoNutrienteCultivo
-                    .FirstOrDefaultAsync(x =>
-                        x.tipoCultivoId == analisisCalculo.tipoCultivoId &&
-                        x.elementoQuimicosId == req.elementoQuimicosId &&
-                        x.activo == true);
+                var fuente = fuentesActivas.First(x =>
+                    x.fuenteNutrientesId ==
+                    fuenteItem.fuenteNutrientesId);
 
-                if (rango == null)
-                {
-                    return BadRequest(new
+                fuentesRespuesta.Add(
+                    new FertilizacionMixtaFuenteRespuestaDto
                     {
-                        mensaje = $"No existe rango nutricional para el elemento {req.elementoQuimicosId}."
+                        fuenteNutrientesId =
+                            fuenteItem.fuenteNutrientesId,
+
+                        nombreFuente =
+                            fuente.nombreNutriente ?? string.Empty,
+
+                        cantidadQq =
+                            Math.Round(fuenteItem.cantidadQq, 4)
                     });
-                }
+            }
 
-                decimal rangoMaximoLbMz = rango.valorMaximo * 2.2m * 0.7m;
+            var detallesRespuesta =
+                new List<FertilizacionMixtaDetalleRespuestaDto>();
 
-                if (req.requerimientoCalculado == null)
-                {
-                    return BadRequest(new
-                    {
-                        mensaje = $"El elemento {req.elementoQuimicosId} no tiene requerimiento calculado."
-                    });
-                }
-
-                decimal exportable = req.requerimientoCalculado.Value - rangoMaximoLbMz;
-
-                if (exportable < 0)
-                {
-                    exportable = 0;
-                }
+            foreach (var elementoItem in dto.elementos)
+            {
+                var elementoQuimico = elementosActivos.First(x =>
+                    x.elementoQuimicosId ==
+                    elementoItem.elementoQuimicosId);
 
                 decimal aporteOrganico = 0;
 
-                var fuentesDetalle = new List<FertilizacionMixtaFuenteElementoDetalleDto>();
+                var fuentesDetalle =
+                    new List<FertilizacionMixtaFuenteElementoDetalleDto>();
 
                 foreach (var fuenteItem in dto.fuentes)
                 {
-                    var fuente = await _db.fuenteNutriente
-                        .FirstOrDefaultAsync(x =>
-                            x.fuenteNutrientesId == fuenteItem.fuenteNutrientesId &&
-                            x.activo == true);
+                    var fuente = fuentesActivas.First(x =>
+                        x.fuenteNutrientesId ==
+                        fuenteItem.fuenteNutrientesId);
 
-                    var aporteFuente = await _db.fuenteNutrienteElementoQuimico
-                        .FirstOrDefaultAsync(x =>
-                            x.fuenteNutrientesId == fuenteItem.fuenteNutrientesId &&
-                            x.elementoQuimicosId == req.elementoQuimicosId &&
-                            x.activo == true);
+                    var aporteRegistrado =
+                        aportesRegistrados.FirstOrDefault(x =>
+                            x.fuenteNutrientesId ==
+                            fuenteItem.fuenteNutrientesId &&
+                            x.elementoQuimicosId ==
+                            elementoItem.elementoQuimicosId);
 
-                    decimal aportePorUnidad = aporteFuente?.cantidadAporte ?? 0;
+                    decimal aportePorUnidad =
+                        aporteRegistrado?.cantidadAporte ?? 0;
 
-                    decimal aporteTotal = fuenteItem.cantidadQq * aportePorUnidad;
+                    decimal aporteTotal =
+                        fuenteItem.cantidadQq * aportePorUnidad;
 
                     aporteOrganico += aporteTotal;
 
-                    fuentesDetalle.Add(new FertilizacionMixtaFuenteElementoDetalleDto
-                    {
-                        fuenteNutrientesId = fuenteItem.fuenteNutrientesId,
-                        nombreFuente = fuente?.nombreNutriente ?? "",
-                        cantidadQq = Math.Round(fuenteItem.cantidadQq, 4),
-                        aportePorUnidad = Math.Round(aportePorUnidad, 4),
-                        aporteTotal = Math.Round(aporteTotal, 4)
-                    });
+                    fuentesDetalle.Add(
+                        new FertilizacionMixtaFuenteElementoDetalleDto
+                        {
+                            fuenteNutrientesId =
+                                fuenteItem.fuenteNutrientesId,
+
+                            nombreFuente =
+                                fuente.nombreNutriente ?? string.Empty,
+
+                            cantidadQq =
+                                Math.Round(fuenteItem.cantidadQq, 4),
+
+                            aportePorUnidad =
+                                Math.Round(aportePorUnidad, 4),
+
+                            aporteTotal =
+                                Math.Round(aporteTotal, 4)
+                        });
                 }
 
-                decimal diferencia = exportable - aporteOrganico;
-                decimal deficit = diferencia > 0 ? diferencia : 0;
-                decimal sobrante = diferencia < 0 ? diferencia * -1 : 0;
+                decimal exportable = elementoItem.exportable;
 
-                var detalle = new FertilizacionMixtaDetalle
-                {
-                    fertilizacionMixtaId = fertilizacion.fertilizacionMixtaId,
-                    elementoQuimicosId = req.elementoQuimicosId,
+                decimal diferencia =
+                    exportable - aporteOrganico;
 
-                    requerimientoOriginal = Math.Round(exportable, 4),
-                    aporteOrganico = Math.Round(aporteOrganico, 4),
-                    diferencia = Math.Round(diferencia, 4),
-                    deficit = Math.Round(deficit, 4),
-                    sobrante = Math.Round(sobrante, 4),
+                decimal deficit =
+                    diferencia > 0 ? diferencia : 0;
 
-                    activo = true
-                };
+                decimal sobrante =
+                    diferencia < 0
+                        ? Math.Abs(diferencia)
+                        : 0;
 
-                _db.fertilizacionMixtaDetalle.Add(detalle);
+                detallesRespuesta.Add(
+                    new FertilizacionMixtaDetalleRespuestaDto
+                    {
+                        elementoQuimicosId =
+                            elementoItem.elementoQuimicosId,
 
-                detallesRespuesta.Add(new FertilizacionMixtaDetalleRespuestaDto
-                {
-                    elementoQuimicosId = req.elementoQuimicosId,
-                    elemento = req.ElementoQuimico?.simboloElementoQuimico.Trim() ?? "",
+                        elemento =
+                            elementoQuimico.simboloElementoQuimico?
+                                .Trim() ?? string.Empty,
 
-                    exportable = Math.Round(exportable, 4),
-                    aporteOrganico = Math.Round(aporteOrganico, 4),
-                    diferencia = Math.Round(diferencia, 4),
-                    deficit = Math.Round(deficit, 4),
-                    sobrante = Math.Round(sobrante, 4),
+                        exportable =
+                            Math.Round(exportable, 4),
 
-                    fuentes = fuentesDetalle
-                });
+                        aporteOrganico =
+                            Math.Round(aporteOrganico, 4),
+
+                        diferencia =
+                            Math.Round(diferencia, 4),
+
+                        deficit =
+                            Math.Round(deficit, 4),
+
+                        sobrante =
+                            Math.Round(sobrante, 4),
+
+                        fuentes = fuentesDetalle
+                    });
             }
-
-            await _db.SaveChangesAsync();
 
             return Ok(new FertilizacionMixtaRespuestaDto
             {
-                fertilizacionMixtaId = fertilizacion.fertilizacionMixtaId,
-                analisisSueloCalculoId = fertilizacion.analisisSueloCalculoId,
-                fechaCalculo = fertilizacion.fechaCalculo,
-                observacion = fertilizacion.observacion,
+                observacion = dto.observacion ?? string.Empty,
                 fuentes = fuentesRespuesta,
                 detalles = detallesRespuesta
             });

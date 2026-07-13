@@ -2,13 +2,23 @@
 {
     public class FertilizacionMixtaDto
     {
+        // Entrada para SOLO CALCULAR fertilización mixta
         public class FertilizacionMixtaCrearDto
         {
-            public int analisisSueloCalculoId { get; set; }
-
             public string? observacion { get; set; }
 
+            // Exportables recibidos desde el cálculo de requerimiento anual
+            public List<FertilizacionMixtaElementoCrearDto> elementos { get; set; } = new();
+
+            // Puede recibir una sola fuente o varias
             public List<FertilizacionMixtaFuenteCrearDto> fuentes { get; set; } = new();
+        }
+
+        public class FertilizacionMixtaElementoCrearDto
+        {
+            public int elementoQuimicosId { get; set; }
+
+            public decimal exportable { get; set; }
         }
 
         public class FertilizacionMixtaFuenteCrearDto
@@ -18,15 +28,11 @@
             public decimal cantidadQq { get; set; }
         }
 
+        // Respuesta de SOLO CALCULAR
+        // No devuelve IDs porque todavía no se ha guardado nada
         public class FertilizacionMixtaRespuestaDto
         {
-            public int fertilizacionMixtaId { get; set; }
-
-            public int analisisSueloCalculoId { get; set; }
-
-            public DateTime fechaCalculo { get; set; }
-
-            public string? observacion { get; set; }
+            public string observacion { get; set; } = string.Empty;
 
             public List<FertilizacionMixtaFuenteRespuestaDto> fuentes { get; set; } = new();
 
