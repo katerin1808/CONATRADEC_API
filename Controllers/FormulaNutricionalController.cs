@@ -21,7 +21,7 @@ namespace CONATRADEC_API.Controllers
         [HttpPost("calcular")]
         public async Task<IActionResult> Calcular([FromBody] FormulaNutricionalCrearDto dto)
         {
-            await using var trans = await _db.Database.BeginTransactionAsync();
+            
 
             try
             {
@@ -38,6 +38,13 @@ namespace CONATRADEC_API.Controllers
                 int totalPlantasUsadas = dto.totalPlantas.HasValue && dto.totalPlantas.Value > 0
                     ? dto.totalPlantas.Value
                     : terreno.cantidadPlantasTerreno;
+                if (totalPlantasUsadas <= 0)
+                {
+                    return BadRequest(new
+                    {
+                        mensaje = "El total de plantas debe ser mayor a cero."
+                    });
+                }
 
                 if (dto.totalAplicaciones < 1 || dto.totalAplicaciones > 4)
                     return BadRequest(new { mensaje = "El total de aplicaciones debe estar entre 1 y 4." });
@@ -53,7 +60,6 @@ namespace CONATRADEC_API.Controllers
 
                 var totalesFormula = new Dictionary<string, decimal>();
 
-                var detallesGuardar = new List<FormulaNutricionalDetalle>();
                 var detallesRespuesta = new List<FormulaNutricionalDetalleRespuestaDto>();
 
                 foreach (var item in itemsOrdenados)
@@ -101,7 +107,6 @@ namespace CONATRADEC_API.Controllers
                     decimal subtotalFuente = qq * precioPorQuintal;
 
                     var aportesRespuesta = new Dictionary<string, decimal>();
-                    var aportesGuardar = new List<FormulaNutricionalAporte>();
 
                     foreach (var comp in composicionFuente)
                     {
@@ -118,33 +123,9 @@ namespace CONATRADEC_API.Controllers
 
                             totalesFormula[simbolo] += aporte;
 
-                            aportesGuardar.Add(new FormulaNutricionalAporte
-                            {
-                                elementoQuimicosId = comp.elementoQuimicosId,
-                                valor = aporte,
-                                activo = true
-                            });
+
                         }
                     }
-
-
-
-                    var detalle = new FormulaNutricionalDetalle
-                    {
-                        fuenteNutrientesId = item.fuenteNutrientesId,
-                        elementoQuimicosId = item.elementoQuimicosId,
-                        libras = item.libras,
-                        requerimientoLibras = item.libras,
-                        onzasAnuales = onzasAnuales,
-                        onzasPorAplicacion = onzasPorAplicacion,
-                        precioPorQuintal = precioPorQuintal,
-                        subtotalFuente = subtotalFuente,
-                        qq = qq,
-                        activo = true,
-                        aportes = aportesGuardar
-                    };
-
-                    detallesGuardar.Add(detalle);
 
                     detallesRespuesta.Add(new FormulaNutricionalDetalleRespuestaDto
                     {
@@ -166,74 +147,52 @@ namespace CONATRADEC_API.Controllers
                 }
 
                 decimal totalOnzas = totalLibras * 16m;
-                decimal precioTotalFormula = detallesGuardar.Sum(x => x.subtotalFuente);
+                decimal precioTotalFormula = detallesRespuesta.Sum(x => x.subtotalFuente);
                 decimal precioPorAplicacion = precioTotalFormula / dto.totalAplicaciones;
                 decimal dosisPlantaAnualOz = totalOnzas / totalPlantasUsadas;
                 decimal dosisPlantaPorAplicacionOz = dosisPlantaAnualOz / dto.totalAplicaciones;
-                var formula = new FormulaNutricional
-                {
-                    nombreFormula = dto.nombreFormula ?? "",
-                    terrenoId = terreno.terrenoId,
-                    totalPlantas = totalPlantasUsadas,
-                    totalAplicaciones = dto.totalAplicaciones,
-
-                    totalLibras = totalLibras,
-                    mezclaTotalQq = mezclaTotalQq,
-                    totalOnzas = totalOnzas,
-
-                    precioTotalFormula = precioTotalFormula,
-                    precioPorAplicacion = precioPorAplicacion,
-
-                    dosisPlantaAnualOz = dosisPlantaAnualOz,
-                    dosisPlantaPorAplicacionOz = dosisPlantaPorAplicacionOz,
-
-                    activo = true
-                };
-
-                _db.formulaNutricional.Add(formula);
-                await _db.SaveChangesAsync();
-
-                foreach (var d in detallesGuardar)
-                {
-                    d.formulaNutricionalId = formula.formulaNutricionalId;
-                }
-
-                _db.formulaNutricionalDetalle.AddRange(detallesGuardar);
-                await _db.SaveChangesAsync();
-
-                await trans.CommitAsync();
-
                 var response = new FormulaNutricionalRespuestaDto
                 {
-                    formulaNutricionalId = formula.formulaNutricionalId,
-                    nombreFormula = formula.nombreFormula,
-                    totalLibras = Math.Round(formula.totalLibras, 4),
-                    mezclaTotalQq = Math.Round(formula.mezclaTotalQq, 4),
+                    nombreFormula = dto.nombreFormula ?? string.Empty,
+
+                    totalLibras = Math.Round(totalLibras, 4),
+
+                    mezclaTotalQq = Math.Round(mezclaTotalQq, 4),
+
                     formulaComercial = totalesFormula
-                  .Where(x => x.Value > 0)
-                   .Select(x => new
-                     {
-                   Elemento = x.Key,
-                  Valor = Math.Round(x.Value / mezclaTotalQq, 4)
-                     })
-                 .OrderBy(x => OrdenElemento(x.Elemento))
-                  .ToDictionary(x => x.Elemento, x => x.Valor),
-                    totalPlantas = formula.totalPlantas,
-                    totalAplicaciones = formula.totalAplicaciones,
-                    totalOnzas = Math.Round(formula.totalOnzas, 4),
-                    precioTotalFormula = Math.Round(formula.precioTotalFormula, 4),
-                    precioPorAplicacion = Math.Round(formula.precioPorAplicacion, 4),
-                    dosisPlantaAnualOz = Math.Round(formula.dosisPlantaAnualOz, 4),
-                    dosisPlantaPorAplicacionOz = Math.Round(formula.dosisPlantaPorAplicacionOz, 4),
-                  
+         .Where(x => x.Value > 0)
+         .Select(x => new
+         {
+             Elemento = x.Key,
+             Valor = Math.Round(x.Value / mezclaTotalQq, 4)
+         })
+         .OrderBy(x => OrdenElemento(x.Elemento))
+         .ToDictionary(x => x.Elemento, x => x.Valor),
+
+                    totalPlantas = totalPlantasUsadas,
+
+                    totalAplicaciones = dto.totalAplicaciones,
+
+                    totalOnzas = Math.Round(totalOnzas, 4),
+
+                    precioTotalFormula = Math.Round(precioTotalFormula, 4),
+
+                    precioPorAplicacion = Math.Round(precioPorAplicacion, 4),
+
+                    dosisPlantaAnualOz = Math.Round(dosisPlantaAnualOz, 4),
+
+                    dosisPlantaPorAplicacionOz =
+         Math.Round(dosisPlantaPorAplicacionOz, 4),
+
                     detalle = detallesRespuesta
                 };
 
                 return Ok(response);
+
+              
             }
             catch (Exception ex)
             {
-                await trans.RollbackAsync();
 
                 return StatusCode(500, new
                 {

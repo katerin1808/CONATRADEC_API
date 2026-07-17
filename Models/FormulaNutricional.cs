@@ -44,6 +44,11 @@ namespace CONATRADEC_API.Models
           [ForeignKey(nameof(terrenoId))]
            public Terreno? terreno { get; set; }
 
+        public int? analisisSueloCalculoId { get; set; }
+
+        [ForeignKey(nameof(analisisSueloCalculoId))]
+        public AnalisisSueloCalculo? analisisSueloCalculo { get; set; }
+
 
         public ICollection<FormulaNutricionalDetalle>? detalles { get; set; }
         

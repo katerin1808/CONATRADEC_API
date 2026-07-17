@@ -19,33 +19,90 @@ namespace CONATRADEC_API.Controllers
         }
 
         [HttpPost("calcular")]
-        public async Task<IActionResult> Calcular([FromBody] EnmiendaCalcareaCrearDto dto)
+        public async Task<IActionResult> Calcular(
+       [FromBody] EnmiendaCalcareaCrearDto dto)
         {
             try
             {
                 if (string.IsNullOrWhiteSpace(dto.nombreAnalisis))
-                    return BadRequest(new { mensaje = "El nombre del análisis es obligatorio." });
+                {
+                    return BadRequest(new
+                    {
+                        mensaje = "El nombre del análisis es obligatorio."
+                    });
+                }
 
                 if (dto.fuenteNutrientesId <= 0)
-                    return BadRequest(new { mensaje = "Debe seleccionar una fuente nutriente válida." });
+                {
+                    return BadRequest(new
+                    {
+                        mensaje = "Debe seleccionar una fuente nutriente válida."
+                    });
+                }
 
-                if (dto.ca < 0 || dto.mg < 0 || dto.k < 0 || dto.acidezTotal < 0)
-                    return BadRequest(new { mensaje = "Los valores de Ca, Mg, K y acidez total no pueden ser negativos." });
+                if (dto.terrenoId <= 0)
+                {
+                    return BadRequest(new
+                    {
+                        mensaje = "Debe seleccionar un terreno válido."
+                    });
+                }
 
-                var fuente = await _db.fuenteNutriente
-                    .FirstOrDefaultAsync(x => x.fuenteNutrientesId == dto.fuenteNutrientesId && x.activo);
+                if (dto.ph < 0 || dto.ph > 14)
+                {
+                    return BadRequest(new
+                    {
+                        mensaje = "El pH debe estar entre 0 y 14."
+                    });
+                }
 
-                if (fuente == null)
-                    return BadRequest(new { mensaje = "La fuente nutriente no existe o está inactiva." });
-
-                var terreno = await _db.Terreno
-                   .FirstOrDefaultAsync(x => x.terrenoId == dto.terrenoId && x.activo);
-
-                if (terreno == null)
-                    return BadRequest(new { mensaje = "El terreno no existe." });
+                if (dto.ca < 0 ||
+                    dto.mg < 0 ||
+                    dto.k < 0 ||
+                    dto.acidezTotal < 0)
+                {
+                    return BadRequest(new
+                    {
+                        mensaje =
+                            "Los valores de Ca, Mg, K y acidez total no pueden ser negativos."
+                    });
+                }
 
                 if (dto.totalAplicaciones <= 0)
-                    return BadRequest(new { mensaje = "El total de aplicaciones debe ser mayor a cero." });
+                {
+                    return BadRequest(new
+                    {
+                        mensaje =
+                            "El total de aplicaciones debe ser mayor a cero."
+                    });
+                }
+
+                var fuente = await _db.fuenteNutriente
+                    .FirstOrDefaultAsync(x =>
+                        x.fuenteNutrientesId == dto.fuenteNutrientesId &&
+                        x.activo);
+
+                if (fuente == null)
+                {
+                    return BadRequest(new
+                    {
+                        mensaje =
+                            "La fuente nutriente no existe o está inactiva."
+                    });
+                }
+
+                var terreno = await _db.Terreno
+                    .FirstOrDefaultAsync(x =>
+                        x.terrenoId == dto.terrenoId &&
+                        x.activo);
+
+                if (terreno == null)
+                {
+                    return BadRequest(new
+                    {
+                        mensaje = "El terreno no existe o está inactivo."
+                    });
+                }
 
                 var parametro = await _db.ParametroEnmiendaCalcarea
                     .FirstOrDefaultAsync(x =>
@@ -53,49 +110,108 @@ namespace CONATRADEC_API.Controllers
                         x.activo);
 
                 if (parametro == null)
+                {
                     return BadRequest(new
                     {
-                        mensaje = "No existe un parámetro activo de enmienda calcárea para esta fuente."
+                        mensaje =
+                            "No existe un parámetro activo de enmienda calcárea para esta fuente."
                     });
+                }
 
-                decimal sumaBases = dto.ca + dto.mg + dto.k;
-                decimal cice = sumaBases + dto.acidezTotal;
+                if (parametro.prnt <= 0)
+                {
+                    return BadRequest(new
+                    {
+                        mensaje =
+                            "El PRNT configurado para la fuente debe ser mayor a cero."
+                    });
+                }
 
-                if (cice <= 0)
-                    return BadRequest(new { mensaje = "La CICE debe ser mayor a cero." });
+                if (parametro.factorTonHaAKgHa <= 0 ||
+                    parametro.factorTonHaALbHa <= 0 ||
+                    parametro.factorHaAMz <= 0)
+                {
+                    return BadRequest(new
+                    {
+                        mensaje =
+                            "Los factores de conversión de la enmienda calcárea no son válidos."
+                    });
+                }
 
-                decimal saturacionActual = (sumaBases / cice) * 100m;
-
-                decimal diferenciaSaturacion = parametro.saturacionBasesDeseada - saturacionActual;
-
-                if (diferenciaSaturacion < 0)
-                    diferenciaSaturacion = 0;
-
-                decimal necesidadTonHa =
-                    (diferenciaSaturacion * cice) / parametro.prnt;
-
-                decimal necesidadKgHa =
-                    necesidadTonHa * parametro.factorTonHaAKgHa;
-
-                decimal necesidadLbHa =
-                    necesidadTonHa * parametro.factorTonHaALbHa;
-
-                int totalPlantas = dto.totalPlantas.HasValue && dto.totalPlantas.Value > 0
-                 ? dto.totalPlantas.Value
-    :            terreno.cantidadPlantasTerreno;
+                int totalPlantas =
+                    dto.totalPlantas.HasValue &&
+                    dto.totalPlantas.Value > 0
+                        ? dto.totalPlantas.Value
+                        : terreno.cantidadPlantasTerreno;
 
                 if (totalPlantas <= 0)
-                    return BadRequest(new { mensaje = "Debe ingresar la cantidad de plantas o configurar la cantidad en el terreno." });
-
-                decimal necesidadLbMz = necesidadLbHa * parametro.factorHaAMz;
-                decimal necesidadOzMz = necesidadLbMz * 16m;
-                decimal dosisPlantaAnualOz = necesidadOzMz / totalPlantas;
-                decimal dosisPlantaPorAplicacionOz = dosisPlantaAnualOz / dto.totalAplicaciones;
-
-                var entity = new EnmiendaCalcarea
                 {
-                    nombreAnalisis = dto.nombreAnalisis.Trim(),
-                    fuenteNutrientesId = dto.fuenteNutrientesId,
+                    return BadRequest(new
+                    {
+                        mensaje =
+                            "Debe ingresar la cantidad de plantas o configurar la cantidad en el terreno."
+                    });
+                }
+
+                decimal sumaBases =
+                    dto.ca + dto.mg + dto.k;
+
+                decimal cice =
+                    sumaBases + dto.acidezTotal;
+
+                if (cice <= 0)
+                {
+                    return BadRequest(new
+                    {
+                        mensaje = "La CICE debe ser mayor a cero."
+                    });
+                }
+
+                decimal saturacionActual =
+                    (sumaBases / cice) * 100m;
+
+                decimal diferenciaSaturacion =
+                    parametro.saturacionBasesDeseada -
+                    saturacionActual;
+
+                if (diferenciaSaturacion < 0)
+                {
+                    diferenciaSaturacion = 0;
+                }
+
+                decimal necesidadTonHa =
+                    (diferenciaSaturacion * cice) /
+                    parametro.prnt;
+
+                decimal necesidadKgHa =
+                    necesidadTonHa *
+                    parametro.factorTonHaAKgHa;
+
+                decimal necesidadLbHa =
+                    necesidadTonHa *
+                    parametro.factorTonHaALbHa;
+
+                decimal necesidadLbMz =
+                    necesidadLbHa *
+                    parametro.factorHaAMz;
+
+                decimal necesidadOzMz =
+                    necesidadLbMz * 16m;
+
+                decimal dosisPlantaAnualOz =
+                    necesidadOzMz / totalPlantas;
+
+                decimal dosisPlantaPorAplicacionOz =
+                    dosisPlantaAnualOz /
+                    dto.totalAplicaciones;
+
+                var response = new EnmiendaCalcareaRespuestaDto
+                {
+                    nombreAnalisis =
+                        dto.nombreAnalisis.Trim(),
+
+                    fuenteNutriente =
+                        fuente.nombreNutriente ?? string.Empty,
 
                     ph = dto.ph,
                     ca = dto.ca,
@@ -103,69 +219,66 @@ namespace CONATRADEC_API.Controllers
                     k = dto.k,
                     acidezTotal = dto.acidezTotal,
 
-                    saturacionDeseada = parametro.saturacionBasesDeseada,
+                    saturacionDeseada =
+                        parametro.saturacionBasesDeseada,
+
                     prnt = parametro.prnt,
 
-                    sumaBases = sumaBases,
-                    cice = cice,
-                    saturacionActual = saturacionActual,
+                    sumaBases =
+                        Math.Round(sumaBases, 4),
+
+                    cice =
+                        Math.Round(cice, 4),
+
+                    saturacionActual =
+                        Math.Round(saturacionActual, 4),
+
+                    necesidadEncaladoTonHa =
+                        Math.Round(necesidadTonHa, 4),
+
+                    necesidadEncaladoKgHa =
+                        Math.Round(necesidadKgHa, 4),
+
+                    necesidadEncaladoLbHa =
+                        Math.Round(necesidadLbHa, 4),
+
                     terrenoId = dto.terrenoId,
+
                     totalPlantas = totalPlantas,
-                    totalAplicaciones = dto.totalAplicaciones,
 
-                    necesidadEncaladoLbMz = necesidadLbMz,
-                    necesidadEncaladoOzMz = necesidadOzMz,
-                    dosisPlantaAnualOz = dosisPlantaAnualOz,
-                    dosisPlantaPorAplicacionOz = dosisPlantaPorAplicacionOz,
+                    totalAplicaciones =
+                        dto.totalAplicaciones,
 
-                    necesidadEncaladoTonHa = necesidadTonHa,
-                    necesidadEncaladoKgHa = necesidadKgHa,
-                    necesidadEncaladoLbHa = necesidadLbHa,
+                    necesidadEncaladoLbMz =
+                        Math.Round(necesidadLbMz, 4),
 
-                    activo = true
+                    necesidadEncaladoOzMz =
+                        Math.Round(necesidadOzMz, 4),
+
+                    dosisPlantaAnualOz =
+                        Math.Round(dosisPlantaAnualOz, 4),
+
+                    dosisPlantaPorAplicacionOz =
+                        Math.Round(
+                            dosisPlantaPorAplicacionOz,
+                            4)
                 };
 
-                _db.enmiendaCalcarea.Add(entity);
-                await _db.SaveChangesAsync();
-
-                return Ok(new EnmiendaCalcareaRespuestaDto
-                {
-                    enmiendaCalcareaId = entity.enmiendaCalcareaId,
-                    nombreAnalisis = entity.nombreAnalisis,
-                    fuenteNutriente = fuente.nombreNutriente,
-
-                    ph = entity.ph,
-                    ca = entity.ca,
-                    mg = entity.mg,
-                    k = entity.k,
-                    acidezTotal = entity.acidezTotal,
-
-                    saturacionDeseada = entity.saturacionDeseada,
-                    prnt = entity.prnt,
-
-                    sumaBases = Math.Round(entity.sumaBases, 4),
-                    cice = Math.Round(entity.cice, 4),
-                    saturacionActual = Math.Round(entity.saturacionActual, 4),
-
-                    necesidadEncaladoTonHa = Math.Round(entity.necesidadEncaladoTonHa, 4),
-                    necesidadEncaladoKgHa = Math.Round(entity.necesidadEncaladoKgHa, 4),
-                    necesidadEncaladoLbHa = Math.Round(entity.necesidadEncaladoLbHa, 4),
-                    terrenoId = dto.terrenoId,
-                    totalPlantas = totalPlantas,
-                    totalAplicaciones = dto.totalAplicaciones,
-
-                    necesidadEncaladoLbMz = Math.Round(entity.necesidadEncaladoLbMz, 4),
-                    necesidadEncaladoOzMz = Math.Round(entity.necesidadEncaladoOzMz, 4),
-                    dosisPlantaAnualOz = Math.Round(entity.dosisPlantaAnualOz, 4),
-                    dosisPlantaPorAplicacionOz = Math.Round(entity.dosisPlantaPorAplicacionOz, 4),
-                });
+                return Ok(response);
             }
             catch (Exception ex)
             {
                 return StatusCode(500, new
                 {
-                    mensaje = "Error al calcular la enmienda calcárea.",
-                    detalle = ex.Message
+                    mensaje =
+                        "Error al calcular la enmienda calcárea.",
+
+                    detalle =
+                        ex.Message,
+
+                    inner =
+                        ex.InnerException?.Message ??
+                        string.Empty
                 });
             }
         }

@@ -23,7 +23,7 @@
 
         public class FormulaNutricionalRespuestaDto
         {
-            public int formulaNutricionalId { get; set; }
+           
             public string? nombreFormula { get; set; }
             public decimal totalLibras { get; set; }
             public decimal mezclaTotalQq { get; set; }
