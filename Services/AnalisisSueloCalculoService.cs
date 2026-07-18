@@ -202,8 +202,12 @@ namespace CONATRADEC_API.Services
                 response.observaciones.Add("No se calcularon elementos químicos válidos.");
             }
 
-            response.observaciones.Add(InterpretarPhCafe(dto.ph));
-
+            if (dto.ph > 0)
+            {
+                response.observaciones.Add(
+                    InterpretarPhCafe(dto.ph)
+                );
+            }
             return response;
         }
 
@@ -399,7 +403,7 @@ namespace CONATRADEC_API.Services
             if (dto.materiaOrganica <= 0)
                 throw new Exception("La materia orgánica debe ser mayor a cero y debe ingresarse en porcentaje. Ejemplo: 2 para 2%.");
 
-            if (dto.ph <= 0 || dto.ph > 14)
+            if (dto.ph < 0 || dto.ph > 14)
                 throw new Exception("El pH debe estar entre 0 y 14.");
 
             if (dto.elementosQuimicos == null || !dto.elementosQuimicos.Any())

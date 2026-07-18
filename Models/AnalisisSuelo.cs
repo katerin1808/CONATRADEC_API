@@ -21,6 +21,7 @@ public class AnalisisSuelo
 
     public bool activo { get; set; } = true;
 
+   
     // 🔗 Relación con elementos químicos
     public ICollection<AnalisisSueloElementoQuimico> Elementos { get; set; } = new List<AnalisisSueloElementoQuimico>();
 }

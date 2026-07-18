@@ -29,7 +29,7 @@ namespace CONATRADEC_API.DTOs
 
         public int unidadMedidaMateriaOrganicaId { get; set; }
 
-        public decimal? acidezTotal { get; set; }
+        public decimal acidezTotal { get; set; }
 
         [Required]
         [MinLength(1, ErrorMessage = "Debe ingresar al menos un elemento químico.")]
@@ -79,7 +79,7 @@ namespace CONATRADEC_API.DTOs
         public decimal tamanoFinca { get; set; }
 
         public decimal ph { get; set; }
-        public decimal? acidezTotal { get; set; }
+        public decimal acidezTotal { get; set; }
 
         public decimal materiaOrganica { get; set; }
 

@@ -47,6 +47,8 @@ namespace CONATRADEC_API.Models
         public int? municipioId { get; set; }
         public Municipio? Municipio { get; set; }
 
+      
+
 
 
         /// <summary>

@@ -144,12 +144,7 @@ namespace CONATRADEC_API.Controllers
                                 resultadoAnual.materiaOrganica,
                                 4),
 
-                        acidezTotal =
-                            resultadoAnual.acidezTotal.HasValue
-                                ? Math.Round(
-                                    resultadoAnual.acidezTotal.Value,
-                                    4)
-                                : 0,
+                        acidezTotal =Math.Round(resultadoAnual.acidezTotal, 4),
 
                         recomendacionGeneral =
                             resultadoAnual.recomendacionGeneral ??
@@ -846,6 +841,149 @@ namespace CONATRADEC_API.Controllers
             });
         }
 
+
+        [HttpGet("listar usuario")]
+        public async Task<IActionResult> Listar([FromQuery] int? usuarioId = null)
+        {
+            var query = _db.AnalisisSuelos
+                .AsNoTracking()
+                .Where(a => a.activo);
+
+            // Si envían usuarioId, solo muestra los análisis realizados por ese usuario.
+            // Si no envían usuarioId, muestra todos.
+            if (usuarioId.HasValue)
+            {
+                query = query.Where(a =>
+                    _db.AnalisisSueloCalculos.Any(c =>
+                        c.analisisSueloId == a.analisisSueloId &&
+                        c.usuarioId == usuarioId.Value &&
+                        c.activo));
+            }
+
+            var analisisLista = await query
+                .OrderByDescending(a => a.analisisSueloId)
+                .ToListAsync();
+
+            var respuesta = new List<object>();
+
+            foreach (var analisis in analisisLista)
+            {
+                var calculo = await _db.AnalisisSueloCalculos
+                    .AsNoTracking()
+                    .Where(c =>
+                        c.analisisSueloId == analisis.analisisSueloId &&
+                        c.activo)
+                    .OrderByDescending(c => c.fechaCalculo)
+                    .FirstOrDefaultAsync();
+
+                object? terrenoResumen = null;
+                object? tipoCultivoResumen = null;
+                object? tipoAnalisisResumen = null;
+
+                if (calculo != null)
+                {
+                    var terreno = await _db.Terreno
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(t =>
+                            t.terrenoId == calculo.terrenoId);
+
+                    if (terreno != null)
+                    {
+                        terrenoResumen = new
+                        {
+                            terreno.terrenoId,
+                            terreno.codigoTerreno,
+                            terreno.nombrePropietarioTerreno,
+                            terreno.extensionManzanaTerreno,
+                            terreno.cantidadQuintalesOro
+                        };
+                    }
+
+                    var tipoCultivo = await _db.TipoCultivos
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(t =>
+                            t.tipoCultivoId == calculo.tipoCultivoId);
+
+                    if (tipoCultivo != null)
+                    {
+                        tipoCultivoResumen = new
+                        {
+                            tipoCultivo.tipoCultivoId,
+                            tipoCultivo.nombreTipoCultivo
+                        };
+                    }
+
+                    var tipoAnalisis = await _db.TipoAnalisisSuelos
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(t =>
+                            t.tipoAnalisisSueloId ==
+                            calculo.tipoAnalisisSueloId);
+
+                    if (tipoAnalisis != null)
+                    {
+                        tipoAnalisisResumen = new
+                        {
+                            tipoAnalisis.tipoAnalisisSueloId,
+                            tipoAnalisis.nombreTipoAnalisisSuelo
+                        };
+                    }
+                }
+
+                var totalElementosIngresados =
+                    await _db.AnalisisSueloElementos
+                        .AsNoTracking()
+                        .CountAsync(e =>
+                            e.analisisSueloId ==
+                            analisis.analisisSueloId &&
+                            e.activo);
+
+                var totalElementosCalculados = calculo == null
+                    ? 0
+                    : await _db.AnalisisSueloCalculoElementoQuimicos
+                        .AsNoTracking()
+                        .CountAsync(e =>
+                            e.analisisSueloCalculoId ==
+                            calculo.analisisSueloCalculoId &&
+                            e.activo);
+
+                respuesta.Add(new
+                {
+                    analisis.analisisSueloId,
+                    analisis.fechaAnalisisSuelo,
+                    analisis.laboratorioAnalasisSuelo,
+                    analisis.identificadorAnalisisSuelo,
+                    analisis.activo,
+
+                    terreno = terrenoResumen,
+                    tipoCultivo = tipoCultivoResumen,
+                    tipoAnalisisSuelo = tipoAnalisisResumen,
+
+                    calculo = calculo == null
+                        ? null
+                        : new
+                        {
+                            calculo.analisisSueloCalculoId,
+                            calculo.cantidadQuintalesOro,
+                            calculo.tamanoFinca,
+                            calculo.phAnalisisSuelo,
+                            calculo.acidezTotal,
+                            calculo.recomendacionGeneral,
+                            calculo.fechaCalculo,
+                            calculo.usuarioId
+                        },
+
+                    totalElementosIngresados,
+                    totalElementosCalculados
+                });
+            }
+
+            return Ok(new
+            {
+                success = true,
+                message = "Listado de análisis de suelo obtenido correctamente.",
+                data = respuesta
+            });
+        }
         // =========================================================
         // OBTENER DETALLE COMPLETO
         // =========================================================
@@ -1208,9 +1346,7 @@ namespace CONATRADEC_API.Controllers
                 calculo.materiaOrganica = Math.Round(
                     resultadoAnual.materiaOrganica,
                     4);
-                calculo.acidezTotal = resultadoAnual.acidezTotal.HasValue
-                    ? Math.Round(resultadoAnual.acidezTotal.Value, 4)
-                    : 0;
+                calculo.acidezTotal =Math.Round(resultadoAnual.acidezTotal, 4);
                 calculo.recomendacionGeneral =
                     resultadoAnual.recomendacionGeneral ?? string.Empty;
                 calculo.observacion = string.Join(
