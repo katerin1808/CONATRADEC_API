@@ -11,13 +11,13 @@ namespace CONATRADEC_API.DTOs
         public AnalisisSueloCalculoResponseDto requerimientoAnual { get; set; }
             = new();
 
-        public FormulaNutricionalGuardarDto balanceNutricional { get; set; }
+        public FormulaNutricionalGuardarDto? balanceNutricional { get; set; }
             = new();
 
-        public EnmiendaCalcareaGuardarDto enmiendaCalcarea { get; set; }
+        public EnmiendaCalcareaGuardarDto? enmiendaCalcarea { get; set; }
             = new();
 
-        public FertilizacionMixtaRespuestaDto fertilizacionMixta { get; set; }
+        public FertilizacionMixtaRespuestaDto? fertilizacionMixta { get; set; }
             = new();
     }
 
@@ -55,10 +55,11 @@ namespace CONATRADEC_API.DTOs
 
         public int analisisSueloCalculoId { get; set; }
 
-        public int formulaNutricionalId { get; set; }
+        public int? formulaNutricionalId { get; set; }
 
-        public int enmiendaCalcareaId { get; set; }
+        public int? enmiendaCalcareaId { get; set; }
 
-        public int fertilizacionMixtaId { get; set; }
+        public int? fertilizacionMixtaId { get; set; }
     }
 }
+
