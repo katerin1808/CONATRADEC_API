@@ -1617,104 +1617,247 @@ namespace CONATRADEC_API.Controllers
                 });
             }
         }
-        // =========================================================
-        // ELIMINACIÓN LÓGICA DEL REGISTRO COMPLETO
-        // =========================================================
-        [HttpDelete("eliminar/{id:int}")]
-        public async Task<IActionResult> Eliminar(int id)
+        [HttpDelete("{analisisSueloId:int}")]
+        public async Task<IActionResult> Eliminar(int analisisSueloId)
         {
-            await using var transaccion = await _db.Database.BeginTransactionAsync();
+            await using var transaction =
+                await _db.Database.BeginTransactionAsync();
 
             try
             {
-                var calculo = await _db.AnalisisSueloCalculos
+                // =====================================================
+                // 1. ANÁLISIS PRINCIPAL
+                // =====================================================
+                var analisis = await _db.AnalisisSuelos
                     .FirstOrDefaultAsync(x =>
-                        x.analisisSueloCalculoId == id && x.activo);
+                        x.analisisSueloId == analisisSueloId);
 
-                if (calculo == null)
+                if (analisis == null)
                 {
-                    await transaccion.RollbackAsync();
                     return NotFound(new
                     {
                         success = false,
-                        message = "No se encontró el análisis solicitado."
+                        message = "No se encontró el análisis de suelo."
                     });
                 }
 
-                calculo.activo = false;
+                if (!analisis.activo)
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        message = "El análisis ya se encuentra eliminado."
+                    });
+                }
 
-                var elementosCalculados = await _db.AnalisisSueloCalculoElementoQuimicos
-                    .Where(x => x.analisisSueloCalculoId == id && x.activo)
-                    .ToListAsync();
-                elementosCalculados.ForEach(x => x.activo = false);
+                analisis.activo = false;
 
-                var analisis = await _db.AnalisisSuelos
-                    .FirstOrDefaultAsync(x => x.analisisSueloId == calculo.analisisSueloId);
-                if (analisis != null)
-                    analisis.activo = false;
+                // =====================================================
+                // 2. ELEMENTOS QUÍMICOS DEL ANÁLISIS
+                // =====================================================
+                var elementosAnalisis =
+                    await _db.AnalisisSueloElementos
+                        .Where(x =>
+                            x.analisisSueloId == analisisSueloId)
+                        .ToListAsync();
 
-                var elementosOriginales = await _db.AnalisisSueloElementos
-                    .Where(x => x.analisisSueloId == calculo.analisisSueloId && x.activo)
-                    .ToListAsync();
-                elementosOriginales.ForEach(x => x.activo = false);
+                foreach (var elemento in elementosAnalisis)
+                {
+                    elemento.activo = false;
+                }
 
-                var formulas = await _db.formulaNutricional
-                    .Where(x => x.analisisSueloCalculoId == id && x.activo)
-                    .ToListAsync();
-                formulas.ForEach(x => x.activo = false);
+                // =====================================================
+                // 3. CÁLCULOS RELACIONADOS
+                // Importante: se buscan por analisisSueloId
+                // =====================================================
+                var calculos =
+                    await _db.AnalisisSueloCalculos
+                        .Where(x =>
+                            x.analisisSueloId == analisisSueloId)
+                        .ToListAsync();
 
-                var formulaIds = formulas.Select(x => x.formulaNutricionalId).ToList();
-                var detallesFormula = await _db.formulaNutricionalDetalle
-                    .Where(x => formulaIds.Contains(x.formulaNutricionalId) && x.activo)
-                    .ToListAsync();
-                detallesFormula.ForEach(x => x.activo = false);
+                foreach (var calculo in calculos)
+                {
+                    calculo.activo = false;
+                }
 
-                var detalleFormulaIds = detallesFormula
-                    .Select(x => x.formulaNutricionalDetalleId).ToList();
-                var aportes = await _db.formulaNutricionalAporte
-                    .Where(x => detalleFormulaIds.Contains(x.formulaNutricionalDetalleId) && x.activo)
-                    .ToListAsync();
-                aportes.ForEach(x => x.activo = false);
+                var calculoIds = calculos
+                    .Select(x => x.analisisSueloCalculoId)
+                    .ToList();
 
-                var enmiendas = await _db.enmiendaCalcarea
-                    .Where(x => x.analisisSueloCalculoId == id && x.activo)
-                    .ToListAsync();
-                enmiendas.ForEach(x => x.activo = false);
+                // Si el análisis no tiene cálculos, se guarda al menos
+                // la eliminación lógica del análisis principal.
+                if (calculoIds.Count > 0)
+                {
+                    // =================================================
+                    // 4. ELEMENTOS QUÍMICOS DE LOS CÁLCULOS
+                    // =================================================
+                    var elementosCalculo =
+                        await _db.AnalisisSueloCalculoElementoQuimicos
+                            .Where(x =>
+                                calculoIds.Contains(
+                                    x.analisisSueloCalculoId))
+                            .ToListAsync();
 
-                var mixtas = await _db.fertilizacionMixta
-                    .Where(x => x.analisisSueloCalculoId == id && x.activo)
-                    .ToListAsync();
-                mixtas.ForEach(x => x.activo = false);
+                    foreach (var elemento in elementosCalculo)
+                    {
+                        elemento.activo = false;
+                    }
 
-                var mixtaIds = mixtas.Select(x => x.fertilizacionMixtaId).ToList();
-                var fuentesMixtas = await _db.fertilizacionMixtaFuente
-                    .Where(x => mixtaIds.Contains(x.fertilizacionMixtaId) && x.activo)
-                    .ToListAsync();
-                fuentesMixtas.ForEach(x => x.activo = false);
+                    // =================================================
+                    // 5. FÓRMULAS NUTRICIONALES
+                    // =================================================
+                    var formulas =
+                        await _db.formulaNutricional
+                            .Where(x =>
+                                x.analisisSueloCalculoId.HasValue &&
+                                calculoIds.Contains(
+                                    x.analisisSueloCalculoId.Value))
+                            .ToListAsync();
 
-                var detallesMixtos = await _db.fertilizacionMixtaDetalle
-                    .Where(x => mixtaIds.Contains(x.fertilizacionMixtaId) && x.activo)
-                    .ToListAsync();
-                detallesMixtos.ForEach(x => x.activo = false);
+                    foreach (var formula in formulas)
+                    {
+                        formula.activo = false;
+                    }
+
+                    var formulaIds = formulas
+                        .Select(x => x.formulaNutricionalId)
+                        .ToList();
+
+                    if (formulaIds.Count > 0)
+                    {
+                        // =============================================
+                        // 6. DETALLES DE FÓRMULA
+                        // =============================================
+                        var detallesFormula =
+                            await _db.formulaNutricionalDetalle
+                                .Where(x =>
+                                    formulaIds.Contains(
+                                        x.formulaNutricionalId))
+                                .ToListAsync();
+
+                        foreach (var detalle in detallesFormula)
+                        {
+                            detalle.activo = false;
+                        }
+
+                        var detalleFormulaIds = detallesFormula
+                            .Select(x =>
+                                x.formulaNutricionalDetalleId)
+                            .ToList();
+
+                        if (detalleFormulaIds.Count > 0)
+                        {
+                            // =========================================
+                            // 7. APORTES DE FÓRMULA
+                            // =========================================
+                            var aportesFormula =
+                                await _db.formulaNutricionalAporte
+                                    .Where(x =>
+                                        detalleFormulaIds.Contains(
+                                            x.formulaNutricionalDetalleId))
+                                    .ToListAsync();
+
+                            foreach (var aporte in aportesFormula)
+                            {
+                                aporte.activo = false;
+                            }
+                        }
+                    }
+
+                    // =================================================
+                    // 8. ENMIENDAS CALCÁREAS
+                    // =================================================
+                    var enmiendas =
+                        await _db.enmiendaCalcarea
+                            .Where(x =>
+                                x.analisisSueloCalculoId.HasValue &&
+                                calculoIds.Contains(
+                                    x.analisisSueloCalculoId.Value))
+                            .ToListAsync();
+
+                    foreach (var enmienda in enmiendas)
+                    {
+                        enmienda.activo = false;
+                    }
+
+                    // =================================================
+                    // 9. FERTILIZACIONES MIXTAS
+                    // =================================================
+                    var fertilizacionesMixtas =
+                        await _db.fertilizacionMixta
+                            .Where(x =>
+                                calculoIds.Contains(
+                                    x.analisisSueloCalculoId))
+                            .ToListAsync();
+
+                    foreach (var fertilizacion in fertilizacionesMixtas)
+                    {
+                        fertilizacion.activo = false;
+                    }
+
+                    var fertilizacionMixtaIds =
+                        fertilizacionesMixtas
+                            .Select(x => x.fertilizacionMixtaId)
+                            .ToList();
+
+                    if (fertilizacionMixtaIds.Count > 0)
+                    {
+                        // =============================================
+                        // 10. FUENTES DE FERTILIZACIÓN MIXTA
+                        // =============================================
+                        var fuentesMixtas =
+                            await _db.fertilizacionMixtaFuente
+                                .Where(x =>
+                                    fertilizacionMixtaIds.Contains(
+                                        x.fertilizacionMixtaId))
+                                .ToListAsync();
+
+                        foreach (var fuente in fuentesMixtas)
+                        {
+                            fuente.activo = false;
+                        }
+
+                        // =============================================
+                        // 11. DETALLES DE FERTILIZACIÓN MIXTA
+                        // =============================================
+                        var detallesMixtos =
+                            await _db.fertilizacionMixtaDetalle
+                                .Where(x =>
+                                    fertilizacionMixtaIds.Contains(
+                                        x.fertilizacionMixtaId))
+                                .ToListAsync();
+
+                        foreach (var detalle in detallesMixtos)
+                        {
+                            detalle.activo = false;
+                        }
+                    }
+                }
 
                 await _db.SaveChangesAsync();
-                await transaccion.CommitAsync();
+                await transaction.CommitAsync();
 
                 return Ok(new
                 {
                     success = true,
-                    message = "El análisis y todos sus registros relacionados fueron eliminados correctamente."
+                    message =
+                        "El análisis y todas sus relaciones fueron eliminados correctamente.",
+                    analisisSueloId,
+                    calculosDesactivados = calculos.Count
                 });
             }
             catch (Exception ex)
             {
-                await transaccion.RollbackAsync();
-                return StatusCode(500, new
+                await transaction.RollbackAsync();
+
+                return StatusCode(StatusCodes.Status500InternalServerError, new
                 {
                     success = false,
-                    message = "Ocurrió un error al eliminar el análisis.",
+                    message =
+                        "Ocurrió un error al eliminar el análisis.",
                     detail = ex.Message,
-                    inner = ex.InnerException?.Message ?? string.Empty
+                    innerException = ex.InnerException?.Message
                 });
             }
         }
