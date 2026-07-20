@@ -123,6 +123,7 @@ namespace CONATRADEC_API.Services
 
             reporte.FertilizacionMixta = await CargarMixtaAsync(
                 analisisSueloCalculoId,
+                reporte.Balance,
                 cancellationToken);
 
             return reporte;
@@ -233,9 +234,12 @@ namespace CONATRADEC_API.Services
                 select new
                 {
                     detalle.formulaNutricionalDetalleId,
+                    detalle.fuenteNutrientesId,
+                    detalle.elementoQuimicosId,
                     fuente.nombreNutriente,
                     elemento.nombreElementoQuimico,
                     elemento.simboloElementoQuimico,
+                    detalle.requerimientoLibras,
                     detalle.libras,
                     detalle.qq,
                     detalle.precioPorQuintal,
@@ -244,67 +248,98 @@ namespace CONATRADEC_API.Services
                     detalle.onzasPorAplicacion
                 }).ToListAsync(cancellationToken);
 
+            List<int> detalleIds = filas
+                .Select(x => x.formulaNutricionalDetalleId)
+                .ToList();
+
+            var aportesGuardados = detalleIds.Count == 0
+                ? new List<AporteFormulaReporteFila>()
+                : await (
+                    from aporte in _db.formulaNutricionalAporte.AsNoTracking()
+                    join elemento in _db.elementoQuimico.AsNoTracking()
+                        on aporte.elementoQuimicosId equals elemento.elementoQuimicosId
+                    where detalleIds.Contains(aporte.formulaNutricionalDetalleId) &&
+                          aporte.activo
+                    select new AporteFormulaReporteFila
+                    {
+                        FormulaNutricionalDetalleId =
+                            aporte.formulaNutricionalDetalleId,
+                        Simbolo = elemento.simboloElementoQuimico,
+                        Valor = aporte.valor
+                    }).ToListAsync(cancellationToken);
+
             List<AnalisisReporteBalanceDetalle> detalles = filas
                 .Select(x =>
                 {
                     decimal quintalesComprar = Math.Ceiling(x.qq);
+                    Dictionary<string, decimal> aportes = aportesGuardados
+                        .Where(a =>
+                            a.FormulaNutricionalDetalleId ==
+                            x.formulaNutricionalDetalleId)
+                        .GroupBy(a => FormatearSimbolo(a.Simbolo))
+                        .ToDictionary(
+                            grupo => grupo.Key,
+                            grupo => Math.Round(grupo.Sum(a => a.Valor), 4));
 
                     return new AnalisisReporteBalanceDetalle
                     {
+                        FormulaNutricionalDetalleId =
+                            x.formulaNutricionalDetalleId,
+                        FuenteNutrientesId = x.fuenteNutrientesId,
+                        ElementoQuimicosId = x.elementoQuimicosId,
                         Fuente = x.nombreNutriente,
                         Elemento = FormatearElemento(
                             x.nombreElementoQuimico,
                             x.simboloElementoQuimico),
+                        RequerimientoLibras = x.requerimientoLibras,
                         Libras = x.libras,
+                        LibrasPorAplicacion = formula.totalAplicaciones > 0
+                            ? x.libras / formula.totalAplicaciones
+                            : 0,
                         QuintalesExactos = x.qq,
                         QuintalesComprar = quintalesComprar,
                         PrecioPorQuintal = x.precioPorQuintal,
                         SubtotalExacto = x.subtotalFuente,
                         CostoCompra = quintalesComprar * x.precioPorQuintal,
                         OnzasAnuales = x.onzasAnuales,
-                        OnzasPorAplicacion = x.onzasPorAplicacion
+                        OnzasPorAplicacion = x.onzasPorAplicacion,
+                        Aportes = aportes
                     };
                 })
-                .ToList();
-
-            List<int> detalleIds = filas
-                .Select(x => x.formulaNutricionalDetalleId)
                 .ToList();
 
             Dictionary<string, decimal> formulaComercial = new();
             if (detalleIds.Count > 0)
             {
-                var aportes = await (
-                    from aporte in _db.formulaNutricionalAporte.AsNoTracking()
-                    join elemento in _db.elementoQuimico.AsNoTracking()
-                        on aporte.elementoQuimicosId equals elemento.elementoQuimicosId
-                    where detalleIds.Contains(aporte.formulaNutricionalDetalleId) &&
-                          aporte.activo
-                    select new
-                    {
-                        elemento.simboloElementoQuimico,
-                        aporte.valor
-                    }).ToListAsync(cancellationToken);
-
-                formulaComercial = aportes
-                    .GroupBy(x => string.IsNullOrWhiteSpace(x.simboloElementoQuimico)
-                        ? "Nutriente"
-                        : x.simboloElementoQuimico.Trim())
-                    .ToDictionary(x => x.Key, x => x.Sum(y => y.valor));
+                formulaComercial = aportesGuardados
+                    .GroupBy(x => FormatearSimbolo(x.Simbolo))
+                    .ToDictionary(
+                        grupo => grupo.Key,
+                        grupo => formula.mezclaTotalQq > 0
+                            ? Math.Round(
+                                grupo.Sum(x => x.Valor) /
+                                formula.mezclaTotalQq,
+                                4)
+                            : 0);
             }
+
+            decimal costoRealCompra = detalles.Sum(x => x.CostoCompra);
 
             return new AnalisisReporteBalance
             {
                 NombreFormula = formula.nombreFormula,
                 TotalLibras = formula.totalLibras,
                 MezclaTotalQq = formula.mezclaTotalQq,
+                TotalOnzas = formula.totalOnzas,
                 TotalPlantas = formula.totalPlantas,
                 TotalAplicaciones = formula.totalAplicaciones,
                 DosisPlantaAnualOz = formula.dosisPlantaAnualOz,
                 DosisPlantaPorAplicacionOz = formula.dosisPlantaPorAplicacionOz,
                 PrecioExactoReferencia = detalles.Sum(x => x.SubtotalExacto),
-                CostoRealCompra = formula.precioTotalFormula,
-                PrecioPorAplicacion = formula.precioPorAplicacion,
+                CostoRealCompra = costoRealCompra,
+                PrecioPorAplicacion = formula.totalAplicaciones > 0
+                    ? costoRealCompra / formula.totalAplicaciones
+                    : 0,
                 FormulaComercial = formulaComercial,
                 Detalles = detalles
             };
@@ -357,6 +392,7 @@ namespace CONATRADEC_API.Services
 
         private async Task<AnalisisReporteFertilizacionMixta?> CargarMixtaAsync(
             int analisisSueloCalculoId,
+            AnalisisReporteBalance? balance,
             CancellationToken cancellationToken)
         {
             var mixta = await _db.fertilizacionMixta
@@ -369,18 +405,31 @@ namespace CONATRADEC_API.Services
             if (mixta == null)
                 return null;
 
-            List<AnalisisReporteMixtaFuente> fuentes = await (
+            var filasFuentes = await (
                 from item in _db.fertilizacionMixtaFuente.AsNoTracking()
                 join fuente in _db.fuenteNutriente.AsNoTracking()
                     on item.fuenteNutrientesId equals fuente.fuenteNutrientesId
                 where item.fertilizacionMixtaId == mixta.fertilizacionMixtaId &&
                       item.activo
                 orderby fuente.nombreNutriente
-                select new AnalisisReporteMixtaFuente
+                select new
                 {
+                    item.fuenteNutrientesId,
                     Fuente = fuente.nombreNutriente,
-                    CantidadQq = item.cantidadQq
+                    item.cantidadQq,
+                    PrecioPorQq = fuente.precioNutriente
                 }).ToListAsync(cancellationToken);
+
+            List<AnalisisReporteMixtaFuente> fuentes = filasFuentes
+                .Select(x => new AnalisisReporteMixtaFuente
+                {
+                    FuenteNutrientesId = x.fuenteNutrientesId,
+                    Fuente = x.Fuente,
+                    CantidadQq = x.cantidadQq,
+                    PrecioPorQq = x.PrecioPorQq,
+                    Costo = x.cantidadQq * x.PrecioPorQq
+                })
+                .ToList();
 
             var filas = await (
                 from item in _db.fertilizacionMixtaDetalle.AsNoTracking()
@@ -391,6 +440,7 @@ namespace CONATRADEC_API.Services
                 orderby elemento.nombreElementoQuimico
                 select new
                 {
+                    item.elementoQuimicosId,
                     elemento.nombreElementoQuimico,
                     elemento.simboloElementoQuimico,
                     item.requerimientoOriginal,
@@ -403,6 +453,7 @@ namespace CONATRADEC_API.Services
             List<AnalisisReporteMixtaDetalle> detalles = filas
                 .Select(x => new AnalisisReporteMixtaDetalle
                 {
+                    ElementoQuimicosId = x.elementoQuimicosId,
                     Elemento = FormatearElemento(
                         x.nombreElementoQuimico,
                         x.simboloElementoQuimico),
@@ -414,10 +465,195 @@ namespace CONATRADEC_API.Services
                 })
                 .ToList();
 
+            List<int> fuentesIds = fuentes
+                .Select(x => x.FuenteNutrientesId)
+                .Distinct()
+                .ToList();
+
+            List<int> elementosIds = detalles
+                .Select(x => x.ElementoQuimicosId)
+                .Distinct()
+                .ToList();
+
+            var composiciones = fuentesIds.Count == 0 || elementosIds.Count == 0
+                ? new List<AporteMixtaReporteFila>()
+                : await (
+                    from aporte in _db.fuenteNutrienteElementoQuimico.AsNoTracking()
+                    join fuente in _db.fuenteNutriente.AsNoTracking()
+                        on aporte.fuenteNutrientesId equals fuente.fuenteNutrientesId
+                    join elemento in _db.elementoQuimico.AsNoTracking()
+                        on aporte.elementoQuimicosId equals elemento.elementoQuimicosId
+                    where fuentesIds.Contains(aporte.fuenteNutrientesId) &&
+                          elementosIds.Contains(aporte.elementoQuimicosId) &&
+                          aporte.activo
+                    select new AporteMixtaReporteFila
+                    {
+                        FuenteNutrientesId = aporte.fuenteNutrientesId,
+                        ElementoQuimicosId = aporte.elementoQuimicosId,
+                        Fuente = fuente.nombreNutriente,
+                        Elemento = elemento.simboloElementoQuimico,
+                        AportePorQq = aporte.cantidadAporte
+                    }).ToListAsync(cancellationToken);
+
+            Dictionary<int, AnalisisReporteMixtaFuente> fuentePorId = fuentes
+                .ToDictionary(x => x.FuenteNutrientesId);
+
+            List<AnalisisReporteMixtaAporteFuente> aportesPorFuente = composiciones
+                .Select(x =>
+                {
+                    AnalisisReporteMixtaFuente fuente =
+                        fuentePorId[x.FuenteNutrientesId];
+
+                    return new AnalisisReporteMixtaAporteFuente
+                    {
+                        FuenteNutrientesId = x.FuenteNutrientesId,
+                        ElementoQuimicosId = x.ElementoQuimicosId,
+                        Fuente = x.Fuente,
+                        Elemento = FormatearSimbolo(x.Elemento),
+                        CantidadQq = fuente.CantidadQq,
+                        AportePorQq = x.AportePorQq,
+                        AporteTotal = fuente.CantidadQq * x.AportePorQq
+                    };
+                })
+                .OrderBy(x => x.Fuente)
+                .ThenBy(x => x.Elemento)
+                .ToList();
+
+            AnalisisReporteBalanceAjustado? balanceAjustado = null;
+            AnalisisReporteResumenEconomico? resumenEconomico = null;
+
+            if (mixta.esComplementoBalance && balance != null)
+            {
+                balanceAjustado = ConstruirBalanceAjustado(
+                    balance,
+                    detalles);
+
+                decimal costoMixta = fuentes.Sum(x => x.Costo);
+                decimal costoTotal =
+                    costoMixta + balanceAjustado.CostoRealCompra;
+
+                resumenEconomico = new AnalisisReporteResumenEconomico
+                {
+                    CostoComercialOriginal = balance.CostoRealCompra,
+                    CostoFertilizacionMixta = costoMixta,
+                    CostoComercialAjustado =
+                        balanceAjustado.CostoRealCompra,
+                    CostoTotalFinal = costoTotal,
+                    DiferenciaEconomica =
+                        balance.CostoRealCompra - costoTotal
+                };
+            }
+
             return new AnalisisReporteFertilizacionMixta
             {
                 Observacion = mixta.observacion ?? string.Empty,
+                EsComplementoBalance = mixta.esComplementoBalance,
                 Fuentes = fuentes,
+                Detalles = detalles,
+                AportesPorFuente = aportesPorFuente,
+                BalanceAjustado = balanceAjustado,
+                ResumenEconomico = resumenEconomico
+            };
+        }
+
+        private static AnalisisReporteBalanceAjustado ConstruirBalanceAjustado(
+            AnalisisReporteBalance balance,
+            IReadOnlyCollection<AnalisisReporteMixtaDetalle> detallesMixta)
+        {
+            List<AnalisisReporteCompraAjustada> detalles = balance.Detalles
+                .Select(original =>
+                {
+                    AnalisisReporteMixtaDetalle? mixta = detallesMixta
+                        .FirstOrDefault(x =>
+                            x.ElementoQuimicosId ==
+                            original.ElementoQuimicosId);
+
+                    decimal aporteOrganico = mixta?.AporteOrganico ?? 0;
+                    decimal requerimientoAjustado = Math.Max(
+                        original.RequerimientoLibras - aporteOrganico,
+                        0);
+                    decimal quintalesAjustados =
+                        requerimientoAjustado / 100m;
+                    decimal factor = original.QuintalesExactos > 0
+                        ? quintalesAjustados / original.QuintalesExactos
+                        : 0;
+                    decimal quintalesComprar =
+                        Math.Ceiling(quintalesAjustados);
+
+                    Dictionary<string, decimal> aportes = original.Aportes
+                        .ToDictionary(
+                            x => x.Key,
+                            x => Math.Round(x.Value * factor, 4));
+
+                    return new AnalisisReporteCompraAjustada
+                    {
+                        FuenteNutrientesId = original.FuenteNutrientesId,
+                        ElementoQuimicosId = original.ElementoQuimicosId,
+                        Fuente = original.Fuente,
+                        Elemento = original.Elemento,
+                        RequerimientoOriginalLb =
+                            original.RequerimientoLibras,
+                        AporteOrganicoLb = aporteOrganico,
+                        RequerimientoAjustadoLb = requerimientoAjustado,
+                        QuintalesOriginales = original.QuintalesExactos,
+                        QuintalesAjustados = quintalesAjustados,
+                        ReduccionQuintales = Math.Max(
+                            original.QuintalesExactos - quintalesAjustados,
+                            0),
+                        PrecioPorQq = original.PrecioPorQuintal,
+                        QuintalesComprar = quintalesComprar,
+                        SubtotalExacto =
+                            quintalesAjustados * original.PrecioPorQuintal,
+                        CostoCompra =
+                            quintalesComprar * original.PrecioPorQuintal,
+                        Aportes = aportes
+                    };
+                })
+                .ToList();
+
+            decimal totalLibras =
+                detalles.Sum(x => x.RequerimientoAjustadoLb);
+            decimal mezclaTotalQq = totalLibras / 100m;
+            decimal totalOnzas = totalLibras * 16m;
+            decimal costoReal = detalles.Sum(x => x.CostoCompra);
+
+            Dictionary<string, decimal> formulaComercial = detalles
+                .SelectMany(x => x.Aportes)
+                .GroupBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    grupo => grupo.Key,
+                    grupo => mezclaTotalQq > 0
+                        ? Math.Round(
+                            grupo.Sum(x => x.Value) / mezclaTotalQq,
+                            4)
+                        : 0,
+                    StringComparer.OrdinalIgnoreCase);
+
+            return new AnalisisReporteBalanceAjustado
+            {
+                NombreFormula = $"{balance.NombreFormula} - Ajustado",
+                TotalLibras = totalLibras,
+                MezclaTotalQq = mezclaTotalQq,
+                TotalOnzas = totalOnzas,
+                TotalPlantas = balance.TotalPlantas,
+                TotalAplicaciones = balance.TotalAplicaciones,
+                DosisPlantaAnualOz = balance.TotalPlantas > 0
+                    ? totalOnzas / balance.TotalPlantas
+                    : 0,
+                DosisPlantaPorAplicacionOz =
+                    balance.TotalPlantas > 0 &&
+                    balance.TotalAplicaciones > 0
+                        ? totalOnzas /
+                          balance.TotalPlantas /
+                          balance.TotalAplicaciones
+                        : 0,
+                PrecioExactoReferencia =
+                    detalles.Sum(x => x.SubtotalExacto),
+                CostoRealCompra = costoReal,
+                PrecioPorAplicacion = balance.TotalAplicaciones > 0
+                    ? costoReal / balance.TotalAplicaciones
+                    : 0,
+                FormulaComercial = formulaComercial,
                 Detalles = detalles
             };
         }
@@ -431,6 +667,22 @@ namespace CONATRADEC_API.Services
                 return $"{nombreLimpio} ({simboloLimpio})";
 
             return nombreLimpio.Length > 0 ? nombreLimpio : simboloLimpio;
+        }
+
+        private static string FormatearSimbolo(string? simbolo)
+        {
+            string normalizado = (simbolo ?? string.Empty)
+                .Trim()
+                .ToUpperInvariant()
+                .Replace(" ", string.Empty);
+
+            return normalizado switch
+            {
+                "CA" => "Ca",
+                "MG" => "Mg",
+                "ZN" => "Zn",
+                _ => normalizado.Length > 0 ? normalizado : "Nutriente"
+            };
         }
 
         private static string FormatearTerreno(
@@ -461,5 +713,21 @@ namespace CONATRADEC_API.Services
                     .Select(x => x.Trim())
                     .Where(x => x.Length > 0)
                     .ToList();
+
+        private sealed class AporteFormulaReporteFila
+        {
+            public int FormulaNutricionalDetalleId { get; set; }
+            public string Simbolo { get; set; } = string.Empty;
+            public decimal Valor { get; set; }
+        }
+
+        private sealed class AporteMixtaReporteFila
+        {
+            public int FuenteNutrientesId { get; set; }
+            public int ElementoQuimicosId { get; set; }
+            public string Fuente { get; set; } = string.Empty;
+            public string Elemento { get; set; } = string.Empty;
+            public decimal AportePorQq { get; set; }
+        }
     }
 }

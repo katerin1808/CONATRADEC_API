@@ -20,6 +20,44 @@ namespace CONATRADEC_API.Controllers
         }
 
         /// <summary>
+        /// Devuelve todos los datos calculados que utiliza el Excel.
+        /// Incluye aportes por fuente, costos y balance comercial ajustado.
+        /// </summary>
+        [HttpGet("{analisisSueloCalculoId:int}/datos")]
+        [Produces("application/json")]
+        [ProducesResponseType(typeof(AnalisisReporte), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> ObtenerDatos(
+            int analisisSueloCalculoId,
+            CancellationToken cancellationToken)
+        {
+            if (analisisSueloCalculoId <= 0)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "El identificador del cálculo no es válido."
+                });
+            }
+
+            AnalisisReporte? reporte = await _datosService.ObtenerAsync(
+                analisisSueloCalculoId,
+                cancellationToken);
+
+            if (reporte == null)
+            {
+                return NotFound(new
+                {
+                    success = false,
+                    message = "No se encontró el análisis solicitado."
+                });
+            }
+
+            return Ok(reporte);
+        }
+
+        /// <summary>
         /// Genera el reporte PDF de un análisis previamente guardado.
         /// </summary>
         [HttpGet("{analisisSueloCalculoId:int}/pdf")]

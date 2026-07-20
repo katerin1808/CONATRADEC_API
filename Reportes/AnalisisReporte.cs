@@ -65,6 +65,7 @@ namespace CONATRADEC_API.Reportes
         public string NombreFormula { get; set; } = string.Empty;
         public decimal TotalLibras { get; set; }
         public decimal MezclaTotalQq { get; set; }
+        public decimal TotalOnzas { get; set; }
         public int TotalPlantas { get; set; }
         public int TotalAplicaciones { get; set; }
         public decimal DosisPlantaAnualOz { get; set; }
@@ -78,9 +79,14 @@ namespace CONATRADEC_API.Reportes
 
     public sealed class AnalisisReporteBalanceDetalle
     {
+        public int FormulaNutricionalDetalleId { get; set; }
+        public int FuenteNutrientesId { get; set; }
+        public int ElementoQuimicosId { get; set; }
         public string Fuente { get; set; } = string.Empty;
         public string Elemento { get; set; } = string.Empty;
+        public decimal RequerimientoLibras { get; set; }
         public decimal Libras { get; set; }
+        public decimal LibrasPorAplicacion { get; set; }
         public decimal QuintalesExactos { get; set; }
         public decimal QuintalesComprar { get; set; }
         public decimal PrecioPorQuintal { get; set; }
@@ -88,6 +94,7 @@ namespace CONATRADEC_API.Reportes
         public decimal CostoCompra { get; set; }
         public decimal OnzasAnuales { get; set; }
         public decimal OnzasPorAplicacion { get; set; }
+        public Dictionary<string, decimal> Aportes { get; set; } = new();
     }
 
     public sealed class AnalisisReporteEnmienda
@@ -116,23 +123,88 @@ namespace CONATRADEC_API.Reportes
     public sealed class AnalisisReporteFertilizacionMixta
     {
         public string Observacion { get; set; } = string.Empty;
+        public bool EsComplementoBalance { get; set; }
         public List<AnalisisReporteMixtaFuente> Fuentes { get; set; } = new();
         public List<AnalisisReporteMixtaDetalle> Detalles { get; set; } = new();
+        public List<AnalisisReporteMixtaAporteFuente> AportesPorFuente { get; set; } = new();
+        public AnalisisReporteBalanceAjustado? BalanceAjustado { get; set; }
+        public AnalisisReporteResumenEconomico? ResumenEconomico { get; set; }
     }
 
     public sealed class AnalisisReporteMixtaFuente
     {
+        public int FuenteNutrientesId { get; set; }
         public string Fuente { get; set; } = string.Empty;
         public decimal CantidadQq { get; set; }
+        public decimal PrecioPorQq { get; set; }
+        public decimal Costo { get; set; }
     }
 
     public sealed class AnalisisReporteMixtaDetalle
     {
+        public int ElementoQuimicosId { get; set; }
         public string Elemento { get; set; } = string.Empty;
         public decimal RequerimientoOriginal { get; set; }
         public decimal AporteOrganico { get; set; }
         public decimal Diferencia { get; set; }
         public decimal Deficit { get; set; }
         public decimal Sobrante { get; set; }
+    }
+
+    public sealed class AnalisisReporteMixtaAporteFuente
+    {
+        public int FuenteNutrientesId { get; set; }
+        public int ElementoQuimicosId { get; set; }
+        public string Fuente { get; set; } = string.Empty;
+        public string Elemento { get; set; } = string.Empty;
+        public decimal CantidadQq { get; set; }
+        public decimal AportePorQq { get; set; }
+        public decimal AporteTotal { get; set; }
+    }
+
+    public sealed class AnalisisReporteBalanceAjustado
+    {
+        public string NombreFormula { get; set; } = string.Empty;
+        public decimal TotalLibras { get; set; }
+        public decimal MezclaTotalQq { get; set; }
+        public decimal TotalOnzas { get; set; }
+        public int TotalPlantas { get; set; }
+        public int TotalAplicaciones { get; set; }
+        public decimal DosisPlantaAnualOz { get; set; }
+        public decimal DosisPlantaPorAplicacionOz { get; set; }
+        public decimal PrecioExactoReferencia { get; set; }
+        public decimal CostoRealCompra { get; set; }
+        public decimal PrecioPorAplicacion { get; set; }
+        public Dictionary<string, decimal> FormulaComercial { get; set; } = new();
+        public List<AnalisisReporteCompraAjustada> Detalles { get; set; } = new();
+    }
+
+    public sealed class AnalisisReporteCompraAjustada
+    {
+        public int FuenteNutrientesId { get; set; }
+        public int ElementoQuimicosId { get; set; }
+        public string Fuente { get; set; } = string.Empty;
+        public string Elemento { get; set; } = string.Empty;
+        public decimal RequerimientoOriginalLb { get; set; }
+        public decimal AporteOrganicoLb { get; set; }
+        public decimal RequerimientoAjustadoLb { get; set; }
+        public decimal QuintalesOriginales { get; set; }
+        public decimal QuintalesAjustados { get; set; }
+        public decimal ReduccionQuintales { get; set; }
+        public decimal PrecioPorQq { get; set; }
+        public decimal QuintalesComprar { get; set; }
+        public decimal SubtotalExacto { get; set; }
+        public decimal CostoCompra { get; set; }
+        public Dictionary<string, decimal> Aportes { get; set; } = new();
+    }
+
+    public sealed class AnalisisReporteResumenEconomico
+    {
+        public decimal CostoComercialOriginal { get; set; }
+        public decimal CostoFertilizacionMixta { get; set; }
+        public decimal CostoComercialAjustado { get; set; }
+        public decimal CostoTotalFinal { get; set; }
+        public decimal DiferenciaEconomica { get; set; }
+        public bool EsAhorro => DiferenciaEconomica >= 0;
     }
 }

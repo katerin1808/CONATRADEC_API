@@ -34,6 +34,8 @@
         {
             public string observacion { get; set; } = string.Empty;
 
+            public bool esComplementoBalance { get; set; }
+
             public List<FertilizacionMixtaFuenteRespuestaDto> fuentes { get; set; } = new();
 
             public List<FertilizacionMixtaDetalleRespuestaDto> detalles { get; set; } = new();

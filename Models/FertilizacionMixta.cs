@@ -15,6 +15,11 @@ namespace CONATRADEC_API.Models
 
         public string? observacion { get; set; }
 
+        // Permite diferenciar una fertilización mixta independiente de la que
+        // descuenta sus aportes del balance comercial. El reporte usa este
+        // indicador para generar el balance ajustado y el resumen económico.
+        public bool esComplementoBalance { get; set; }
+
         public bool activo { get; set; } = true;
 
         [ForeignKey(nameof(analisisSueloCalculoId))]

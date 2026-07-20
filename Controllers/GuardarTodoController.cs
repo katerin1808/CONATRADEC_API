@@ -579,6 +579,9 @@ namespace CONATRADEC_API.Controllers
                                 resultadoMixta.observacion ??
                                 string.Empty,
 
+                            esComplementoBalance =
+                                resultadoMixta.esComplementoBalance,
+
                             activo = true
                         };
 
@@ -1143,7 +1146,8 @@ namespace CONATRADEC_API.Controllers
                 {
                     x.fertilizacionMixtaId,
                     x.fechaCalculo,
-                    x.observacion
+                    x.observacion,
+                    x.esComplementoBalance
                 })
                 .FirstOrDefaultAsync();
 
@@ -1667,6 +1671,8 @@ namespace CONATRADEC_API.Controllers
                         fechaCalculo = DateTime.Now,
                         observacion =
                             resultadoMixta.observacion ?? string.Empty,
+                        esComplementoBalance =
+                            resultadoMixta.esComplementoBalance,
                         activo = true
                     };
 

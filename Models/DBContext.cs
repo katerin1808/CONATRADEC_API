@@ -471,6 +471,11 @@ namespace CONATRADEC_API.Models
                 .HasForeignKey(x => x.elementoQuimicosId)
                 .OnDelete(DeleteBehavior.Restrict);
 
+            modelBuilder.Entity<FertilizacionMixta>()
+                .Property(x => x.esComplementoBalance)
+                .HasDefaultValue(false)
+                .IsRequired();
+
 
 
   
@@ -480,4 +485,3 @@ namespace CONATRADEC_API.Models
     }
 }
 }
-
