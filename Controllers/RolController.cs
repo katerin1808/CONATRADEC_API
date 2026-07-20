@@ -139,17 +139,68 @@ namespace CONATRADEC_API.Controllers
         [HttpDelete("eliminarRol/{id:int}")]
         public async Task<IActionResult> DeleteRol(int id)
         {
-            var rol = await _context.Roles.FindAsync(id);
-            if (rol == null)
-                return NotFound($"No se encontró un rol con ID {id}");
+            var rol = await _context.Roles
+                .FirstOrDefaultAsync(x =>
+                    x.rolId == id &&
+                    x.activo);
 
-            if (!rol.activo)
-                return Ok(new { message = "El rol ya estaba inactivo" });
+            if (rol == null)
+            {
+                return NotFound(new
+                {
+                    mensaje = "El rol no existe o ya está desactivado."
+                });
+            }
+
+            var dependencias = new List<string>();
+
+            var usadoEnUsuarios = await _context.Usuarios
+                .AnyAsync(x => x.rolId == id);
+
+            if (usadoEnUsuarios)
+            {
+                dependencias.Add("usuarios");
+            }
+
+            var usadoEnPermisos = await _context.RolInterfaz
+                .AnyAsync(x => x.rolId == id);
+
+            if (usadoEnPermisos)
+            {
+                dependencias.Add("permisos de interfaces");
+            }
+
+            if (dependencias.Count > 0)
+            {
+                return Conflict(new
+                {
+                    mensaje =
+                        "No se puede eliminar el rol porque está siendo utilizado.",
+
+                    rol = new
+                    {
+                        rol.rolId,
+                        rol.nombreRol
+                    },
+
+                    usadoEn = dependencias
+                });
+            }
 
             rol.activo = false;
+
             await _context.SaveChangesAsync();
 
-            return Ok(new { message = "Rol desactivado (borrado lógico) correctamente" });
+            return Ok(new
+            {
+                mensaje = "Rol desactivado correctamente.",
+                data = new
+                {
+                    rol.rolId,
+                    rol.nombreRol,
+                    rol.activo
+                }
+            });
         }
 
     }

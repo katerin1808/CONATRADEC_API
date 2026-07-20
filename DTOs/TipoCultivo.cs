@@ -19,4 +19,17 @@ namespace CONATRADEC_API.Models
 
         public bool activo { get; set; } = true;
     }
+
+    public class CrearTipoCultivoDto
+    {
+        public string nombreTipoCultivo { get; set; } = string.Empty;
+        public string? descripcionTipoCultivo { get; set; }
+    }
+
+    public class ActualizarTipoCultivoDto
+    {
+        public string nombreTipoCultivo { get; set; } = string.Empty;
+        public string? descripcionTipoCultivo { get; set; }
+    }
+
 }

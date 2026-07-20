@@ -548,20 +548,144 @@ namespace CONATRADEC_API.Controllers
         [HttpDelete("eliminar/{id:int}")]
         public async Task<IActionResult> Eliminar(int id)
         {
-            await using var trans = await _db.Database.BeginTransactionAsync();
+            var fuente = await _db.fuenteNutriente
+                .FirstOrDefaultAsync(x =>
+                    x.fuenteNutrientesId == id &&
+                    x.activo);
+
+            if (fuente == null)
+            {
+                return NotFound(new
+                {
+                    mensaje = "Fuente nutriente no encontrada o ya está desactivada."
+                });
+            }
+
+            var dependencias = new List<string>();
+
+            /*
+             * CONFIGURACIONES ACTIVAS
+             */
+
+            var usadaEnParametrosEnmienda = await _db.ParametroEnmiendaCalcarea
+                .AnyAsync(x =>
+                    x.fuenteNutrientesId == id &&
+                    x.activo);
+
+            if (usadaEnParametrosEnmienda)
+            {
+                dependencias.Add("parámetros de enmienda calcárea");
+            }
+
+            var usadaEnParametrosOrganicos = await _db.ParametroFuenteOrganicaAporte
+                .AnyAsync(x =>
+                    x.fuenteNutrientesId == id &&
+                    x.activo);
+
+            if (usadaEnParametrosOrganicos)
+            {
+                dependencias.Add("parámetros de fuentes orgánicas");
+            }
+
+            var habilitadaParaFertilizacionMixta =
+                await _db.fuenteFertilizacionMixta
+                    .AnyAsync(x =>
+                        x.fuenteNutrientesId == id &&
+                        x.activo);
+
+            if (habilitadaParaFertilizacionMixta)
+            {
+                dependencias.Add("configuración de fertilización mixta");
+            }
+
+            /*
+             * DATOS HISTÓRICOS
+             *
+             * No se filtran por activo porque deben conservar
+             * la referencia a la fuente utilizada.
+             */
+
+            var usadaEnEnmiendas = await _db.enmiendaCalcarea
+                .AnyAsync(x =>
+                    x.fuenteNutrientesId == id);
+
+            if (usadaEnEnmiendas)
+            {
+                dependencias.Add("enmiendas calcáreas guardadas");
+            }
+
+            var usadaEnFormulas = await _db.formulaNutricionalDetalle
+                .AnyAsync(x =>
+                    x.fuenteNutrientesId == id);
+
+            if (usadaEnFormulas)
+            {
+                dependencias.Add("fórmulas nutricionales guardadas");
+            }
+
+            var usadaEnFertilizacionesMixtas =
+                await _db.fertilizacionMixtaFuente
+                    .AnyAsync(x =>
+                        x.fuenteNutrientesId == id);
+
+            if (usadaEnFertilizacionesMixtas)
+            {
+                dependencias.Add("fertilizaciones mixtas guardadas");
+            }
+
+            var usadaEnControlesAplicacion =
+                await _db.FuenteNutrienteControlAplicaciones
+                    .AnyAsync(x =>
+                        x.fuenteNutrientesId == id);
+
+            if (usadaEnControlesAplicacion)
+            {
+                dependencias.Add("controles de aplicación");
+            }
+
+            var usadaEnInterpretaciones =
+                await _db.InterpretacionFuenteNutrientes
+                    .AnyAsync(x =>
+                        x.fuenteNutrientesId == id);
+
+            if (usadaEnInterpretaciones)
+            {
+                dependencias.Add("interpretaciones guardadas");
+            }
+
+            if (dependencias.Count > 0)
+            {
+                return Conflict(new
+                {
+                    mensaje =
+                        "No se puede eliminar la fuente nutriente porque está siendo utilizada.",
+
+                    fuente = new
+                    {
+                        fuente.fuenteNutrientesId,
+                        fuente.nombreNutriente
+                    },
+
+                    usadoEn = dependencias
+                });
+            }
+
+            await using var transaccion =
+                await _db.Database.BeginTransactionAsync();
 
             try
             {
-                var fuente = await _db.fuenteNutriente
-                    .FirstOrDefaultAsync(x => x.fuenteNutrientesId == id && x.activo);
-
-                if (fuente == null)
-                    return NotFound(new { mensaje = "Fuente nutriente no encontrada o ya eliminada." });
-
                 fuente.activo = false;
 
+                /*
+                 * La matriz pertenece directamente a la fuente.
+                 * Se desactiva solamente después de comprobar
+                 * que la fuente no tiene otras dependencias.
+                 */
                 var relaciones = await _db.fuenteNutrienteElementoQuimico
-                    .Where(x => x.fuenteNutrientesId == id && x.activo)
+                    .Where(x =>
+                        x.fuenteNutrientesId == id &&
+                        x.activo)
                     .ToListAsync();
 
                 foreach (var relacion in relaciones)
@@ -570,31 +694,31 @@ namespace CONATRADEC_API.Controllers
                 }
 
                 await _db.SaveChangesAsync();
-                await trans.CommitAsync();
+                await transaccion.CommitAsync();
 
                 return Ok(new
                 {
-                    mensaje = "Fuente nutriente eliminada correctamente junto con su matriz.",
+                    mensaje = "Fuente nutriente desactivada correctamente.",
                     data = new
                     {
-                        fuenteNutrientesId = fuente.fuenteNutrientesId,
-                        nombreNutriente = fuente.nombreNutriente,
-                        descripcionNutriente = fuente.descripcionNutriente,
-                        precioNutriente = fuente.precioNutriente,
-                        activo = fuente.activo,
+                        fuente.fuenteNutrientesId,
+                        fuente.nombreNutriente,
+                        fuente.activo,
                         relacionesDesactivadas = relaciones.Count
                     }
                 });
             }
             catch (Exception ex)
             {
-                await trans.RollbackAsync();
+                await transaccion.RollbackAsync();
 
-                return StatusCode(500, new
-                {
-                    mensaje = "Error al eliminar fuente nutriente.",
-                    detalle = ex.Message
-                });
+                return StatusCode(
+                    StatusCodes.Status500InternalServerError,
+                    new
+                    {
+                        mensaje = "Ocurrió un error al desactivar la fuente nutriente.",
+                        detalle = ex.Message
+                    });
             }
         }
 

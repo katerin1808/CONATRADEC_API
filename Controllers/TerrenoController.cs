@@ -129,19 +129,102 @@ namespace CONATRADEC_API.Controllers
         // ============================================================
         // ELIMINAR (LÓGICO)
         // ============================================================
-        [HttpDelete("eliminar/{id}")]
+        [HttpDelete("eliminar/{id:int}")]
         public async Task<IActionResult> Eliminar(int id)
         {
-            var terreno = await _db.Terreno.FindAsync(id);
-            if (terreno is null)
-                return NotFound("Terreno no encontrado.");
+            var terreno = await _db.Terreno
+                .FirstOrDefaultAsync(x =>
+                    x.terrenoId == id &&
+                    x.activo);
+
+            if (terreno == null)
+            {
+                return NotFound(new
+                {
+                    mensaje =
+                        "Terreno no encontrado o ya está desactivado."
+                });
+            }
+
+            var dependencias = new List<string>();
+
+            var tieneFotos = await _db.FotoTerreno
+                .AnyAsync(x => x.terrenoId == id);
+
+            if (tieneFotos)
+            {
+                dependencias.Add("fotografías del terreno");
+            }
+
+            var usadoEnCalculos = await _db.AnalisisSueloCalculos
+                .AnyAsync(x => x.terrenoId == id);
+
+            if (usadoEnCalculos)
+            {
+                dependencias.Add("cálculos de análisis de suelo");
+            }
+
+            var usadoEnInterpretaciones = await _db.Interpretaciones
+                .AnyAsync(x => x.terrenoId == id);
+
+            if (usadoEnInterpretaciones)
+            {
+                dependencias.Add("interpretaciones");
+            }
+
+            var usadoEnEnmiendas = await _db.enmiendaCalcarea
+                .AnyAsync(x =>
+                    x.terrenoId.HasValue &&
+                    x.terrenoId.Value == id);
+
+            if (usadoEnEnmiendas)
+            {
+                dependencias.Add("enmiendas calcáreas");
+            }
+
+            var usadoEnFormulas = await _db.formulaNutricional
+                .AnyAsync(x =>
+                    x.terrenoId.HasValue &&
+                    x.terrenoId.Value == id);
+
+            if (usadoEnFormulas)
+            {
+                dependencias.Add("fórmulas nutricionales");
+            }
+
+            if (dependencias.Count > 0)
+            {
+                return Conflict(new
+                {
+                    mensaje =
+                        "No se puede eliminar el terreno porque está siendo utilizado.",
+
+                    terreno = new
+                    {
+                        terreno.terrenoId,
+                        terreno.codigoTerreno,
+                        terreno.nombrePropietarioTerreno
+                    },
+
+                    usadoEn = dependencias
+                });
+            }
 
             terreno.activo = false;
+
             await _db.SaveChangesAsync();
 
-            return Ok("Terreno eliminado correctamente.");
+            return Ok(new
+            {
+                mensaje = "Terreno desactivado correctamente.",
+                data = new
+                {
+                    terreno.terrenoId,
+                    terreno.codigoTerreno,
+                    terreno.activo
+                }
+            });
         }
-
 
         [HttpGet("buscar")]
         public async Task<IActionResult> Buscar(

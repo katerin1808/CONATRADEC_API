@@ -216,33 +216,69 @@ namespace CONATRADEC_API.Controllers
         [HttpDelete("eliminar/{id:int}")]
         public async Task<ActionResult> Delete(int id)
         {
-            await using var trx = await _ctx.Database.BeginTransactionAsync();
-            try
+            var entity = await _ctx.Municipios
+                .FirstOrDefaultAsync(x =>
+                    x.MunicipioId == id &&
+                    x.Activo);
+
+            if (entity == null)
             {
-                var entity = await _ctx.Municipios.FirstOrDefaultAsync(m => m.MunicipioId == id);
-                if (entity is null)
-                    return NotFound("El municipio indicado no existe.");
-
-                entity.Activo = false;
-                await _ctx.SaveChangesAsync();
-                await trx.CommitAsync();
-
-                return Ok(new
+                return NotFound(new
                 {
-                    message = $"El municipio '{entity.NombreMunicipio}' fue eliminado correctamente (borrado lógico).",
+                    mensaje = "El municipio no existe o ya está desactivado."
+                });
+            }
+
+            var dependencias = new List<string>();
+
+            var usadoEnUsuarios = await _ctx.Usuarios
+                .AnyAsync(x => x.municipioId == id);
+
+            if (usadoEnUsuarios)
+            {
+                dependencias.Add("usuarios");
+            }
+
+            var usadoEnTerrenos = await _ctx.Terreno
+                .AnyAsync(x => x.municipioId == id);
+
+            if (usadoEnTerrenos)
+            {
+                dependencias.Add("terrenos");
+            }
+
+            if (dependencias.Count > 0)
+            {
+                return Conflict(new
+                {
+                    mensaje =
+                        "No se puede eliminar el municipio porque está siendo utilizado.",
+
                     municipio = new
                     {
                         entity.MunicipioId,
                         entity.NombreMunicipio,
-                        entity.Activo
-                    }
+                        entity.DepartamentoId
+                    },
+
+                    usadoEn = dependencias
                 });
             }
-            catch
+
+            entity.Activo = false;
+
+            await _ctx.SaveChangesAsync();
+
+            return Ok(new
             {
-                await trx.RollbackAsync();
-                throw;
-            }
+                mensaje = "Municipio desactivado correctamente.",
+                data = new
+                {
+                    entity.MunicipioId,
+                    entity.NombreMunicipio,
+                    entity.Activo
+                }
+            });
         }
     }
 }

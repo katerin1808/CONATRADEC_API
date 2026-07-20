@@ -235,45 +235,62 @@ namespace CONATRADEC_API.Controllers
         [HttpDelete("eliminar/{id:int}")]
         public async Task<ActionResult> Delete(int id)
         {
-            await using var trx = await _ctx.Database.BeginTransactionAsync();
-            try
+            var entity = await _ctx.Departamento
+                .FirstOrDefaultAsync(x =>
+                    x.DepartamentoId == id &&
+                    x.Activo);
+
+            if (entity == null)
             {
-                var entity = await _ctx.Departamento
-                    .FirstOrDefaultAsync(d => d.DepartamentoId == id);
-
-                if (entity is null)
-                    return NotFound("El departamento indicado no existe.");
-
-                if (!entity.Activo)
-                    return Conflict("El departamento ya está inactivo.");
-
-                bool tieneMunicipios = await _ctx.Municipios
-                    .AnyAsync(m => m.DepartamentoId == id && m.Activo);
-
-                if (tieneMunicipios)
-                    return Conflict("No se puede eliminar: el departamento tiene municipios activos asociados.");
-
-                entity.Activo = false;
-                await _ctx.SaveChangesAsync();
-                await trx.CommitAsync();
-
-                return Ok(new
+                return NotFound(new
                 {
-                    message = $"El departamento '{entity.NombreDepartamento}' fue eliminado correctamente (borrado lógico).",
+                    mensaje = "El departamento no existe o ya está desactivado."
+                });
+            }
+
+            var dependencias = new List<string>();
+
+            var tieneMunicipios = await _ctx.Municipios
+                .AnyAsync(x => x.DepartamentoId == id);
+
+            if (tieneMunicipios)
+            {
+                dependencias.Add("municipios");
+            }
+
+            if (dependencias.Count > 0)
+            {
+                return Conflict(new
+                {
+                    mensaje =
+                        "No se puede eliminar el departamento porque está siendo utilizado.",
+
                     departamento = new
                     {
                         entity.DepartamentoId,
                         entity.NombreDepartamento,
-                        entity.Activo
-                    }
+                        entity.PaisId
+                    },
+
+                    usadoEn = dependencias
                 });
             }
-            catch (Exception)
+
+            entity.Activo = false;
+
+            await _ctx.SaveChangesAsync();
+
+            return Ok(new
             {
-                await trx.RollbackAsync();
-                throw;
-            }
+                mensaje = "Departamento desactivado correctamente.",
+                data = new
+                {
+                    entity.DepartamentoId,
+                    entity.NombreDepartamento,
+                    entity.Activo
+                }
+            });
         }
-}
+    }
 
 }

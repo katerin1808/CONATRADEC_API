@@ -145,52 +145,66 @@ namespace CONATRADEC_API.Controllers
         [HttpDelete("eliminarPais/{id:int}")]
         public async Task<ActionResult> Delete(int id)
         {
-            await using var tx = await _ctx.Database.BeginTransactionAsync();
-            try
+            var entity = await _ctx.Pais
+                .FirstOrDefaultAsync(x =>
+                    x.PaisId == id &&
+                    x.Activo);
+
+            if (entity == null)
             {
-                var entity = await _ctx.Pais.FindAsync(id);
-                if (entity is null) return NotFound("El país indicado no existe.");
-
-                if (!entity.Activo)
-                    return Conflict("No se puede actualizar un departamento que está inactivo.");
-
-
-                // (Opcional) Bloquear si tiene departamentos activos:
-                bool tieneDptos = await _ctx.Departamento.AnyAsync(d => d.PaisId == id && d.Activo);
-                if (tieneDptos) return Conflict("No se puede eliminar: el país tiene departamentos activos.");
-
-                entity.Activo = false; // borrado lógico
-                await _ctx.SaveChangesAsync();
-                await tx.CommitAsync();
-
-                return Ok(new
+                return NotFound(new
                 {
-                    message = $"El país '{entity.NombrePais}' fue eliminado correctamente (borrado lógico).",
+                    mensaje = "El país no existe o ya está desactivado."
+                });
+            }
+
+            var dependencias = new List<string>();
+
+            var tieneDepartamentos = await _ctx.Departamento
+                .AnyAsync(x => x.PaisId == id);
+
+            if (tieneDepartamentos)
+            {
+                dependencias.Add("departamentos");
+            }
+
+            if (dependencias.Count > 0)
+            {
+                return Conflict(new
+                {
+                    mensaje =
+                        "No se puede eliminar el país porque está siendo utilizado.",
+
                     pais = new
                     {
                         entity.PaisId,
                         entity.NombrePais,
-                        entity.CodigoISOPais,
-                        entity.Activo
-                    }
+                        entity.CodigoISOPais
+                    },
+
+                    usadoEn = dependencias
                 });
             }
-            catch (DbUpdateException ex)
+
+            entity.Activo = false;
+
+            await _ctx.SaveChangesAsync();
+
+            return Ok(new
             {
-                await tx.RollbackAsync();
-                _ctx.ChangeTracker.Clear();
-                return BadRequest($"Error al eliminar el país. Detalle: {ex.InnerException?.Message ?? ex.Message}");
-            }
-            catch (Exception ex)
-            {
-                await tx.RollbackAsync();
-                _ctx.ChangeTracker.Clear();
-                return StatusCode(500, $"Error interno al eliminar el país: {ex.Message}");
-            }
+                mensaje = "País desactivado correctamente.",
+                data = new
+                {
+                    entity.PaisId,
+                    entity.NombrePais,
+                    entity.CodigoISOPais,
+                    entity.Activo
+                }
+            });
         }
 
 
-}
+    }
 }
 
 

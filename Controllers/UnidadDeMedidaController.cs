@@ -135,10 +135,77 @@ namespace CONATRADEC_API.Controllers
         public async Task<IActionResult> Eliminar(int id)
         {
             var entity = await _db.UnidadMedidas
-                .FirstOrDefaultAsync(x => x.unidadMedidaId == id && x.activo);
+                .FirstOrDefaultAsync(x =>
+                    x.unidadMedidaId == id &&
+                    x.activo);
 
             if (entity == null)
-                return NotFound(new { mensaje = "Unidad de medida no encontrada." });
+            {
+                return NotFound(new
+                {
+                    mensaje = "Unidad de medida no encontrada o ya está desactivada."
+                });
+            }
+
+            var dependencias = new List<string>();
+
+            /*
+             * Se revisan registros activos e inactivos porque
+             * contienen información histórica.
+             */
+
+            var usadaEnAnalisis = await _db.AnalisisSueloElementos
+                .AnyAsync(x =>
+                    x.unidadMedidaId == id);
+
+            if (usadaEnAnalisis)
+            {
+                dependencias.Add("elementos de análisis de suelo");
+            }
+
+            var usadaEnCalculos = await _db.AnalisisSueloCalculoElementos
+                .AnyAsync(x =>
+                    x.unidadMedidaId == id);
+
+            if (usadaEnCalculos)
+            {
+                dependencias.Add("cálculos de análisis de suelo");
+            }
+
+            var usadaEnMateriaOrganica = await _db.AnalisisSueloCalculos
+                .AnyAsync(x =>
+                    x.unidadMedidaMateriaOrganicaId == id);
+
+            if (usadaEnMateriaOrganica)
+            {
+                dependencias.Add("mediciones de materia orgánica");
+            }
+
+            var usadaEnRangos = await _db.RangoNutrimentales
+                .AnyAsync(x =>
+                    x.unidadMedidaId == id);
+
+            if (usadaEnRangos)
+            {
+                dependencias.Add("rangos nutrimentales");
+            }
+
+            if (dependencias.Count > 0)
+            {
+                return Conflict(new
+                {
+                    mensaje =
+                        "No se puede eliminar la unidad de medida porque está siendo utilizada.",
+
+                    unidadMedida = new
+                    {
+                        entity.unidadMedidaId,
+                        entity.nombreUnidadMedida
+                    },
+
+                    usadoEn = dependencias
+                });
+            }
 
             entity.activo = false;
 
@@ -146,11 +213,12 @@ namespace CONATRADEC_API.Controllers
 
             return Ok(new
             {
-                mensaje = "Unidad de medida eliminada correctamente.",
+                mensaje = "Unidad de medida desactivada correctamente.",
                 data = new
                 {
                     entity.unidadMedidaId,
-                    entity.nombreUnidadMedida
+                    entity.nombreUnidadMedida,
+                    entity.activo
                 }
             });
         }

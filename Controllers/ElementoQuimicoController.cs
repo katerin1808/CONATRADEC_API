@@ -141,16 +141,156 @@ namespace CONATRADEC_API.Controllers
         public async Task<ActionResult> Eliminar(int id)
         {
             var entity = await _context.elementoQuimico
-                .FirstOrDefaultAsync(x => x.elementoQuimicosId == id && x.activo == true);
+                .FirstOrDefaultAsync(x =>
+                    x.elementoQuimicosId == id &&
+                    x.activo);
 
             if (entity == null)
-                return NotFound(new { mensaje = "Elemento químico no encontrado." });
+            {
+                return NotFound(new
+                {
+                    mensaje = "Elemento químico no encontrado o ya está desactivado."
+                });
+            }
 
+            var dependencias = new List<string>();
+
+            // Relaciones y configuraciones activas
+            var usadoEnFuentes = await _context
+                .fuenteNutrienteElementoQuimico
+                .AnyAsync(x =>
+                    x.elementoQuimicosId == id &&
+                    x.activo);
+
+            if (usadoEnFuentes)
+            {
+                dependencias.Add("fuentes de nutrientes");
+            }
+
+            var usadoEnExtraccion = await _context
+                .ParametroExtraccionNutrienteCafe
+                .AnyAsync(x =>
+                    x.elementoQuimicosId == id &&
+                    x.activo);
+
+            if (usadoEnExtraccion)
+            {
+                dependencias.Add("parámetros de extracción por quintal oro");
+            }
+
+            var usadoEnRangos = await _context
+                .ParametroRangoNutrienteCultivo
+                .AnyAsync(x =>
+                    x.elementoQuimicosId == id &&
+                    x.activo);
+
+            if (usadoEnRangos)
+            {
+                dependencias.Add("rangos nutricionales por cultivo");
+            }
+
+            var usadoEnAportesOrganicos = await _context
+                .ParametroFuenteOrganicaAporte
+                .AnyAsync(x =>
+                    x.elementoQuimicosId == id &&
+                    x.activo);
+
+            if (usadoEnAportesOrganicos)
+            {
+                dependencias.Add("parámetros de fuentes orgánicas");
+            }
+
+            /*
+             * Datos históricos:
+             * No se filtran por activo porque el elemento sigue siendo
+             * necesario para consultar registros guardados anteriormente.
+             */
+
+            var usadoEnAnalisis = await _context
+                .AnalisisSueloElementos
+                .AnyAsync(x =>
+                    x.elementoQuimicosId == id);
+
+            if (usadoEnAnalisis)
+            {
+                dependencias.Add("análisis de suelo guardados");
+            }
+
+            var usadoEnCalculos = await _context
+                .AnalisisSueloCalculoElementos
+                .AnyAsync(x =>
+                    x.elementoQuimicosId == id);
+
+            if (usadoEnCalculos)
+            {
+                dependencias.Add("cálculos de análisis de suelo");
+            }
+
+            var usadoEnFormulaDetalle = await _context
+                .formulaNutricionalDetalle
+                .AnyAsync(x =>
+                    x.elementoQuimicosId == id);
+
+            if (usadoEnFormulaDetalle)
+            {
+                dependencias.Add("detalles de fórmulas nutricionales");
+            }
+
+            var usadoEnFormulaAporte = await _context
+                .formulaNutricionalAporte
+                .AnyAsync(x =>
+                    x.elementoQuimicosId == id);
+
+            if (usadoEnFormulaAporte)
+            {
+                dependencias.Add("aportes de fórmulas nutricionales");
+            }
+
+            var usadoEnFertilizacionMixta = await _context
+                .fertilizacionMixtaDetalle
+                .AnyAsync(x =>
+                    x.elementoQuimicosId == id);
+
+            if (usadoEnFertilizacionMixta)
+            {
+                dependencias.Add("fertilizaciones mixtas");
+            }
+
+            // Si tiene cualquier dependencia, no permite desactivarlo
+            if (dependencias.Count > 0)
+            {
+                return Conflict(new
+                {
+                    mensaje =
+                        "No se puede eliminar el elemento químico porque está siendo utilizado.",
+
+                    elemento = new
+                    {
+                        entity.elementoQuimicosId,
+                        entity.simboloElementoQuimico,
+                        entity.nombreElementoQuimico
+                    },
+
+                    usadoEn = dependencias
+                });
+            }
+
+            // Solo se desactiva cuando no tiene dependencias
             entity.activo = false;
 
             await _context.SaveChangesAsync();
 
-            return Ok(new { mensaje = "Elemento químico desactivado correctamente." });
+            return Ok(new
+            {
+                mensaje = "Elemento químico desactivado correctamente.",
+                data = new
+                {
+                    entity.elementoQuimicosId,
+                    entity.simboloElementoQuimico,
+                    entity.nombreElementoQuimico,
+                    entity.activo
+                }
+            });
         }
     }
 }
