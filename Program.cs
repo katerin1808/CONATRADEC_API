@@ -2,6 +2,7 @@ using CONATRADEC_API.Models;
 using CONATRADEC_API.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
+using QuestPDF.Infrastructure;
 
 
 var builder = WebApplication.CreateBuilder(args);
@@ -10,6 +11,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 builder.Services.AddScoped<AnalisisSueloCalculoService>();
+builder.Services.AddScoped<AnalisisReporteDatosService>();
 builder.Services.AddDbContext<DBContext>(o =>
 {
     o.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"))
@@ -20,6 +22,11 @@ builder.Services.AddDbContext<DBContext>(o =>
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+// Community aplica a individuos, proyectos FOSS, organizaciones sin fines
+// de lucro y organizaciones con ingresos anuales inferiores a USD 1 millón.
+// Cambie el tipo de licencia si su organización no cumple esas condiciones.
+QuestPDF.Settings.License = LicenseType.Community;
 
 var app = builder.Build();
 
