@@ -24,6 +24,11 @@ namespace CONATRADEC_API.Models
 
             public int totalAplicaciones { get; set; }
 
+            // El indicador pertenece al balance de fórmula. También se
+            // conserva en fertilizacionMixta por compatibilidad con los
+            // reportes y registros anteriores.
+            public bool esComplementoFertilizacionMixta { get; set; }
+
            [Column(TypeName = "decimal(18,4)")]
            public decimal totalOnzas { get; set; }
 

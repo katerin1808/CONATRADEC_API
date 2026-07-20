@@ -269,6 +269,10 @@ namespace CONATRADEC_API.Controllers
                         totalAplicaciones =
                             resultadoFormula.totalAplicaciones,
 
+                        esComplementoFertilizacionMixta =
+                            dto.balanceNutricional
+                                .esComplementoFertilizacionMixta,
+
                         totalOnzas =
                             Math.Round(
                                 resultadoFormula.totalOnzas,
@@ -752,6 +756,13 @@ namespace CONATRADEC_API.Controllers
                 if (dto.requerimientoAnual.terrenoId !=
                     dto.balanceNutricional.terrenoId)
                     return "El terreno del requerimiento anual no coincide con el de la fórmula nutricional.";
+
+                if (dto.balanceNutricional
+                        .esComplementoFertilizacionMixta &&
+                    dto.fertilizacionMixta == null)
+                {
+                    return "El balance marcado como complemento requiere una fertilización mixta calculada.";
+                }
             }
 
             // Enmienda calcárea opcional.
@@ -1061,6 +1072,7 @@ namespace CONATRADEC_API.Controllers
                     x.mezclaTotalQq,
                     x.totalPlantas,
                     x.totalAplicaciones,
+                    x.esComplementoFertilizacionMixta,
                     x.totalOnzas,
                     x.precioTotalFormula,
                     x.precioPorAplicacion,
@@ -1494,6 +1506,9 @@ namespace CONATRADEC_API.Controllers
                             4),
                         totalPlantas = resultadoFormula.totalPlantas,
                         totalAplicaciones = resultadoFormula.totalAplicaciones,
+                        esComplementoFertilizacionMixta =
+                            dto.balanceNutricional
+                                .esComplementoFertilizacionMixta,
                         totalOnzas = Math.Round(
                             resultadoFormula.totalOnzas,
                             4),

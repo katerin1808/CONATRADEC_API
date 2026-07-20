@@ -25,6 +25,8 @@ namespace CONATRADEC_API.DTOs
     {
         public int terrenoId { get; set; }
 
+        public bool esComplementoFertilizacionMixta { get; set; }
+
         public FormulaNutricionalRespuestaDto resultado { get; set; }
             = new();
 
@@ -62,4 +64,3 @@ namespace CONATRADEC_API.DTOs
         public int? fertilizacionMixtaId { get; set; }
     }
 }
-

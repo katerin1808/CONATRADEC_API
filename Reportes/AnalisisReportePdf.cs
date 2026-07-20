@@ -272,13 +272,19 @@ namespace CONATRADEC_API.Reportes
                     if (balance.FormulaComercial.Count > 0)
                     {
                         contenido.Item()
-                            .PaddingTop(3)
+                            .PaddingTop(5)
+                            .Background(AmarilloSuave)
+                            .Border(1)
+                            .BorderColor(Cafe)
+                            .Padding(6)
                             .Text("Fórmula comercial: " + string.Join(
                                 " · ",
                                 balance.FormulaComercial
                                     .OrderBy(x => OrdenElemento(x.Key))
                                     .Select(x =>
-                                    $"{x.Key} {x.Value:N2}")));
+                                    $"{x.Key} {x.Value:N2}")))
+                            .Bold()
+                            .FontColor(Cafe);
                     }
 
                     contenido.Item()
@@ -453,6 +459,17 @@ namespace CONATRADEC_API.Reportes
                 AgregarPar(tabla, "Equivalente", $"{enmienda.NecesidadEncaladoLbMz:N2} lb/mz", "Dosis anual", $"{enmienda.DosisPlantaAnualOz:N2} oz/planta");
                 AgregarPar(tabla, "Por aplicación", $"{enmienda.DosisPlantaPorAplicacionOz:N2} oz/planta", "Análisis", enmienda.NombreAnalisis);
             });
+
+            columna.Item()
+                .Background(VerdeSuave)
+                .Border(1)
+                .BorderColor(Verde)
+                .Padding(8)
+                .Text(texto =>
+                {
+                    texto.Span("Interpretación: ").Bold().FontColor(Verde);
+                    texto.Span(InterpretarEnmienda(enmienda));
+                });
         }
 
         private static void ComponerFertilizacionMixta(
@@ -599,12 +616,18 @@ namespace CONATRADEC_API.Reportes
                     if (balance.FormulaComercial.Count > 0)
                     {
                         contenido.Item()
-                            .PaddingTop(3)
+                            .PaddingTop(5)
+                            .Background(AmarilloSuave)
+                            .Border(1)
+                            .BorderColor(Cafe)
+                            .Padding(6)
                             .Text("Fórmula comercial ajustada: " + string.Join(
                                 " · ",
                                 balance.FormulaComercial
                                     .OrderBy(x => OrdenElemento(x.Key))
-                                    .Select(x => $"{x.Key} {x.Value:N2}")));
+                                    .Select(x => $"{x.Key} {x.Value:N2}")))
+                            .Bold()
+                            .FontColor(Cafe);
                     }
 
                     contenido.Item()
@@ -834,6 +857,31 @@ namespace CONATRADEC_API.Reportes
 
         private static string ValorO(string? valor, string alternativo) =>
             string.IsNullOrWhiteSpace(valor) ? alternativo : valor.Trim();
+
+        private static string InterpretarEnmienda(
+            AnalisisReporteEnmienda enmienda)
+        {
+            if (enmienda.NecesidadEncaladoTonHa > 0)
+            {
+                return
+                    $"El cálculo determinó una necesidad de " +
+                    $"{enmienda.NecesidadEncaladoTonHa:N2} ton/ha de enmienda.";
+            }
+
+            if (enmienda.SaturacionActual >=
+                enmienda.SaturacionDeseada)
+            {
+                return
+                    $"El cálculo sí fue realizado. La saturación actual " +
+                    $"({enmienda.SaturacionActual:N2}%) alcanza o supera la " +
+                    $"deseada ({enmienda.SaturacionDeseada:N2}%); por eso la " +
+                    "necesidad y la dosis resultan en cero.";
+            }
+
+            return
+                "El cálculo fue realizado y no determinó una dosis positiva " +
+                "con los parámetros configurados para la fuente seleccionada.";
+        }
 
         private static string TextoAportes(
             IReadOnlyDictionary<string, decimal> aportes) =>
