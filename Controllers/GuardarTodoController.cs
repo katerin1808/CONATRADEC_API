@@ -823,7 +823,8 @@ namespace CONATRADEC_API.Controllers
                 join analisis in _db.AnalisisSuelos.AsNoTracking()
                     on calculo.analisisSueloId equals analisis.analisisSueloId
                 where calculo.activo && analisis.activo
-                orderby calculo.fechaCalculo descending
+                orderby analisis.fechaCreacionAnalisisSuelo descending,
+                    calculo.fechaCalculo descending
                 select new
                 {
                     calculo.analisisSueloCalculoId,
@@ -831,6 +832,7 @@ namespace CONATRADEC_API.Controllers
                     analisis.identificadorAnalisisSuelo,
                     analisis.laboratorioAnalasisSuelo,
                     analisis.fechaAnalisisSuelo,
+                    analisis.fechaCreacionAnalisisSuelo,
                     calculo.fechaCalculo,
                     calculo.terrenoId,
                     calculo.tipoCultivoId,
@@ -875,7 +877,9 @@ namespace CONATRADEC_API.Controllers
             }
 
             var analisisLista = await query
-                .OrderByDescending(a => a.analisisSueloId)
+                .OrderByDescending(
+                    a => a.fechaCreacionAnalisisSuelo)
+                .ThenByDescending(a => a.analisisSueloId)
                 .ToListAsync();
 
             var respuesta = new List<object>();
@@ -964,6 +968,7 @@ namespace CONATRADEC_API.Controllers
                 {
                     analisis.analisisSueloId,
                     analisis.fechaAnalisisSuelo,
+                    analisis.fechaCreacionAnalisisSuelo,
                     analisis.laboratorioAnalasisSuelo,
                     analisis.identificadorAnalisisSuelo,
                     analisis.activo,
