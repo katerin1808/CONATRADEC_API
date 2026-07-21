@@ -2,6 +2,7 @@
 using CONATRADEC_API.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace CONATRADEC_API.Controllers
 {
@@ -10,6 +11,7 @@ namespace CONATRADEC_API.Controllers
     public class AlbumBotanicoCafeController : ControllerBase
     {
         private readonly DBContext _context;
+        private readonly ILogger<AlbumBotanicoCafeController> _logger;
 
         private static readonly string[] ExtensionesPermitidas =
         {
@@ -22,9 +24,12 @@ namespace CONATRADEC_API.Controllers
         private const long TamanoMaximoArchivo =
             8 * 1024 * 1024;
 
-        public AlbumBotanicoCafeController(DBContext context)
+        public AlbumBotanicoCafeController(
+            DBContext context,
+            ILogger<AlbumBotanicoCafeController> logger)
         {
             _context = context;
+            _logger = logger;
         }
 
         // GET: api/album-botanico/galeria
@@ -635,28 +640,94 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
-            var portadas = await _context
-                .AlbumesBotanicosCafeFotos
-                .Where(x =>
-                    x.albumBotanicoCafeId ==
-                        foto.albumBotanicoCafeId &&
-                    x.activo &&
-                    x.esPortada)
-                .ToListAsync();
-
-            foreach (var portada in portadas)
+            if (foto.esPortada)
             {
-                portada.esPortada = false;
+                return Ok(new
+                {
+                    success = true,
+                    message = "Esta fotografía ya es la portada."
+                });
             }
 
-            foto.esPortada = true;
-            await _context.SaveChangesAsync();
+            await using var transaccion = await _context
+                .Database
+                .BeginTransactionAsync();
 
-            return Ok(new
+            try
             {
-                success = true,
-                message = "Portada actualizada correctamente."
-            });
+                /*
+                 * Se realiza en dos guardados para evitar una violación
+                 * temporal del índice que garantiza una sola portada
+                 * activa por registro. SQL Server no garantiza el orden
+                 * de los UPDATE enviados dentro de un único SaveChanges.
+                 */
+                var portadasActuales = await _context
+                    .AlbumesBotanicosCafeFotos
+                    .Where(x =>
+                        x.albumBotanicoCafeId ==
+                            foto.albumBotanicoCafeId &&
+                        x.albumBotanicoCafeFotoId != fotoId &&
+                        x.activo &&
+                        x.esPortada)
+                    .ToListAsync();
+
+                if (portadasActuales.Count > 0)
+                {
+                    foreach (var portadaActual in portadasActuales)
+                    {
+                        portadaActual.esPortada = false;
+                    }
+
+                    await _context.SaveChangesAsync();
+                }
+
+                foto.esPortada = true;
+                await _context.SaveChangesAsync();
+
+                await transaccion.CommitAsync();
+
+                return Ok(new
+                {
+                    success = true,
+                    message = "Portada actualizada correctamente."
+                });
+            }
+            catch (DbUpdateException ex)
+            {
+                await transaccion.RollbackAsync();
+
+                _logger.LogError(
+                    ex,
+                    "Error de base de datos al establecer la foto {FotoId} " +
+                    "como portada del registro {RegistroId}.",
+                    fotoId,
+                    foto.albumBotanicoCafeId);
+
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message =
+                        "No fue posible actualizar la portada en la base de datos."
+                });
+            }
+            catch (Exception ex)
+            {
+                await transaccion.RollbackAsync();
+
+                _logger.LogError(
+                    ex,
+                    "Error inesperado al establecer la foto {FotoId} " +
+                    "como portada del registro {RegistroId}.",
+                    fotoId,
+                    foto.albumBotanicoCafeId);
+
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message =
+                        "No fue posible establecer la fotografía como portada."
+                });
+            }
         }
 
         // DELETE: api/album-botanico/fotos/1
