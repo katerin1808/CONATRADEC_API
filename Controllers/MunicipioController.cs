@@ -1,251 +1,327 @@
 ﻿using CONATRADEC_API.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using System;
 using static CONATRADEC_API.DTOs.MunicipioDto;
 
 namespace CONATRADEC_API.Controllers
 {
     public class MunicipioController : Controller
     {
-
         private readonly DBContext _ctx;
-        public MunicipioController(DBContext ctx) => _ctx = ctx;
 
+        public MunicipioController(DBContext ctx)
+        {
+            _ctx = ctx;
+        }
 
-        // ===========================================
-        // 1) CREAR
-        // POST /api/municipio/crear
-        // ===========================================
         [HttpPost("crear")]
         [Consumes("application/json")]
-        public async Task<ActionResult> Create([FromBody] MunicipioCreateRequest? req)
+        public async Task<ActionResult> Create(
+            [FromBody] MunicipioCreateRequest? req)
         {
-            if (req is null) return BadRequest("Body vacío o JSON mal formado.");
+            if (req is null)
+                return BadRequest("No se recibieron los datos del municipio.");
 
-            var nombre = req.NombreMunicipio?.ReplaceLineEndings(" ").Trim();
+            string? nombre =
+                req.NombreMunicipio?
+                    .ReplaceLineEndings(" ")
+                    .Trim();
+
             if (string.IsNullOrWhiteSpace(nombre))
-                return BadRequest("El nombre del municipio es requerido.");
+                return BadRequest("Ingrese el nombre del municipio.");
 
-            await using var trx = await _ctx.Database.BeginTransactionAsync();
+            var departamento = await _ctx.Departamento
+                .AsNoTracking()
+                .Include(d => d.Pais)
+                .Where(
+                    d => d.DepartamentoId == req.DepartamentoId &&
+                         d.Activo &&
+                         d.Pais != null &&
+                         d.Pais.Activo)
+                .Select(d => new
+                {
+                    d.DepartamentoId,
+                    d.NombreDepartamento,
+                    d.PaisId,
+                    NombrePais = d.Pais!.NombrePais
+                })
+                .SingleOrDefaultAsync();
+
+            if (departamento is null)
+            {
+                return BadRequest(
+                    "El departamento seleccionado no existe o está inactivo.");
+            }
+
+            string nombreNormalizado =
+                nombre.ToUpperInvariant();
+
+            bool duplicado = await _ctx.Municipios.AnyAsync(
+                m => m.DepartamentoId == req.DepartamentoId &&
+                     m.Activo &&
+                     EF.Functions.Collate(
+                         m.NombreMunicipio.ToUpper(),
+                         "Modern_Spanish_CI_AI") ==
+                     nombreNormalizado);
+
+            if (duplicado)
+            {
+                return Conflict(
+                    "Ya existe un municipio activo con ese nombre en el departamento seleccionado.");
+            }
+
+            await using var transaccion =
+                await _ctx.Database.BeginTransactionAsync();
+
             try
             {
-                // Departamento debe existir y estar ACTIVO (y su país también, si lo deseas)
-                var dep = await _ctx.Departamento
-                    .AsNoTracking()
-                    .Include(d => d.Pais)
-                    .Where(d => d.DepartamentoId == req.DepartamentoId && d.Activo)
-                    .Select(d => new { d.DepartamentoId, d.NombreDepartamento, d.Pais!.NombrePais })
-                    .SingleOrDefaultAsync();
-
-                if (dep is null)
-                    return BadRequest("No se puede crear el municipio: el departamento no existe o está inactivo.");
-
-                // Unicidad POR DEPARTAMENTO y SOLO entre activos
-                bool duplicado = await _ctx.Municipios
-                    .AnyAsync(m => m.DepartamentoId == req.DepartamentoId
-                                && m.Activo
-                                && EF.Functions.Collate(m.NombreMunicipio.ToUpper(), "Modern_Spanish_CI_AI") == nombre!.ToUpper());
-                if (duplicado)
-                    return Conflict("Ya existe un municipio activo con ese nombre en este departamento.");
-
-                var entity = new Municipio
+                var municipio = new Municipio
                 {
-                    NombreMunicipio = nombre!.ToUpper(),
+                    NombreMunicipio = nombreNormalizado,
                     DepartamentoId = req.DepartamentoId,
                     Activo = true
                 };
 
-                _ctx.Municipios.Add(entity);
+                _ctx.Municipios.Add(municipio);
                 await _ctx.SaveChangesAsync();
-                await trx.CommitAsync();
+                await transaccion.CommitAsync();
 
                 return Ok(new
                 {
-                    message = "Municipio creado exitosamente",
+                    message = "Municipio creado correctamente.",
                     municipio = new
                     {
-                        entity.MunicipioId,
-                        entity.NombreMunicipio,
-                        Departamento = dep.NombreDepartamento,
-                        Pais = dep.NombrePais
+                        municipio.MunicipioId,
+                        municipio.NombreMunicipio,
+                        Departamento = departamento.NombreDepartamento,
+                        Pais = departamento.NombrePais
                     }
                 });
             }
             catch
             {
-                await trx.RollbackAsync();
+                await transaccion.RollbackAsync();
                 throw;
             }
         }
-        // ==========================================================
-        // ==========================================================
-        // LISTAR TODOS LOS MUNICIPIOS CON SU DEPARTAMENTO Y PAÍS
-        // ==========================================================
-        [HttpGet("listarTodos-por-departamento-por-pais")]
-        public async Task<ActionResult<IEnumerable<MunicipioResponse>>> ListarTodosConDepartamentoYpais()
-        {
-            var data = await _ctx.Municipios
-        .AsNoTracking()
-        .Where(m => m.Activo
-                    && m.Departamento!.Activo
-                    && m.Departamento.Pais!.Activo)
-        .Include(m => m.Departamento)
-            .ThenInclude(d => d.Pais)
-        .OrderBy(m => m.Departamento!.NombreDepartamento)
-        .ThenBy(m => m.NombreMunicipio)
-        .Select(m => new MunicipioResponse
-        {
-            MunicipioId = m.MunicipioId,
-            NombreMunicipio = m.NombreMunicipio,
-            DepartamentoId = m.DepartamentoId,
-            NombreDepartamento = m.Departamento!.NombreDepartamento,
-            NombrePais = m.Departamento.Pais!.NombrePais,
-            Activo = m.Activo
-        })
-        .ToListAsync();
 
-            if (data.Count == 0)
+        [HttpGet("listarTodos-por-departamento-por-pais")]
+        public async Task<ActionResult<IEnumerable<MunicipioResponse>>>
+            ListarTodosConDepartamentoYpais()
+        {
+            List<MunicipioResponse> municipios =
+                await _ctx.Municipios
+                    .AsNoTracking()
+                    .Where(
+                        m => m.Activo &&
+                             m.Departamento != null &&
+                             m.Departamento.Activo &&
+                             m.Departamento.Pais != null &&
+                             m.Departamento.Pais.Activo)
+                    .OrderBy(
+                        m => m.Departamento!.NombreDepartamento)
+                    .ThenBy(m => m.NombreMunicipio)
+                    .Select(m => new MunicipioResponse
+                    {
+                        MunicipioId = m.MunicipioId,
+                        NombreMunicipio = m.NombreMunicipio,
+                        DepartamentoId = m.DepartamentoId,
+                        NombreDepartamento =
+                            m.Departamento!.NombreDepartamento,
+                        PaisId = m.Departamento.PaisId,
+                        NombrePais =
+                            m.Departamento.Pais!.NombrePais,
+                        Activo = m.Activo
+                    })
+                    .ToListAsync();
+
+            if (municipios.Count == 0)
                 return NotFound("No existen municipios activos registrados.");
 
-            return Ok(data);
+            return Ok(municipios);
         }
-        // ===========================================
-        // 2) LISTAR POR DEPARTAMENTO
-        // GET /api/municipio/por-departamento/{departamentoId}
-        // ===========================================
+
         [HttpGet("por-departamento/{departamentoId:int}")]
-        public async Task<ActionResult<IEnumerable<MunicipioResponse>>> ListarPorDepartamento(int departamentoId)
+        public async Task<ActionResult<IEnumerable<MunicipioResponse>>>
+            ListarPorDepartamento(int departamentoId)
         {
-            var dep = await _ctx.Departamento.AsNoTracking()
+            var departamento = await _ctx.Departamento
+                .AsNoTracking()
                 .Include(d => d.Pais)
-                .Where(d => d.DepartamentoId == departamentoId && d.Activo)
-                .Select(d => new { d.DepartamentoId, d.NombreDepartamento, d.Pais!.NombrePais })
+                .Where(
+                    d => d.DepartamentoId == departamentoId &&
+                         d.Activo &&
+                         d.Pais != null &&
+                         d.Pais.Activo)
+                .Select(d => new
+                {
+                    d.DepartamentoId,
+                    d.NombreDepartamento,
+                    d.PaisId,
+                    NombrePais = d.Pais!.NombrePais
+                })
                 .SingleOrDefaultAsync();
 
-            if (dep is null)
-                return NotFound($"No existe un departamento activo con ID {departamentoId}.");
+            if (departamento is null)
+            {
+                return NotFound(
+                    "El departamento seleccionado no existe o está inactivo.");
+            }
 
-            var data = await _ctx.Municipios
-                .AsNoTracking()
-                .Where(m => m.DepartamentoId == departamentoId && m.Activo)
-                .OrderBy(m => m.NombreMunicipio)
-                .Select(m => new MunicipioResponse
-                {
-                    MunicipioId = m.MunicipioId,
-                    NombreMunicipio = m.NombreMunicipio,
-                    DepartamentoId = m.DepartamentoId,
-                    NombreDepartamento = dep.NombreDepartamento,
-                    NombrePais = dep.NombrePais,
-                    Activo = m.Activo
-                })
-                .ToListAsync();
+            List<MunicipioResponse> municipios =
+                await _ctx.Municipios
+                    .AsNoTracking()
+                    .Where(
+                        m => m.DepartamentoId == departamentoId &&
+                             m.Activo)
+                    .OrderBy(m => m.NombreMunicipio)
+                    .Select(m => new MunicipioResponse
+                    {
+                        MunicipioId = m.MunicipioId,
+                        NombreMunicipio = m.NombreMunicipio,
+                        DepartamentoId = m.DepartamentoId,
+                        NombreDepartamento =
+                            departamento.NombreDepartamento,
+                        PaisId = departamento.PaisId,
+                        NombrePais = departamento.NombrePais,
+                        Activo = m.Activo
+                    })
+                    .ToListAsync();
 
-            if (data.Count == 0)
-                return NotFound($"El departamento '{dep.NombreDepartamento}' no tiene municipios activos.");
+            if (municipios.Count == 0)
+            {
+                return NotFound(
+                    $"El departamento '{departamento.NombreDepartamento}' no tiene municipios activos.");
+            }
 
-            return Ok(data);
+            return Ok(municipios);
         }
-        // ===========================================
-        // 3) ACTUALIZAR (solo nombre; NO permite cambiar DepartamentoId)
-        // PUT /api/municipio/actualizar/{id}
-        // ===========================================
+
         [HttpPut("actualizar/{id:int}")]
         [Consumes("application/json")]
-        public async Task<ActionResult> Update(int id, [FromBody] MunicipioUpdateRequest? req)
+        public async Task<ActionResult> Update(
+            int id,
+            [FromBody] MunicipioUpdateRequest? req)
         {
-            if (req is null) return BadRequest("Body vacío o JSON mal formado.");
+            if (req is null)
+                return BadRequest("No se recibieron los datos del municipio.");
 
-            var entity = await _ctx.Municipios.FindAsync(id);
-            if (entity is null) return NotFound("El municipio no existe.");
+            Municipio? municipio =
+                await _ctx.Municipios.FindAsync(id);
 
-            var nombre = req.NombreMunicipio?.ReplaceLineEndings(" ").Trim();
+            if (municipio is null)
+                return NotFound("El municipio no existe.");
+
+            if (!municipio.Activo)
+            {
+                return Conflict(
+                    "No se puede actualizar un municipio inactivo.");
+            }
+
+            string? nombre =
+                req.NombreMunicipio?
+                    .ReplaceLineEndings(" ")
+                    .Trim();
+
             if (string.IsNullOrWhiteSpace(nombre))
-                return BadRequest("El nombre del municipio es requerido.");
+                return BadRequest("Ingrese el nombre del municipio.");
 
-            if (!entity.Activo)
-                return Conflict("No se puede actualizar un municipio que está inactivo.");
+            string nombreNormalizado =
+                nombre.ToUpperInvariant();
 
-            await using var trx = await _ctx.Database.BeginTransactionAsync();
+            bool duplicado = await _ctx.Municipios.AnyAsync(
+                m => m.MunicipioId != id &&
+                     m.DepartamentoId == municipio.DepartamentoId &&
+                     m.Activo &&
+                     EF.Functions.Collate(
+                         m.NombreMunicipio.ToUpper(),
+                         "Modern_Spanish_CI_AI") ==
+                     nombreNormalizado);
+
+            if (duplicado)
+            {
+                return Conflict(
+                    "Ya existe un municipio activo con ese nombre en el departamento.");
+            }
+
+            await using var transaccion =
+                await _ctx.Database.BeginTransactionAsync();
+
             try
             {
-                var departamentoIdActual = entity.DepartamentoId;
+                municipio.NombreMunicipio = nombreNormalizado;
 
-                // Unicidad: por departamento y solo contra ACTIVOS
-                bool duplicadoActivo = await _ctx.Municipios
-                    .AnyAsync(m => m.MunicipioId != id
-                                && m.DepartamentoId == departamentoIdActual
-                                && m.Activo
-                                && EF.Functions.Collate(m.NombreMunicipio.ToUpper(), "Modern_Spanish_CI_AI") == nombre!.ToUpper());
-                if (duplicadoActivo)
-                    return Conflict("Ya existe un municipio activo con ese nombre en este departamento.");
-
-                entity.NombreMunicipio = nombre!.ToUpper();
                 await _ctx.SaveChangesAsync();
-                await trx.CommitAsync();
+                await transaccion.CommitAsync();
 
-                var dep = await _ctx.Departamento.AsNoTracking()
+                var departamento = await _ctx.Departamento
+                    .AsNoTracking()
                     .Include(d => d.Pais)
-                    .Where(d => d.DepartamentoId == departamentoIdActual && d.Activo)
-                    .Select(d => new { d.NombreDepartamento, d.Pais!.NombrePais })
+                    .Where(
+                        d => d.DepartamentoId ==
+                             municipio.DepartamentoId)
+                    .Select(d => new
+                    {
+                        d.NombreDepartamento,
+                        NombrePais =
+                            d.Pais != null
+                                ? d.Pais.NombrePais
+                                : string.Empty
+                    })
                     .SingleOrDefaultAsync();
 
                 return Ok(new
                 {
-                    message = "Municipio actualizado",
+                    message = "Municipio actualizado correctamente.",
                     municipio = new
                     {
-                        entity.MunicipioId,
-                        entity.NombreMunicipio,
-                        Departamento = dep?.NombreDepartamento ?? string.Empty,
-                        Pais = dep?.NombrePais ?? string.Empty
+                        municipio.MunicipioId,
+                        municipio.NombreMunicipio,
+                        Departamento =
+                            departamento?.NombreDepartamento ??
+                            string.Empty,
+                        Pais =
+                            departamento?.NombrePais ??
+                            string.Empty
                     }
                 });
             }
             catch
             {
-                await trx.RollbackAsync();
+                await transaccion.RollbackAsync();
                 throw;
             }
         }
 
-        // ===========================================
-        // 4) ELIMINAR (borrado lógico)
-        // DELETE /api/municipio/eliminar/{id}
-        // ===========================================
         [HttpDelete("eliminar/{id:int}")]
         public async Task<ActionResult> Delete(int id)
         {
-            var entity = await _ctx.Municipios
-                .FirstOrDefaultAsync(x =>
-                    x.MunicipioId == id &&
-                    x.Activo);
+            Municipio? municipio = await _ctx.Municipios
+                .FirstOrDefaultAsync(
+                    x => x.MunicipioId == id && x.Activo);
 
-            if (entity == null)
+            if (municipio is null)
             {
                 return NotFound(new
                 {
-                    mensaje = "El municipio no existe o ya está desactivado."
+                    mensaje =
+                        "El municipio no existe o ya está desactivado."
                 });
             }
 
             var dependencias = new List<string>();
 
-            var usadoEnUsuarios = await _ctx.Usuarios
+            bool usadoEnUsuarios = await _ctx.Usuarios
                 .AnyAsync(x => x.municipioId == id);
 
             if (usadoEnUsuarios)
-            {
                 dependencias.Add("usuarios");
-            }
 
-            var usadoEnTerrenos = await _ctx.Terreno
+            bool usadoEnTerrenos = await _ctx.Terreno
                 .AnyAsync(x => x.municipioId == id);
 
             if (usadoEnTerrenos)
-            {
                 dependencias.Add("terrenos");
-            }
 
             if (dependencias.Count > 0)
             {
@@ -253,20 +329,17 @@ namespace CONATRADEC_API.Controllers
                 {
                     mensaje =
                         "No se puede eliminar el municipio porque está siendo utilizado.",
-
                     municipio = new
                     {
-                        entity.MunicipioId,
-                        entity.NombreMunicipio,
-                        entity.DepartamentoId
+                        municipio.MunicipioId,
+                        municipio.NombreMunicipio,
+                        municipio.DepartamentoId
                     },
-
                     usadoEn = dependencias
                 });
             }
 
-            entity.Activo = false;
-
+            municipio.Activo = false;
             await _ctx.SaveChangesAsync();
 
             return Ok(new
@@ -274,9 +347,9 @@ namespace CONATRADEC_API.Controllers
                 mensaje = "Municipio desactivado correctamente.",
                 data = new
                 {
-                    entity.MunicipioId,
-                    entity.NombreMunicipio,
-                    entity.Activo
+                    municipio.MunicipioId,
+                    municipio.NombreMunicipio,
+                    municipio.Activo
                 }
             });
         }

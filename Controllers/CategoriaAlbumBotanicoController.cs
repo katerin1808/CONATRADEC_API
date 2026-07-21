@@ -254,26 +254,21 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
-            if (!activo)
-            {
-                bool tieneRegistrosActivos = await _context
-                    .AlbumesBotanicosCafe
-                    .AnyAsync(x =>
-                        x.categoriaAlbumBotanicoId == id &&
-                        x.activo);
-
-                if (tieneRegistrosActivos)
-                {
-                    return BadRequest(new
-                    {
-                        success = false,
-                        message =
-                            "La categoría tiene registros activos y no puede desactivarse."
-                    });
-                }
-            }
-
+            /*
+             * Cambiar el estado de la categoría no elimina ni cambia
+             * el estado de sus registros.
+             *
+             * Al desactivar la categoría:
+             * - La categoría deja de mostrarse en la galería pública.
+             * - Sus registros conservan su estado actual.
+             * - Al reactivar la categoría, sus registros activos vuelven
+             *   a mostrarse automáticamente.
+             *
+             * La validación de registros activos se conserva únicamente
+             * en el endpoint Eliminar.
+             */
             registro.activo = activo;
+
             await _context.SaveChangesAsync();
 
             return Ok(new

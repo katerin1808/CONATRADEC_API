@@ -1,78 +1,91 @@
 ﻿using System.ComponentModel.DataAnnotations;
-using System.ComponentModel.DataAnnotations.Schema;
 
 namespace CONATRADEC_API.DTOs
 {
     public class UsuarioCrearDto
     {
-        [Required, MaxLength(100)]
+        [Required(ErrorMessage = "Ingrese el nombre de usuario.")]
+        [MaxLength(100, ErrorMessage = "El nombre de usuario no puede superar 100 caracteres.")]
         public string nombreUsuario { get; set; } = default!;
 
-        [Required, MaxLength(150)]
+        [Required(ErrorMessage = "Ingrese el nombre completo del usuario.")]
+        [MaxLength(150, ErrorMessage = "El nombre completo no puede superar 150 caracteres.")]
         public string nombreCompletoUsuario { get; set; } = default!;
 
-        [Required, EmailAddress, MaxLength(150)]
+        [Required(ErrorMessage = "Ingrese el correo electrónico.")]
+        [EmailAddress(ErrorMessage = "Ingrese un correo electrónico válido.")]
+        [MaxLength(150, ErrorMessage = "El correo no puede superar 150 caracteres.")]
         public string correoUsuario { get; set; } = default!;
 
-        [MaxLength(25)]
+        [Required(ErrorMessage = "Ingrese el teléfono.")]
+        [RegularExpression(@"^\d{8}$", ErrorMessage = "El teléfono debe contener exactamente 8 dígitos.")]
         public string? telefonoUsuario { get; set; }
 
+        [Required(ErrorMessage = "Seleccione la fecha de nacimiento.")]
         public DateOnly? fechaNacimientoUsuario { get; set; }
 
-        // === Lógica Interno/Externo controlada por backend ===
         [Required]
         public bool esInterno { get; set; }
 
-        // Solo válido si es interno; para externos se ignora y se fuerza "Invitado"
         public int? rolId { get; set; }
-
-        // Relaciones opcionales
         public int? municipioId { get; set; }
 
-        [MaxLength(50)]
-        public string identificacionUsuario { get; set; } = "";
+        [Required(ErrorMessage = "Ingrese la identificación del usuario.")]
+        [RegularExpression(
+            @"^\d{3}-\d{6}-\d{4}[A-Za-z]$",
+            ErrorMessage = "La identificación debe tener el formato 001-080701-1050R.")]
+        [MaxLength(18)]
+        public string identificacionUsuario { get; set; } = string.Empty;
 
-        // Contraseña en texto plano
-        [Required, MinLength(6)]
+        [Required(ErrorMessage = "Ingrese una contraseña.")]
+        [RegularExpression(
+            @"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&.#_\-]).{8,}$",
+            ErrorMessage = "La contraseña debe tener al menos 8 caracteres e incluir mayúscula, minúscula, número y símbolo.")]
         public string clave { get; set; } = default!;
-
-        // 🔹 NUEVO (obligatorio)
-        /*[Required, MaxLength(300)]
-        public string urlImagenUsuario { get; set; } = default!;*/
     }
+
     public class UsuarioActualizarDto
     {
-        [Required, MaxLength(150)]
+        [Required(ErrorMessage = "Ingrese el nombre completo del usuario.")]
+        [MaxLength(150)]
         public string nombreCompletoUsuario { get; set; } = default!;
 
-        [Required, EmailAddress, MaxLength(150)]
+        [Required(ErrorMessage = "Ingrese el correo electrónico.")]
+        [EmailAddress(ErrorMessage = "Ingrese un correo electrónico válido.")]
+        [MaxLength(150)]
         public string correoUsuario { get; set; } = default!;
 
-        [MaxLength(25)]
+        [Required(ErrorMessage = "Ingrese el teléfono.")]
+        [RegularExpression(@"^\d{8}$", ErrorMessage = "El teléfono debe contener exactamente 8 dígitos.")]
         public string? telefonoUsuario { get; set; }
 
+        [Required(ErrorMessage = "Seleccione la fecha de nacimiento.")]
         public DateOnly? fechaNacimientoUsuario { get; set; }
 
-        // Cambiar tipo (interno/externo)
         [Required]
         public bool esInterno { get; set; }
 
-        // Si es interno y deseas cambiar rol
         public int? rolId { get; set; }
 
-        // Cambiar contraseña (opcional)
+        [RegularExpression(
+            @"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&.#_\-]).{8,}$",
+            ErrorMessage = "La nueva contraseña debe tener al menos 8 caracteres e incluir mayúscula, minúscula, número y símbolo.")]
         public string? nuevaClave { get; set; }
 
         public int? municipioId { get; set; }
 
-        [MaxLength(50)]
-        public string identificacionUsuario { get; set; } = "";
+        [Required(ErrorMessage = "Ingrese la identificación del usuario.")]
+        [RegularExpression(
+            @"^\d{3}-\d{6}-\d{4}[A-Za-z]$",
+            ErrorMessage = "La identificación debe tener el formato 001-080701-1050R.")]
+        [MaxLength(18)]
+        public string identificacionUsuario { get; set; } = string.Empty;
 
         public bool? activo { get; set; }
 
-        // 🔹 NUEVO (obligatorio)
-        [Required, MaxLength(500)]
-        public string urlImagenUsuario { get; set; } = default!;
+        // Se deja opcional: la actualización de datos no debe fallar cuando el usuario no tiene imagen.
+        [MaxLength(500)]
+        public string? urlImagenUsuario { get; set; }
     }
 
     public class UsuarioReadDto
@@ -83,26 +96,25 @@ namespace CONATRADEC_API.DTOs
         public string correoUsuario { get; set; } = default!;
         public string? telefonoUsuario { get; set; }
         public DateOnly? fechaNacimientoUsuario { get; set; }
-       
-        [MaxLength(50)]
         public string? identificacionUsuario { get; set; }
-
         public int rolId { get; set; }
         public int procedenciaId { get; set; }
         public int? municipioId { get; set; }
-
-        // Información derivada para front
         public string rolNombre { get; set; } = string.Empty;
         public string procedenciaNombre { get; set; } = string.Empty;
         public bool esInterno { get; set; }
-
-        public string? urlImagenUsuario { get; set; } = null;
+        public string? urlImagenUsuario { get; set; }
     }
-
 
     public class UsuarioActualizarClaveDto
     {
+        [Required(ErrorMessage = "Ingrese la contraseña actual.")]
         public string claveActual { get; set; } = null!;
+
+        [Required(ErrorMessage = "Ingrese la nueva contraseña.")]
+        [RegularExpression(
+            @"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&.#_\-]).{8,}$",
+            ErrorMessage = "La nueva contraseña debe tener al menos 8 caracteres e incluir mayúscula, minúscula, número y símbolo.")]
         public string nuevaClave { get; set; } = null!;
     }
 }
