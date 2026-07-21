@@ -2,6 +2,7 @@
 using CONATRADEC_API.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 
@@ -584,20 +585,97 @@ namespace CONATRADEC_API.Controllers
                     esInterno));
         }
 
+
         [HttpDelete("eliminar/{id:int}")]
         public async Task<IActionResult> Eliminar(int id)
         {
+            if (id <= 0)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "El identificador del usuario no es válido."
+                });
+            }
+
             Usuario? usuario = await _db.Usuarios
-                .FirstOrDefaultAsync(
-                    x => x.UsuarioId == id && x.activo);
+                .FirstOrDefaultAsync(x => x.UsuarioId == id);
 
             if (usuario is null)
-                return NotFound("Usuario no encontrado o inactivo.");
+            {
+                return NotFound(new
+                {
+                    success = false,
+                    message = "Usuario no encontrado."
+                });
+            }
+
+            if (!usuario.activo)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "El usuario ya se encuentra inactivo."
+                });
+            }
+
+            /*
+             * Evita que el usuario autenticado desactive su propia cuenta.
+             * Esto funciona si el UsuarioId se guarda en NameIdentifier
+             * dentro del token JWT.
+             */
+            string? usuarioAutenticadoTexto =
+                User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            if (int.TryParse(
+                    usuarioAutenticadoTexto,
+                    out int usuarioAutenticadoId)
+                && usuarioAutenticadoId == id)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "No puede desactivar su propio usuario."
+                });
+            }
+
+            /*
+             * Ajusta RolId y el valor 1 según tu modelo.
+             * Se supone que RolId = 1 corresponde al administrador.
+             */
+            const int rolAdministradorId = 1;
+
+            if (usuario.rolId == rolAdministradorId)
+            {
+                int administradoresActivos = await _db.Usuarios
+                    .CountAsync(x =>
+                        x.activo &&
+                        x.rolId == rolAdministradorId);
+
+                if (administradoresActivos <= 1)
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        message = "No se puede desactivar al único administrador activo del sistema."
+                    });
+                }
+            }
 
             usuario.activo = false;
+
             await _db.SaveChangesAsync();
 
-            return NoContent();
+            return Ok(new
+            {
+                success = true,
+                message = "Usuario desactivado correctamente.",
+                data = new
+                {
+                    usuario.UsuarioId,
+                    usuario.activo
+                }
+            });
         }
 
         [HttpPut("{id:int}/actualizar-clave")]
