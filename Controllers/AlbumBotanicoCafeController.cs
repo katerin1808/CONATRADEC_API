@@ -1,4 +1,4 @@
-using CONATRADEC_API.DTOs;
+﻿using CONATRADEC_API.DTOs;
 using CONATRADEC_API.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -10,7 +10,6 @@ namespace CONATRADEC_API.Controllers
     public class AlbumBotanicoCafeController : ControllerBase
     {
         private readonly DBContext _context;
-        private readonly IWebHostEnvironment _env;
 
         private static readonly string[] ExtensionesPermitidas =
         {
@@ -20,37 +19,44 @@ namespace CONATRADEC_API.Controllers
             ".webp"
         };
 
-        private const long TamanoMaximoArchivo = 8 * 1024 * 1024;
+        private const long TamanoMaximoArchivo =
+            8 * 1024 * 1024;
 
-        public AlbumBotanicoCafeController(
-            DBContext context,
-            IWebHostEnvironment env)
+        public AlbumBotanicoCafeController(DBContext context)
         {
             _context = context;
-            _env = env;
         }
 
         // GET: api/album-botanico/galeria
+        // GET: api/album-botanico/galeria?incluirInactivos=true
+        // GET: api/album-botanico/galeria?categoriaId=2&buscar=roya
         [HttpGet("galeria")]
         public async Task<ActionResult> Galeria(
             [FromQuery] int? categoriaId = null,
-            [FromQuery] string? buscar = null)
+            [FromQuery] string? buscar = null,
+            [FromQuery] bool incluirInactivos = false)
         {
             var query = _context.AlbumesBotanicosCafe
                 .AsNoTracking()
-                .Where(x =>
+                .AsQueryable();
+
+            if (!incluirInactivos)
+            {
+                query = query.Where(x =>
                     x.activo &&
                     x.Categoria.activo);
+            }
 
             if (categoriaId.HasValue)
             {
                 query = query.Where(x =>
-                    x.categoriaAlbumBotanicoId == categoriaId.Value);
+                    x.categoriaAlbumBotanicoId ==
+                    categoriaId.Value);
             }
 
             if (!string.IsNullOrWhiteSpace(buscar))
             {
-                var texto = buscar.Trim();
+                string texto = buscar.Trim();
 
                 query = query.Where(x =>
                     x.titulo.Contains(texto) ||
@@ -62,16 +68,15 @@ namespace CONATRADEC_API.Controllers
             }
 
             var data = await query
-                .OrderBy(x => x.Categoria.nombreCategoria)
+                .OrderByDescending(x => x.activo)
+                .ThenBy(x => x.Categoria.nombreCategoria)
                 .ThenBy(x => x.titulo)
                 .Select(x => new
                 {
                     x.albumBotanicoCafeId,
                     x.categoriaAlbumBotanicoId,
-
                     categoria =
                         x.Categoria.nombreCategoria,
-
                     x.titulo,
                     x.nombreCientifico,
 
@@ -88,7 +93,11 @@ namespace CONATRADEC_API.Controllers
                         .FirstOrDefault(),
 
                     totalFotos =
-                        x.Fotos.Count(f => f.activo)
+                        x.Fotos.Count(f => f.activo),
+
+                    x.activo,
+                    categoriaActiva = x.Categoria.activo,
+                    x.fechaCreacion
                 })
                 .ToListAsync();
 
@@ -101,22 +110,31 @@ namespace CONATRADEC_API.Controllers
         }
 
         // GET: api/album-botanico/detalle/1
+        // GET: api/album-botanico/detalle/1?incluirInactivos=true
         [HttpGet("detalle/{id:int}")]
-        public async Task<ActionResult> Detalle(int id)
+        public async Task<ActionResult> Detalle(
+            int id,
+            [FromQuery] bool incluirInactivos = false)
         {
-            var data = await _context.AlbumesBotanicosCafe
+            var query = _context.AlbumesBotanicosCafe
                 .AsNoTracking()
-                .Where(x =>
-                    x.albumBotanicoCafeId == id &&
-                    x.activo)
+                .Where(x => x.albumBotanicoCafeId == id);
+
+            if (!incluirInactivos)
+            {
+                query = query.Where(x =>
+                    x.activo &&
+                    x.Categoria.activo);
+            }
+
+            var data = await query
                 .Select(x => new
                 {
                     x.albumBotanicoCafeId,
                     x.categoriaAlbumBotanicoId,
-
                     categoria =
                         x.Categoria.nombreCategoria,
-
+                    categoriaActiva = x.Categoria.activo,
                     x.titulo,
                     x.nombreCientifico,
                     x.descripcion,
@@ -149,7 +167,8 @@ namespace CONATRADEC_API.Controllers
                 return NotFound(new
                 {
                     success = false,
-                    message = "El registro del álbum no fue encontrado."
+                    message =
+                        "El registro del álbum no fue encontrado."
                 });
             }
 
@@ -166,7 +185,12 @@ namespace CONATRADEC_API.Controllers
         public async Task<ActionResult> Crear(
             [FromBody] CrearAlbumBotanicoCafeDto dto)
         {
-            var categoriaExiste = await _context
+            if (!ModelState.IsValid)
+            {
+                return ValidationProblem(ModelState);
+            }
+
+            bool categoriaExiste = await _context
                 .CategoriasAlbumBotanico
                 .AnyAsync(x =>
                     x.categoriaAlbumBotanicoId ==
@@ -178,7 +202,29 @@ namespace CONATRADEC_API.Controllers
                 return BadRequest(new
                 {
                     success = false,
-                    message = "La categoría no existe o está inactiva."
+                    message =
+                        "La categoría no existe o está inactiva."
+                });
+            }
+
+            string titulo = dto.titulo.Trim();
+            string descripcion = dto.descripcion.Trim();
+
+            if (string.IsNullOrWhiteSpace(titulo))
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "El título es obligatorio."
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(descripcion))
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "La descripción es obligatoria."
                 });
             }
 
@@ -186,37 +232,23 @@ namespace CONATRADEC_API.Controllers
             {
                 categoriaAlbumBotanicoId =
                     dto.categoriaAlbumBotanicoId,
-
-                titulo =
-                    dto.titulo.Trim(),
-
+                titulo = titulo,
                 nombreCientifico =
                     dto.nombreCientifico?.Trim(),
-
-                descripcion =
-                    dto.descripcion.Trim(),
-
+                descripcion = descripcion,
                 caracteristicas =
                     dto.caracteristicas?.Trim(),
-
-                sintomas =
-                    dto.sintomas?.Trim(),
-
-                causas =
-                    dto.causas?.Trim(),
-
+                sintomas = dto.sintomas?.Trim(),
+                causas = dto.causas?.Trim(),
                 recomendaciones =
                     dto.recomendaciones?.Trim(),
-
                 observaciones =
                     dto.observaciones?.Trim(),
-
                 activo = true,
                 fechaCreacion = DateTime.Now
             };
 
             _context.AlbumesBotanicosCafe.Add(registro);
-
             await _context.SaveChangesAsync();
 
             return Ok(new
@@ -236,6 +268,11 @@ namespace CONATRADEC_API.Controllers
             int id,
             [FromBody] ActualizarAlbumBotanicoCafeDto dto)
         {
+            if (!ModelState.IsValid)
+            {
+                return ValidationProblem(ModelState);
+            }
+
             if (id != dto.albumBotanicoCafeId)
             {
                 return BadRequest(new
@@ -256,11 +293,12 @@ namespace CONATRADEC_API.Controllers
                 return NotFound(new
                 {
                     success = false,
-                    message = "El registro del álbum no fue encontrado."
+                    message =
+                        "El registro del álbum no fue encontrado."
                 });
             }
 
-            var categoriaExiste = await _context
+            bool categoriaExiste = await _context
                 .CategoriasAlbumBotanico
                 .AnyAsync(x =>
                     x.categoriaAlbumBotanicoId ==
@@ -272,34 +310,39 @@ namespace CONATRADEC_API.Controllers
                 return BadRequest(new
                 {
                     success = false,
-                    message = "La categoría no existe o está inactiva."
+                    message =
+                        "La categoría no existe o está inactiva."
+                });
+            }
+
+            string titulo = dto.titulo.Trim();
+            string descripcion = dto.descripcion.Trim();
+
+            if (string.IsNullOrWhiteSpace(titulo) ||
+                string.IsNullOrWhiteSpace(descripcion))
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "El título y la descripción son obligatorios."
                 });
             }
 
             registro.categoriaAlbumBotanicoId =
                 dto.categoriaAlbumBotanicoId;
-
-            registro.titulo =
-                dto.titulo.Trim();
-
+            registro.titulo = titulo;
             registro.nombreCientifico =
                 dto.nombreCientifico?.Trim();
-
-            registro.descripcion =
-                dto.descripcion.Trim();
-
+            registro.descripcion = descripcion;
             registro.caracteristicas =
                 dto.caracteristicas?.Trim();
-
             registro.sintomas =
                 dto.sintomas?.Trim();
-
             registro.causas =
                 dto.causas?.Trim();
-
             registro.recomendaciones =
                 dto.recomendaciones?.Trim();
-
             registro.observaciones =
                 dto.observaciones?.Trim();
 
@@ -328,12 +371,43 @@ namespace CONATRADEC_API.Controllers
                 return NotFound(new
                 {
                     success = false,
-                    message = "El registro del álbum no fue encontrado."
+                    message =
+                        "El registro del álbum no fue encontrado."
                 });
             }
 
-            registro.activo = activo;
+            if (registro.activo == activo)
+            {
+                return Ok(new
+                {
+                    success = true,
+                    message = activo
+                        ? "El registro ya se encuentra activo."
+                        : "El registro ya se encuentra inactivo."
+                });
+            }
 
+            if (activo)
+            {
+                bool categoriaActiva = await _context
+                    .CategoriasAlbumBotanico
+                    .AnyAsync(x =>
+                        x.categoriaAlbumBotanicoId ==
+                            registro.categoriaAlbumBotanicoId &&
+                        x.activo);
+
+                if (!categoriaActiva)
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        message =
+                            "No se puede activar el registro porque su categoría está inactiva."
+                    });
+                }
+            }
+
+            registro.activo = activo;
             await _context.SaveChangesAsync();
 
             return Ok(new
@@ -346,6 +420,7 @@ namespace CONATRADEC_API.Controllers
         }
 
         // DELETE: api/album-botanico/eliminar/1
+        // La eliminación es lógica.
         [HttpDelete("eliminar/{id:int}")]
         public async Task<ActionResult> Eliminar(int id)
         {
@@ -366,7 +441,6 @@ namespace CONATRADEC_API.Controllers
             }
 
             registro.activo = false;
-
             await _context.SaveChangesAsync();
 
             return Ok(new
@@ -383,7 +457,7 @@ namespace CONATRADEC_API.Controllers
             int id,
             [FromForm] SubirFotoAlbumBotanicoDto dto)
         {
-            var albumExiste = await _context
+            bool albumExiste = await _context
                 .AlbumesBotanicosCafe
                 .AnyAsync(x =>
                     x.albumBotanicoCafeId == id &&
@@ -399,7 +473,8 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
-            if (dto.archivo == null || dto.archivo.Length == 0)
+            if (dto.archivo == null ||
+                dto.archivo.Length == 0)
             {
                 return BadRequest(new
                 {
@@ -417,7 +492,7 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
-            var extension = Path
+            string extension = Path
                 .GetExtension(dto.archivo.FileName)
                 .ToLowerInvariant();
 
@@ -431,23 +506,22 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
-            var carpetaBase = Path.Combine(
-      Directory.GetCurrentDirectory(),
-      "resources",
-      "uploads",
-      "album-botanico"
-  );
+            string carpetaBase = Path.Combine(
+                Directory.GetCurrentDirectory(),
+                "resources",
+                "uploads",
+                "album-botanico");
 
-            var carpetaFisica = Path.Combine(
+            string carpetaFisica = Path.Combine(
                 carpetaBase,
                 id.ToString());
 
             Directory.CreateDirectory(carpetaFisica);
 
-            var nombreArchivo =
+            string nombreArchivo =
                 $"{Guid.NewGuid():N}{extension}";
 
-            var rutaFisica = Path.Combine(
+            string rutaFisica = Path.Combine(
                 carpetaFisica,
                 nombreArchivo);
 
@@ -474,21 +548,21 @@ namespace CONATRADEC_API.Controllers
                 }
             }
 
-            var rutaPublica =
+            string rutaPublica =
                 $"/resources/uploads/album-botanico/{id}/{nombreArchivo}";
 
             var foto = new AlbumBotanicoCafeFoto
             {
                 albumBotanicoCafeId = id,
                 rutaFoto = rutaPublica,
-                descripcionFoto = dto.descripcionFoto?.Trim(),
+                descripcionFoto =
+                    dto.descripcionFoto?.Trim(),
                 esPortada = dto.esPortada,
                 orden = dto.orden,
                 activo = true
             };
 
             _context.AlbumesBotanicosCafeFotos.Add(foto);
-
             await _context.SaveChangesAsync();
 
             return Ok(new
@@ -509,10 +583,16 @@ namespace CONATRADEC_API.Controllers
             int fotoId,
             [FromBody] ActualizarFotoAlbumBotanicoDto dto)
         {
+            if (!ModelState.IsValid)
+            {
+                return ValidationProblem(ModelState);
+            }
+
             var foto = await _context
                 .AlbumesBotanicosCafeFotos
                 .FirstOrDefaultAsync(x =>
-                    x.albumBotanicoCafeFotoId == fotoId);
+                    x.albumBotanicoCafeFotoId == fotoId &&
+                    x.activo);
 
             if (foto == null)
             {
@@ -525,9 +605,7 @@ namespace CONATRADEC_API.Controllers
 
             foto.descripcionFoto =
                 dto.descripcionFoto?.Trim();
-
-            foto.orden =
-                dto.orden;
+            foto.orden = dto.orden;
 
             await _context.SaveChangesAsync();
 
@@ -572,7 +650,6 @@ namespace CONATRADEC_API.Controllers
             }
 
             foto.esPortada = true;
-
             await _context.SaveChangesAsync();
 
             return Ok(new
