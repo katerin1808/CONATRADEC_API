@@ -63,6 +63,22 @@ app.UseStaticFiles(new StaticFileOptions
     FileProvider = new PhysicalFileProvider(rutaTerrenos),
     RequestPath = "/resources/uploads/terrenos"
 });
+
+
+var rutaAlbumBotanico = Path.Combine(
+    Directory.GetCurrentDirectory(),
+    "resources",
+    "uploads",
+    "album-botanico"
+);
+
+Directory.CreateDirectory(rutaAlbumBotanico);
+
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(rutaAlbumBotanico),
+    RequestPath = "/resources/uploads/album-botanico"
+});
 app.MapControllers();
 
 app.Run();

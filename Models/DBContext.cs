@@ -64,6 +64,11 @@ namespace CONATRADEC_API.Models
         public DbSet<FuenteFertilizacionMixta> fuenteFertilizacionMixta { get; set; } = null!;
         public DbSet<FertilizacionMixtaDetalle> fertilizacionMixtaDetalle { get; set; }
 
+        public virtual DbSet<CategoriaAlbumBotanico> CategoriasAlbumBotanico { get; set; } = null!;
+        public virtual DbSet<AlbumBotanicoCafe> AlbumesBotanicosCafe { get; set; } = null!;
+        public virtual DbSet<AlbumBotanicoCafeFoto> AlbumesBotanicosCafeFotos { get; set; } = null!;
+
+
 
         // ==========================
         // CONFIGURACIONES
@@ -482,11 +487,16 @@ namespace CONATRADEC_API.Models
                 .IsRequired();
 
 
+            // En OnModelCreating:
+            modelBuilder.Entity<CategoriaAlbumBotanico>().HasKey(x => x.categoriaAlbumBotanicoId);
 
-  
+            modelBuilder.Entity<AlbumBotanicoCafe>().HasOne(x => x.Categoria).WithMany(x => x.Registros).HasForeignKey(x => x.categoriaAlbumBotanicoId).OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<AlbumBotanicoCafeFoto>().HasOne(x => x.AlbumBotanicoCafe).WithMany(x => x.Fotos).HasForeignKey(x => x.albumBotanicoCafeId).OnDelete(DeleteBehavior.Restrict);
 
 
 
-    }
+
+        }
 }
 }
