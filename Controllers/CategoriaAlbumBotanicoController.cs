@@ -30,9 +30,9 @@ namespace CONATRADEC_API.Controllers
                     x.categoriaAlbumBotanicoId,
                     x.nombreCategoria,
                     x.descripcion,
-
-                    totalRegistros = x.Registros
-                        .Count(r => r.activo)
+                    x.rutaImagenPortada,
+                    totalRegistros =
+                        x.Registros.Count(r => r.activo)
                 })
                 .ToListAsync();
 
@@ -326,6 +326,122 @@ namespace CONATRADEC_API.Controllers
             {
                 success = true,
                 message = "Categoría desactivada correctamente."
+            });
+        }
+
+        [HttpPost("{id:int}/portada")]
+        public async Task<ActionResult> SubirPortada(
+    int id,
+    [FromForm] SubirPortadaCategoriaAlbumDto dto)
+        {
+            var categoria = await _context.CategoriasAlbumBotanico
+                .FirstOrDefaultAsync(x =>
+                    x.categoriaAlbumBotanicoId == id);
+
+            if (categoria == null)
+            {
+                return NotFound(new
+                {
+                    success = false,
+                    message = "La categoría no existe."
+                });
+            }
+
+            if (dto.archivo == null || dto.archivo.Length == 0)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "Debe seleccionar una imagen."
+                });
+            }
+
+            var extensionesPermitidas = new[]
+            {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp"
+    };
+
+            var extension = Path
+                .GetExtension(dto.archivo.FileName)
+                .ToLowerInvariant();
+
+            if (!extensionesPermitidas.Contains(extension))
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "Solo se permiten imágenes JPG, JPEG, PNG o WEBP."
+                });
+            }
+
+            const long tamanioMaximo = 8 * 1024 * 1024;
+
+            if (dto.archivo.Length > tamanioMaximo)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "La imagen no puede superar los 8 MB."
+                });
+            }
+
+            var carpetaBase = Path.Combine(
+                Directory.GetCurrentDirectory(),
+                "resources",
+                "uploads",
+                "categorias-album"
+            );
+
+            Directory.CreateDirectory(carpetaBase);
+
+            if (!string.IsNullOrWhiteSpace(categoria.rutaImagenPortada))
+            {
+                var nombreAnterior = Path.GetFileName(
+                    categoria.rutaImagenPortada);
+
+                var rutaAnterior = Path.Combine(
+                    carpetaBase,
+                    nombreAnterior);
+
+                if (System.IO.File.Exists(rutaAnterior))
+                {
+                    System.IO.File.Delete(rutaAnterior);
+                }
+            }
+
+            var nombreArchivo =
+                $"{id}_{Guid.NewGuid():N}{extension}";
+
+            var rutaFisica = Path.Combine(
+                carpetaBase,
+                nombreArchivo);
+
+            await using (var stream = new FileStream(
+                rutaFisica,
+                FileMode.Create))
+            {
+                await dto.archivo.CopyToAsync(stream);
+            }
+
+            var rutaPublica =
+                $"/resources/uploads/categorias-album/{nombreArchivo}";
+
+            categoria.rutaImagenPortada = rutaPublica;
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                success = true,
+                message = "Portada de la categoría guardada correctamente.",
+                data = new
+                {
+                    categoria.categoriaAlbumBotanicoId,
+                    categoria.rutaImagenPortada
+                }
             });
         }
     }

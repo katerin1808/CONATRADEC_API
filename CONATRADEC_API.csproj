@@ -23,6 +23,7 @@
 
   <ItemGroup>
     <Folder Include="resources\uploads\album-botanico\" />
+    <Folder Include="resources\uploads\categorias-album\" />
     <Folder Include="resources\uploads\terrenos\img\" />
   </ItemGroup>
 

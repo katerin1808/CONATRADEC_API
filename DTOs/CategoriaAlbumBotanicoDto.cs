@@ -14,4 +14,10 @@ namespace CONATRADEC_API.DTOs
         [Required]
         public int categoriaAlbumBotanicoId {get;set;} 
     }
+
+    public class SubirPortadaCategoriaAlbumDto
+    {
+        [Required]
+        public IFormFile archivo { get; set; } = null!;
+    }
 }

@@ -79,6 +79,23 @@ app.UseStaticFiles(new StaticFileOptions
     FileProvider = new PhysicalFileProvider(rutaAlbumBotanico),
     RequestPath = "/resources/uploads/album-botanico"
 });
+
+var rutaCategoriasAlbum = Path.Combine(
+    Directory.GetCurrentDirectory(),
+    "resources",
+    "uploads",
+    "categorias-album"
+);
+
+Directory.CreateDirectory(rutaCategoriasAlbum);
+
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(
+        rutaCategoriasAlbum),
+    RequestPath =
+        "/resources/uploads/categorias-album"
+});
 app.MapControllers();
 
 app.Run();

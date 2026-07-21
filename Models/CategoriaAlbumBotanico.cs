@@ -12,7 +12,11 @@ namespace CONATRADEC_API.Models {
         public string nombreCategoria {get;set;}=string.Empty;
         [MaxLength(500)] 
         public string? descripcion {get;set;}
+        public string? rutaImagenPortada { get; set; }
         public bool activo {get;set;}=true;
-        public ICollection<AlbumBotanicoCafe> Registros {get;set;}=new List<AlbumBotanicoCafe>(); } 
+        public ICollection<AlbumBotanicoCafe> Registros {get;set;}=new List<AlbumBotanicoCafe>();
+       
+
+    } 
 
 }
