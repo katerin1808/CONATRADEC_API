@@ -40,6 +40,8 @@ builder.Services.AddSwaggerGen();
 
 QuestPDF.Settings.License = LicenseType.Community;
 
+builder.Services.AddScoped<ImageService>();
+
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())

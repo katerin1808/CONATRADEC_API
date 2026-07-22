@@ -1,5 +1,6 @@
 ﻿using CONATRADEC_API.DTOs;
 using CONATRADEC_API.Models;
+using CONATRADEC_API.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -10,10 +11,12 @@ namespace CONATRADEC_API.Controllers
     public class CategoriaAlbumBotanicoController : ControllerBase
     {
         private readonly DBContext _context;
+        private readonly ImageService _imageService;
 
-        public CategoriaAlbumBotanicoController(DBContext context)
+        public CategoriaAlbumBotanicoController(DBContext context, ImageService imageService)
         {
             _context = context;
+            _imageService = imageService;
         }
 
         // GET: api/categoria-album-botanico/listar
@@ -395,48 +398,24 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
-            string carpetaBase = Path.Combine(
-                Directory.GetCurrentDirectory(),
-                "resources",
-                "uploads",
-                "categorias-album");
+            // Guarda la ruta anterior para eliminar el archivo luego.
+            string? rutaAnterior = categoria.rutaImagenPortada;
 
-            Directory.CreateDirectory(carpetaBase);
+            // Procesa la imagen (redimensiona, comprime y guarda en WebP).
+            string rutaNueva = await _imageService.GuardarImagenWebpAsync(
+                dto.archivo,
+                "categorias-album",
+                1280,
+                1280,
+                65);
 
-            if (!string.IsNullOrWhiteSpace(
-                    categoria.rutaImagenPortada))
-            {
-                string nombreAnterior = Path.GetFileName(
-                    categoria.rutaImagenPortada);
+            categoria.rutaImagenPortada = rutaNueva;
 
-                string rutaAnterior = Path.Combine(
-                    carpetaBase,
-                    nombreAnterior);
+            await _context.SaveChangesAsync();
 
-                if (System.IO.File.Exists(rutaAnterior))
-                {
-                    System.IO.File.Delete(rutaAnterior);
-                }
-            }
-
-            string nombreArchivo =
-                $"{id}_{Guid.NewGuid():N}{extension}";
-
-            string rutaFisica = Path.Combine(
-                carpetaBase,
-                nombreArchivo);
-
-            await using (var stream = new FileStream(
-                rutaFisica,
-                FileMode.Create))
-            {
-                await dto.archivo.CopyToAsync(stream);
-            }
-
-            string rutaPublica =
-                $"/resources/uploads/categorias-album/{nombreArchivo}";
-
-            categoria.rutaImagenPortada = rutaPublica;
+            // Elimina el archivo anterior solo cuando la nueva imagen
+            // ya fue guardada correctamente.
+            _imageService.EliminarImagen(rutaAnterior);
             await _context.SaveChangesAsync();
 
             return Ok(new

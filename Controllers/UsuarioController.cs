@@ -1,5 +1,6 @@
 ﻿using CONATRADEC_API.DTOs;
 using CONATRADEC_API.Models;
+using CONATRADEC_API.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
@@ -20,14 +21,18 @@ namespace CONATRADEC_API.Controllers
         private static readonly Regex IdentificacionRegex = new(
             @"^\d{3}-\d{6}-\d{4}[A-Za-z]$",
             RegexOptions.Compiled);
-
         private readonly DBContext _db;
-        private readonly IHostEnvironment _env;
+        private readonly ImageService _imageService;
+        private readonly ILogger<UsuarioController> _logger;
 
-        public UsuarioController(DBContext db, IHostEnvironment env)
+        public UsuarioController(
+            DBContext db,
+            ImageService imageService,
+            ILogger<UsuarioController> logger)
         {
             _db = db;
-            _env = env;
+            _imageService = imageService;
+            _logger = logger;
         }
 
         private static string BuildHash(string password)
@@ -370,103 +375,185 @@ namespace CONATRADEC_API.Controllers
                     procedenciaNombre,
                     esInterno));
         }
-
         [HttpPost("{usuarioId:int}/SubirImagenUsuario")]
-        [RequestSizeLimit(10 * 1024 * 1024)]
+        [RequestSizeLimit(8 * 1024 * 1024)]
         public async Task<IActionResult> SubirImagenUsuario(
             int usuarioId,
-            IFormFile? archivo)
+            [FromForm] IFormFile? archivo)
         {
+            if (usuarioId <= 0)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "El identificador del usuario no es válido."
+                });
+            }
+
             if (archivo is null || archivo.Length == 0)
             {
-                return BadRequest(
-                    "Seleccione una imagen para el usuario.");
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "Seleccione una imagen para el usuario."
+                });
             }
 
             Usuario? usuario = await _db.Usuarios
-                .FirstOrDefaultAsync(
-                    u => u.UsuarioId == usuarioId && u.activo);
+                .FirstOrDefaultAsync(u =>
+                    u.UsuarioId == usuarioId);
 
             if (usuario is null)
-                return NotFound("Usuario no encontrado o inactivo.");
-
-            string[] extensionesPermitidas =
-                { ".jpg", ".jpeg", ".png" };
-
-            string extension =
-                Path.GetExtension(archivo.FileName).ToLowerInvariant();
-
-            if (!extensionesPermitidas.Contains(extension))
             {
-                return BadRequest(
-                    "La imagen debe tener formato JPG, JPEG o PNG.");
-            }
-
-            if (string.IsNullOrWhiteSpace(archivo.ContentType) ||
-                !archivo.ContentType.StartsWith(
-                    "image/",
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                return BadRequest(
-                    "El archivo seleccionado no corresponde a una imagen.");
-            }
-
-            string uploadsRoot = Path.Combine(
-                _env.ContentRootPath,
-                "resources",
-                "uploads",
-                "users",
-                "img");
-
-            Directory.CreateDirectory(uploadsRoot);
-
-            string nombreArchivo =
-                $"user_{usuario.nombreUsuario}_id_{usuario.UsuarioId}{extension}";
-
-            string rutaFisica =
-                Path.Combine(uploadsRoot, nombreArchivo);
-
-            if (!string.IsNullOrWhiteSpace(usuario.urlImagenUsuario))
-            {
-                try
+                return NotFound(new
                 {
-                    var uri = new Uri(usuario.urlImagenUsuario);
-                    string nombreAnterior =
-                        Path.GetFileName(uri.LocalPath);
+                    success = false,
+                    message = "El usuario no fue encontrado."
+                });
+            }
 
-                    string rutaAnterior =
-                        Path.Combine(uploadsRoot, nombreAnterior);
-
-                    if (System.IO.File.Exists(rutaAnterior))
-                        System.IO.File.Delete(rutaAnterior);
-                }
-                catch
+            if (!usuario.activo)
+            {
+                return BadRequest(new
                 {
-                    // La imagen nueva todavía puede guardarse.
+                    success = false,
+                    message =
+                        "No se puede agregar una imagen a un usuario inactivo."
+                });
+            }
+
+            string? rutaAnterior = usuario.urlImagenUsuario;
+            string? rutaNueva = null;
+
+            try
+            {
+                /*
+                 * La imagen de usuario se reduce, convierte a WebP
+                 * y se guarda en:
+                 *
+                 * wwwroot/resources/uploads/users/img
+                 */
+                rutaNueva = await _imageService.GuardarImagenWebpAsync(
+                    archivo,
+                    "users/img",
+                    600,
+                    600,
+                    70);
+
+                string baseUrl =
+                    $"{Request.Scheme}://{Request.Host.Value}";
+
+                string urlPublica = $"{baseUrl}{rutaNueva}";
+
+                usuario.urlImagenUsuario = urlPublica;
+
+                await _db.SaveChangesAsync();
+
+                /*
+                 * La imagen anterior se elimina únicamente después
+                 * de guardar correctamente la nueva ruta en la BD.
+                 */
+                if (!string.IsNullOrWhiteSpace(rutaAnterior))
+                {
+                    string rutaAnteriorRelativa = rutaAnterior;
+
+                    if (Uri.TryCreate(
+                            rutaAnterior,
+                            UriKind.Absolute,
+                            out Uri? uriAnterior))
+                    {
+                        rutaAnteriorRelativa = uriAnterior.LocalPath;
+                    }
+
+                    _imageService.EliminarImagen(rutaAnteriorRelativa);
                 }
+
+                return Ok(new
+                {
+                    success = true,
+                    message = "Imagen del usuario guardada correctamente.",
+                    data = new
+                    {
+                        usuario.UsuarioId,
+                        usuario.nombreUsuario,
+                        urlImagen = usuario.urlImagenUsuario
+                    }
+                });
             }
-
-            await using (var stream =
-                new FileStream(rutaFisica, FileMode.Create))
+            catch (ArgumentException ex)
             {
-                await archivo.CopyToAsync(stream);
+                if (!string.IsNullOrWhiteSpace(rutaNueva))
+                {
+                    _imageService.EliminarImagen(rutaNueva);
+                }
+
+                return BadRequest(new
+                {
+                    success = false,
+                    message = ex.Message
+                });
             }
-
-            string baseUrl =
-                $"{Request.Scheme}://{Request.Host.Value}";
-
-            string urlPublica =
-                $"{baseUrl}/resources/uploads/users/img/{nombreArchivo}";
-
-            usuario.urlImagenUsuario = urlPublica;
-            await _db.SaveChangesAsync();
-
-            return Ok(new
+            catch (SixLabors.ImageSharp.UnknownImageFormatException ex)
             {
-                usuario.UsuarioId,
-                usuario.nombreUsuario,
-                urlImagen = urlPublica
-            });
+                if (!string.IsNullOrWhiteSpace(rutaNueva))
+                {
+                    _imageService.EliminarImagen(rutaNueva);
+                }
+
+                _logger.LogWarning(
+                    ex,
+                    "El archivo enviado para el usuario {UsuarioId} " +
+                    "no es una imagen válida.",
+                    usuarioId);
+
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "El archivo enviado no contiene una imagen válida."
+                });
+            }
+            catch (DbUpdateException ex)
+            {
+                if (!string.IsNullOrWhiteSpace(rutaNueva))
+                {
+                    _imageService.EliminarImagen(rutaNueva);
+                }
+
+                _logger.LogError(
+                    ex,
+                    "Error de base de datos al guardar la imagen " +
+                    "del usuario {UsuarioId}.",
+                    usuarioId);
+
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message =
+                        "No fue posible guardar la imagen del usuario " +
+                        "en la base de datos."
+                });
+            }
+            catch (Exception ex)
+            {
+                if (!string.IsNullOrWhiteSpace(rutaNueva))
+                {
+                    _imageService.EliminarImagen(rutaNueva);
+                }
+
+                _logger.LogError(
+                    ex,
+                    "Error inesperado al guardar la imagen " +
+                    "del usuario {UsuarioId}.",
+                    usuarioId);
+
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message =
+                        "No fue posible guardar la imagen del usuario."
+                });
+            }
         }
 
         [HttpPut("actualizar/{id:int}")]

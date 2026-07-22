@@ -1,5 +1,6 @@
 ﻿using CONATRADEC_API.DTOs;
 using CONATRADEC_API.Models;
+using CONATRADEC_API.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -12,6 +13,7 @@ namespace CONATRADEC_API.Controllers
     {
         private readonly DBContext _context;
         private readonly ILogger<AlbumBotanicoCafeController> _logger;
+        private readonly ImageService _imageService;
 
         private static readonly string[] ExtensionesPermitidas =
         {
@@ -26,10 +28,14 @@ namespace CONATRADEC_API.Controllers
 
         public AlbumBotanicoCafeController(
             DBContext context,
-            ILogger<AlbumBotanicoCafeController> logger)
+                ILogger<AlbumBotanicoCafeController> logger,
+              ImageService imageService)
+
         {
             _context = context;
             _logger = logger;
+            _imageService = imageService;
+
         }
 
         // GET: api/album-botanico/galeria
@@ -459,8 +465,8 @@ namespace CONATRADEC_API.Controllers
         [HttpPost("{id:int}/fotos")]
         [RequestSizeLimit(TamanoMaximoArchivo)]
         public async Task<ActionResult> SubirFoto(
-            int id,
-            [FromForm] SubirFotoAlbumBotanicoDto dto)
+        int id,
+        [FromForm] SubirFotoAlbumBotanicoDto dto)
         {
             bool albumExiste = await _context
                 .AlbumesBotanicosCafe
@@ -473,13 +479,11 @@ namespace CONATRADEC_API.Controllers
                 return NotFound(new
                 {
                     success = false,
-                    message =
-                        "El registro del álbum no existe o está inactivo."
+                    message = "El registro del álbum no existe o está inactivo."
                 });
             }
 
-            if (dto.archivo == null ||
-                dto.archivo.Length == 0)
+            if (dto.archivo == null || dto.archivo.Length == 0)
             {
                 return BadRequest(new
                 {
@@ -506,35 +510,41 @@ namespace CONATRADEC_API.Controllers
                 return BadRequest(new
                 {
                     success = false,
-                    message =
-                        "Solo se permiten imágenes JPG, JPEG, PNG o WEBP."
+                    message = "Solo se permiten imágenes JPG, JPEG, PNG o WEBP."
                 });
             }
 
-            string carpetaBase = Path.Combine(
-                Directory.GetCurrentDirectory(),
-                "resources",
-                "uploads",
-                "album-botanico");
+            string rutaPublica;
 
-            string carpetaFisica = Path.Combine(
-                carpetaBase,
-                id.ToString());
-
-            Directory.CreateDirectory(carpetaFisica);
-
-            string nombreArchivo =
-                $"{Guid.NewGuid():N}{extension}";
-
-            string rutaFisica = Path.Combine(
-                carpetaFisica,
-                nombreArchivo);
-
-            await using (var stream = new FileStream(
-                rutaFisica,
-                FileMode.Create))
+            try
             {
-                await dto.archivo.CopyToAsync(stream);
+                rutaPublica = await _imageService.GuardarImagenWebpAsync(
+                    dto.archivo,
+                    $"album-botanico/{id}",
+                    anchoMaximo: 1600,
+                    altoMaximo: 1600,
+                    calidad: 80);
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = ex.Message
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "Error al procesar la fotografía del álbum {AlbumId}.",
+                    id);
+
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message = "Ocurrió un error al procesar la imagen."
+                });
             }
 
             if (dto.esPortada)
@@ -553,31 +563,48 @@ namespace CONATRADEC_API.Controllers
                 }
             }
 
-            string rutaPublica =
-                $"/resources/uploads/album-botanico/{id}/{nombreArchivo}";
-
             var foto = new AlbumBotanicoCafeFoto
             {
                 albumBotanicoCafeId = id,
                 rutaFoto = rutaPublica,
-                descripcionFoto =
-                    dto.descripcionFoto?.Trim(),
+                descripcionFoto = dto.descripcionFoto?.Trim(),
                 esPortada = dto.esPortada,
                 orden = dto.orden,
                 activo = true
             };
 
             _context.AlbumesBotanicosCafeFotos.Add(foto);
-            await _context.SaveChangesAsync();
+
+            try
+            {
+                await _context.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                _imageService.EliminarImagen(rutaPublica);
+
+                _logger.LogError(
+                    ex,
+                    "Error al guardar en base de datos la fotografía del álbum {AlbumId}.",
+                    id);
+
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message = "La imagen fue procesada, pero no se pudo guardar su información."
+                });
+            }
 
             return Ok(new
             {
                 success = true,
-                message = "Fotografía guardada correctamente.",
+                message = "Fotografía optimizada y guardada correctamente.",
                 data = new
                 {
                     foto.albumBotanicoCafeFotoId,
-                    foto.rutaFoto
+                    foto.rutaFoto,
+                    foto.esPortada,
+                    foto.orden
                 }
             });
         }
@@ -588,6 +615,15 @@ namespace CONATRADEC_API.Controllers
             int fotoId,
             [FromBody] ActualizarFotoAlbumBotanicoDto dto)
         {
+            if (fotoId <= 0)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "El identificador de la fotografía no es válido."
+                });
+            }
+
             if (!ModelState.IsValid)
             {
                 return ValidationProblem(ModelState);
@@ -596,8 +632,7 @@ namespace CONATRADEC_API.Controllers
             var foto = await _context
                 .AlbumesBotanicosCafeFotos
                 .FirstOrDefaultAsync(x =>
-                    x.albumBotanicoCafeFotoId == fotoId &&
-                    x.activo);
+                    x.albumBotanicoCafeFotoId == fotoId);
 
             if (foto == null)
             {
@@ -608,8 +643,58 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
-            foto.descripcionFoto =
-                dto.descripcionFoto?.Trim();
+            if (!foto.activo)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "La fotografía se encuentra inactiva."
+                });
+            }
+
+            if (dto.orden <= 0)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "El orden debe ser mayor que cero."
+                });
+            }
+
+            string? descripcion = dto.descripcionFoto?.Trim();
+
+            if (!string.IsNullOrEmpty(descripcion) &&
+                descripcion.Length > 500)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "La descripción no puede superar los 500 caracteres."
+                });
+            }
+
+            /*
+             * Evita que dos fotografías activas del mismo registro
+             * tengan el mismo número de orden.
+             */
+            bool ordenDuplicado = await _context
+                .AlbumesBotanicosCafeFotos
+                .AnyAsync(x =>
+                    x.albumBotanicoCafeFotoId != fotoId &&
+                    x.albumBotanicoCafeId == foto.albumBotanicoCafeId &&
+                    x.orden == dto.orden &&
+                    x.activo);
+
+            if (ordenDuplicado)
+            {
+                return Conflict(new
+                {
+                    success = false,
+                    message = "Ya existe otra fotografía con ese número de orden."
+                });
+            }
+
+            foto.descripcionFoto = descripcion;
             foto.orden = dto.orden;
 
             await _context.SaveChangesAsync();
@@ -617,10 +702,17 @@ namespace CONATRADEC_API.Controllers
             return Ok(new
             {
                 success = true,
-                message = "Fotografía actualizada correctamente."
+                message = "Fotografía actualizada correctamente.",
+                data = new
+                {
+                    foto.albumBotanicoCafeFotoId,
+                    foto.descripcionFoto,
+                    foto.orden,
+                    foto.esPortada,
+                    foto.rutaFoto
+                }
             });
         }
-
         // PATCH: api/album-botanico/fotos/1/portada
         [HttpPatch("fotos/{fotoId:int}/portada")]
         public async Task<ActionResult> Portada(int fotoId)
