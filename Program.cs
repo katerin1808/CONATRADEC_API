@@ -35,22 +35,12 @@ builder.Services.AddDbContext<BitacoraDbContext>(options =>
     options.UseSqlServer(connectionString);
 });
 
-builder.Services.AddScoped<BitacoraDatabaseInitializer>();
-
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 QuestPDF.Settings.License = LicenseType.Community;
 
 var app = builder.Build();
-
-using (IServiceScope scope = app.Services.CreateScope())
-{
-    BitacoraDatabaseInitializer inicializador = scope.ServiceProvider
-        .GetRequiredService<BitacoraDatabaseInitializer>();
-
-    await inicializador.InicializarAsync();
-}
 
 if (app.Environment.IsDevelopment())
 {

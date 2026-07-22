@@ -22,6 +22,7 @@ namespace CONATRADEC_API.Controllers
 
         [HttpGet]
         public async Task<ActionResult<BitacoraPaginadaDto>> Listar(
+            [FromHeader(Name = "X-Usuario-Id")] int? usuarioSesionId,
             [FromQuery] DateTime? fechaDesdeUtc,
             [FromQuery] DateTime? fechaHastaUtc,
             [FromQuery] int? usuarioId,
@@ -33,8 +34,12 @@ namespace CONATRADEC_API.Controllers
             [FromQuery] int tamanoPagina = 25,
             CancellationToken cancellationToken = default)
         {
-            if (!await TienePermisoLecturaAsync(cancellationToken))
-                return Forbid();
+            ActionResult? resultadoAcceso = await ValidarAccesoAsync(
+                usuarioSesionId,
+                cancellationToken);
+
+            if (resultadoAcceso != null)
+                return resultadoAcceso;
 
             pagina = Math.Max(1, pagina);
             tamanoPagina = Math.Clamp(tamanoPagina, 10, 100);
@@ -120,10 +125,15 @@ namespace CONATRADEC_API.Controllers
         [HttpGet("{id:guid}")]
         public async Task<ActionResult<BitacoraDetalleDto>> Obtener(
             Guid id,
+            [FromHeader(Name = "X-Usuario-Id")] int? usuarioSesionId,
             CancellationToken cancellationToken = default)
         {
-            if (!await TienePermisoLecturaAsync(cancellationToken))
-                return Forbid();
+            ActionResult? resultadoAcceso = await ValidarAccesoAsync(
+                usuarioSesionId,
+                cancellationToken);
+
+            if (resultadoAcceso != null)
+                return resultadoAcceso;
 
             BitacoraDetalleDto? item = await bitacoraDb.Bitacoras
                 .AsNoTracking()
@@ -182,10 +192,15 @@ namespace CONATRADEC_API.Controllers
 
         [HttpGet("catalogos")]
         public async Task<ActionResult<BitacoraCatalogosDto>> Catalogos(
+            [FromHeader(Name = "X-Usuario-Id")] int? usuarioSesionId,
             CancellationToken cancellationToken = default)
         {
-            if (!await TienePermisoLecturaAsync(cancellationToken))
-                return Forbid();
+            ActionResult? resultadoAcceso = await ValidarAccesoAsync(
+                usuarioSesionId,
+                cancellationToken);
+
+            if (resultadoAcceso != null)
+                return resultadoAcceso;
 
             List<string> acciones = await bitacoraDb.Bitacoras
                 .AsNoTracking()
@@ -223,30 +238,68 @@ namespace CONATRADEC_API.Controllers
             });
         }
 
-        private async Task<bool> TienePermisoLecturaAsync(
+        private async Task<ActionResult?> ValidarAccesoAsync(
+            int? usuarioId,
             CancellationToken cancellationToken)
         {
-            if (!Request.Headers.TryGetValue(
-                    "X-Usuario-Id",
-                    out var valorUsuario) ||
-                !int.TryParse(valorUsuario.ToString(), out int usuarioId))
+            if (!usuarioId.HasValue || usuarioId.Value <= 0)
             {
-                return false;
+                return StatusCode(
+                    StatusCodes.Status401Unauthorized,
+                    new
+                    {
+                        mensaje =
+                            "Debe enviar el encabezado X-Usuario-Id " +
+                            "con el identificador del usuario que realiza " +
+                            "la consulta."
+                    });
             }
 
-            return await (
+            bool usuarioActivo = await db.Usuarios
+                .AsNoTracking()
+                .AnyAsync(
+                    x => x.UsuarioId == usuarioId.Value && x.activo,
+                    cancellationToken);
+
+            if (!usuarioActivo)
+            {
+                return StatusCode(
+                    StatusCodes.Status401Unauthorized,
+                    new
+                    {
+                        mensaje =
+                            "El usuario enviado en X-Usuario-Id no existe " +
+                            "o está inactivo."
+                    });
+            }
+
+            bool tienePermiso = await (
                 from usuario in db.Usuarios.AsNoTracking()
                 join permiso in db.RolInterfaz.AsNoTracking()
                     on usuario.rolId equals permiso.rolId
                 join interfaz in db.Interfaz.AsNoTracking()
                     on permiso.interfazId equals interfaz.interfazId
-                where usuario.UsuarioId == usuarioId
+                where usuario.UsuarioId == usuarioId.Value
                       && usuario.activo
                       && interfaz.activo
                       && interfaz.nombreInterfaz == "bitacoraPage"
                       && permiso.leer == true
                 select usuario.UsuarioId)
                 .AnyAsync(cancellationToken);
+
+            if (!tienePermiso)
+            {
+                return StatusCode(
+                    StatusCodes.Status403Forbidden,
+                    new
+                    {
+                        mensaje =
+                            "El usuario no tiene permiso de lectura para " +
+                            "consultar la bitácora."
+                    });
+            }
+
+            return null;
         }
     }
 }
