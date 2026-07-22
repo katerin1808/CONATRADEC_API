@@ -53,10 +53,10 @@ namespace CONATRADEC_API.Services
             string nombreArchivo = $"{Guid.NewGuid():N}.webp";
 
             string rutaCarpeta = Path.Combine(
-                _environment.WebRootPath,
-                "resources",
-                "uploads",
-                carpeta);
+             Directory.GetCurrentDirectory(),
+              "resources",
+              "uploads",
+              carpeta);
 
             Directory.CreateDirectory(rutaCarpeta);
 
