@@ -2,6 +2,7 @@
 using CONATRADEC_API.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Text.RegularExpressions;
 using static CONATRADEC_API.DTOs.TerrenoDto;
 
 namespace CONATRADEC_API.Controllers
@@ -11,7 +12,59 @@ namespace CONATRADEC_API.Controllers
     public class TerrenoController : ControllerBase
     {
         private readonly DBContext _db;
+
+        private static readonly Regex CedulaRegex = new(
+            @"^\d{3}-\d{6}-\d{4}[A-Z]$",
+            RegexOptions.Compiled |
+            RegexOptions.CultureInvariant |
+            RegexOptions.IgnoreCase);
+
         public TerrenoController(DBContext db) => _db = db;
+
+        private static string? ValidarDatosTerreno(
+            string? identificacionPropietario,
+            decimal extensionManzanas,
+            decimal cantidadQuintales,
+            int cantidadPlantas,
+            int telefono,
+            decimal latitud,
+            decimal longitud)
+        {
+            if (string.IsNullOrWhiteSpace(identificacionPropietario) ||
+                !CedulaRegex.IsMatch(identificacionPropietario.Trim()))
+            {
+                return "La identificación del propietario debe tener el formato 001-080701-1050R.";
+            }
+
+            if (extensionManzanas <= 0)
+                return "La extensión del terreno debe ser mayor que cero.";
+
+            if (!TieneMaximoDosDecimales(extensionManzanas))
+                return "La extensión del terreno solo permite dos decimales.";
+
+            if (cantidadQuintales < 0)
+                return "La cantidad de quintales no puede ser negativa.";
+
+            if (!TieneMaximoDosDecimales(cantidadQuintales))
+                return "La cantidad de quintales solo permite dos decimales.";
+
+            if (cantidadPlantas < 0)
+                return "La cantidad de plantas debe ser un número entero positivo o cero.";
+
+            if (telefono < 0)
+                return "El teléfono solo debe contener números enteros positivos.";
+
+            if (latitud < -90 || latitud > 90)
+                return "La latitud debe estar entre -90 y 90.";
+
+            if (longitud < -180 || longitud > 180)
+                return "La longitud debe estar entre -180 y 180.";
+
+            return null;
+        }
+
+        private static bool TieneMaximoDosDecimales(decimal valor) =>
+            decimal.Round(valor, 2) == valor;
 
         // ============================================================
         // LISTAR TERRENOS (CON UBICACIÓN ANIDADA)
@@ -62,6 +115,26 @@ namespace CONATRADEC_API.Controllers
         [HttpPost("crear")]
         public async Task<IActionResult> Crear([FromBody] TerrenoCrearDto dto)
         {
+            string? errorValidacion = ValidarDatosTerreno(
+                dto.identificacionPropietarioTerreno,
+                dto.extensionManzanaTerreno,
+                dto.cantidadQuintalesOro,
+                dto.cantidadPlantasTerreno,
+                dto.telefonoPropietario,
+                dto.latitud,
+                dto.longitud);
+
+            if (errorValidacion != null)
+            {
+                return BadRequest(new
+                {
+                    mensaje = errorValidacion
+                });
+            }
+
+            dto.identificacionPropietarioTerreno =
+                dto.identificacionPropietarioTerreno.Trim().ToUpperInvariant();
+
             using var trans = await _db.Database.BeginTransactionAsync();
 
             try
@@ -74,10 +147,10 @@ namespace CONATRADEC_API.Controllers
                     telefonoPropietario = dto.telefonoPropietario,
                     correoPropietario = dto.correoPropietario,
                     direccionTerreno = dto.direccionTerreno,
-                    extensionManzanaTerreno = dto.extensionManzanaTerreno,
+                    extensionManzanaTerreno = decimal.Round(dto.extensionManzanaTerreno, 2),
                     fechaIngresoTerreno = dto.fechaIngresoTerreno,
                     municipioId = dto.municipioId,
-                    cantidadQuintalesOro = dto.cantidadQuintalesOro,
+                    cantidadQuintalesOro = decimal.Round(dto.cantidadQuintalesOro, 2),
                     cantidadPlantasTerreno = dto.cantidadPlantasTerreno,
                     latitud = dto.latitud,
                     longitud = dto.longitud,
@@ -88,12 +161,24 @@ namespace CONATRADEC_API.Controllers
                 await _db.SaveChangesAsync();
                 await trans.CommitAsync();
 
-                return Ok("Terreno creado correctamente.");
+                return Ok(new
+                {
+                    mensaje = "Terreno creado correctamente.",
+                    data = new
+                    {
+                        terreno.terrenoId,
+                        terreno.codigoTerreno
+                    }
+                });
             }
             catch (Exception ex)
             {
                 await trans.RollbackAsync();
-                return BadRequest(ex.Message);
+
+                return BadRequest(new
+                {
+                    mensaje = ex.InnerException?.Message ?? ex.Message
+                });
             }
         }
 
@@ -103,9 +188,35 @@ namespace CONATRADEC_API.Controllers
         [HttpPut("editar/{id}")]
         public async Task<IActionResult> Editar(int id, [FromBody] TerrenoEditarDto dto)
         {
+            string? errorValidacion = ValidarDatosTerreno(
+                dto.identificacionPropietarioTerreno,
+                dto.extensionManzanaTerreno,
+                dto.cantidadQuintalesOro,
+                dto.cantidadPlantasTerreno,
+                dto.telefonoPropietario,
+                dto.latitud,
+                dto.longitud);
+
+            if (errorValidacion != null)
+            {
+                return BadRequest(new
+                {
+                    mensaje = errorValidacion
+                });
+            }
+
+            dto.identificacionPropietarioTerreno =
+                dto.identificacionPropietarioTerreno.Trim().ToUpperInvariant();
+
             var terreno = await _db.Terreno.FindAsync(id);
+
             if (terreno is null)
-                return NotFound("Terreno no encontrado.");
+            {
+                return NotFound(new
+                {
+                    mensaje = "Terreno no encontrado."
+                });
+            }
 
             terreno.codigoTerreno = dto.codigoTerreno;
             terreno.identificacionPropietarioTerreno = dto.identificacionPropietarioTerreno;
@@ -113,17 +224,20 @@ namespace CONATRADEC_API.Controllers
             terreno.telefonoPropietario = dto.telefonoPropietario;
             terreno.correoPropietario = dto.correoPropietario;
             terreno.direccionTerreno = dto.direccionTerreno;
-            terreno.extensionManzanaTerreno = dto.extensionManzanaTerreno;
+            terreno.extensionManzanaTerreno = decimal.Round(dto.extensionManzanaTerreno, 2);
             terreno.fechaIngresoTerreno = dto.fechaIngresoTerreno;
             terreno.municipioId = dto.municipioId;
-            terreno.cantidadQuintalesOro = dto.cantidadQuintalesOro;
+            terreno.cantidadQuintalesOro = decimal.Round(dto.cantidadQuintalesOro, 2);
             terreno.cantidadPlantasTerreno = dto.cantidadPlantasTerreno;
             terreno.latitud = dto.latitud;
             terreno.longitud = dto.longitud;
 
             await _db.SaveChangesAsync();
 
-            return Ok("Terreno editado correctamente.");
+            return Ok(new
+            {
+                mensaje = "Terreno editado correctamente."
+            });
         }
 
         // ============================================================
@@ -141,82 +255,19 @@ namespace CONATRADEC_API.Controllers
             {
                 return NotFound(new
                 {
-                    mensaje =
-                        "Terreno no encontrado o ya está desactivado."
+                    mensaje = "Terreno no encontrado o ya está desactivado."
                 });
             }
 
-            var dependencias = new List<string>();
-
-            var tieneFotos = await _db.FotoTerreno
-                .AnyAsync(x => x.terrenoId == id);
-
-            if (tieneFotos)
-            {
-                dependencias.Add("fotografías del terreno");
-            }
-
-            var usadoEnCalculos = await _db.AnalisisSueloCalculos
-                .AnyAsync(x => x.terrenoId == id);
-
-            if (usadoEnCalculos)
-            {
-                dependencias.Add("cálculos de análisis de suelo");
-            }
-
-            var usadoEnInterpretaciones = await _db.Interpretaciones
-                .AnyAsync(x => x.terrenoId == id);
-
-            if (usadoEnInterpretaciones)
-            {
-                dependencias.Add("interpretaciones");
-            }
-
-            var usadoEnEnmiendas = await _db.enmiendaCalcarea
-                .AnyAsync(x =>
-                    x.terrenoId.HasValue &&
-                    x.terrenoId.Value == id);
-
-            if (usadoEnEnmiendas)
-            {
-                dependencias.Add("enmiendas calcáreas");
-            }
-
-            var usadoEnFormulas = await _db.formulaNutricional
-                .AnyAsync(x =>
-                    x.terrenoId.HasValue &&
-                    x.terrenoId.Value == id);
-
-            if (usadoEnFormulas)
-            {
-                dependencias.Add("fórmulas nutricionales");
-            }
-
-            if (dependencias.Count > 0)
-            {
-                return Conflict(new
-                {
-                    mensaje =
-                        "No se puede eliminar el terreno porque está siendo utilizado.",
-
-                    terreno = new
-                    {
-                        terreno.terrenoId,
-                        terreno.codigoTerreno,
-                        terreno.nombrePropietarioTerreno
-                    },
-
-                    usadoEn = dependencias
-                });
-            }
-
+            // La eliminación es lógica. No se borran físicamente las fotos,
+            // análisis ni cálculos relacionados, para conservar el historial.
             terreno.activo = false;
 
             await _db.SaveChangesAsync();
 
             return Ok(new
             {
-                mensaje = "Terreno desactivado correctamente.",
+                mensaje = "Terreno eliminado correctamente.",
                 data = new
                 {
                     terreno.terrenoId,
@@ -228,16 +279,16 @@ namespace CONATRADEC_API.Controllers
 
         [HttpGet("buscar")]
         public async Task<IActionResult> Buscar(
-    string? texto,
-    string? codigoTerreno,
-    string? nombrePropietario,
-    string? identificacionPropietario,
-    string? direccion,
-    int? paisId,
-    int? departamentoId,
-    int? municipioId,
-    int page = 1,
-    int pageSize = 20)
+            string? texto,
+            string? codigoTerreno,
+            string? nombrePropietario,
+            string? identificacionPropietario,
+            string? direccion,
+            int? paisId,
+            int? departamentoId,
+            int? municipioId,
+            int page = 1,
+            int pageSize = 20)
         {
             if (page < 1)
                 page = 1;
@@ -289,37 +340,68 @@ namespace CONATRADEC_API.Controllers
                 direccion = direccion.Trim();
                 query = query.Where(x => x.direccionTerreno.Contains(direccion));
             }
+
             if (paisId.HasValue)
             {
                 bool existePais = await _db.Pais
                     .AnyAsync(x => x.PaisId == paisId.Value && x.Activo);
 
                 if (!existePais)
-                    return BadRequest(new { mensaje = "El país no existe o está inactivo." });
+                {
+                    return BadRequest(new
+                    {
+                        mensaje = "El país no existe o está inactivo."
+                    });
+                }
             }
 
             if (departamentoId.HasValue)
             {
                 var departamento = await _db.Departamento
-                    .FirstOrDefaultAsync(x => x.DepartamentoId == departamentoId.Value && x.Activo);
+                    .FirstOrDefaultAsync(x =>
+                        x.DepartamentoId == departamentoId.Value &&
+                        x.Activo);
 
                 if (departamento == null)
-                    return BadRequest(new { mensaje = "El departamento no existe o está inactivo." });
+                {
+                    return BadRequest(new
+                    {
+                        mensaje = "El departamento no existe o está inactivo."
+                    });
+                }
 
                 if (paisId.HasValue && departamento.PaisId != paisId.Value)
-                    return BadRequest(new { mensaje = "El departamento no pertenece al país seleccionado." });
+                {
+                    return BadRequest(new
+                    {
+                        mensaje = "El departamento no pertenece al país seleccionado."
+                    });
+                }
             }
 
             if (municipioId.HasValue)
             {
                 var municipio = await _db.Municipios
-                    .FirstOrDefaultAsync(x => x.MunicipioId == municipioId.Value && x.Activo);
+                    .FirstOrDefaultAsync(x =>
+                        x.MunicipioId == municipioId.Value &&
+                        x.Activo);
 
                 if (municipio == null)
-                    return BadRequest(new { mensaje = "El municipio no existe o está inactivo." });
+                {
+                    return BadRequest(new
+                    {
+                        mensaje = "El municipio no existe o está inactivo."
+                    });
+                }
 
-                if (departamentoId.HasValue && municipio.DepartamentoId != departamentoId.Value)
-                    return BadRequest(new { mensaje = "El municipio no pertenece al departamento seleccionado." });
+                if (departamentoId.HasValue &&
+                    municipio.DepartamentoId != departamentoId.Value)
+                {
+                    return BadRequest(new
+                    {
+                        mensaje = "El municipio no pertenece al departamento seleccionado."
+                    });
+                }
 
                 if (paisId.HasValue)
                 {
@@ -330,15 +412,21 @@ namespace CONATRADEC_API.Controllers
                             x.Activo);
 
                     if (!municipioPertenecePais)
-                        return BadRequest(new { mensaje = "El municipio no pertenece al país seleccionado." });
+                    {
+                        return BadRequest(new
+                        {
+                            mensaje = "El municipio no pertenece al país seleccionado."
+                        });
+                    }
                 }
             }
+
             if (paisId.HasValue)
             {
                 query = query.Where(x =>
-            x.Municipio != null &&
-            x.Municipio.Departamento != null &&
-            x.Municipio.Departamento.PaisId == paisId.Value);
+                    x.Municipio != null &&
+                    x.Municipio.Departamento != null &&
+                    x.Municipio.Departamento.PaisId == paisId.Value);
             }
 
             if (departamentoId.HasValue)
@@ -397,6 +485,5 @@ namespace CONATRADEC_API.Controllers
                 data
             });
         }
-
     }
 }
