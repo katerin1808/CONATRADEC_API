@@ -218,17 +218,33 @@ namespace CONATRADEC_API.Controllers
                 .OrderBy(x => x)
                 .ToListAsync(cancellationToken);
 
-            List<BitacoraUsuarioFiltroDto> usuarios = await bitacoraDb.Bitacoras
+            // El filtro de usuarios se alimenta desde la tabla real de
+            // usuarios activos. No se construye desde registros históricos
+            // de bitácora, porque algunos registros antiguos pueden tener
+            // usuarioId pero no nombre y producir opciones como "Usuario #1".
+            var usuariosActivos = await db.Usuarios
                 .AsNoTracking()
-                .Where(x => x.usuarioId != null || x.usuarioNombre != "")
-                .GroupBy(x => new { x.usuarioId, x.usuarioNombre })
+                .Where(x => x.activo)
+                .Select(x => new
+                {
+                    x.UsuarioId,
+                    x.nombreCompletoUsuario,
+                    x.nombreUsuario
+                })
+                .OrderBy(x => x.nombreCompletoUsuario)
+                .ThenBy(x => x.nombreUsuario)
+                .ToListAsync(cancellationToken);
+
+            List<BitacoraUsuarioFiltroDto> usuarios = usuariosActivos
                 .Select(x => new BitacoraUsuarioFiltroDto
                 {
-                    UsuarioId = x.Key.usuarioId,
-                    Nombre = x.Key.usuarioNombre
+                    UsuarioId = x.UsuarioId,
+                    Nombre = !string.IsNullOrWhiteSpace(
+                        x.nombreCompletoUsuario)
+                            ? x.nombreCompletoUsuario.Trim()
+                            : x.nombreUsuario.Trim()
                 })
-                .OrderBy(x => x.Nombre)
-                .ToListAsync(cancellationToken);
+                .ToList();
 
             return Ok(new BitacoraCatalogosDto
             {
