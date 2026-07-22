@@ -1,4 +1,4 @@
-﻿using CONATRADEC_API.Auditing;
+using CONATRADEC_API.Auditing;
 using CONATRADEC_API.Middleware;
 using CONATRADEC_API.Models;
 using CONATRADEC_API.Services;
@@ -11,9 +11,12 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 builder.Services.AddScoped<AnalisisSueloCalculoService>();
 builder.Services.AddScoped<AnalisisReporteDatosService>();
+builder.Services.AddScoped<ImageService>();
 
+// Contexto e interceptores transversales de auditoría.
 builder.Services.AddScoped<AuditRequestContext>();
 builder.Services.AddScoped<AuditSaveChangesInterceptor>();
+builder.Services.AddScoped<AuditTransactionInterceptor>();
 
 string connectionString =
     builder.Configuration.GetConnectionString("DefaultConnection") ??
@@ -24,10 +27,18 @@ builder.Services.AddDbContext<DBContext>((serviceProvider, options) =>
 {
     options
         .UseSqlServer(connectionString)
-        .EnableSensitiveDataLogging()
-        .LogTo(Console.WriteLine)
         .AddInterceptors(
-            serviceProvider.GetRequiredService<AuditSaveChangesInterceptor>());
+            serviceProvider.GetRequiredService<AuditSaveChangesInterceptor>(),
+            serviceProvider.GetRequiredService<AuditTransactionInterceptor>());
+
+    // No se habilita SensitiveDataLogging porque puede exponer valores
+    // confidenciales en consola o archivos de logs.
+    if (builder.Environment.IsDevelopment())
+    {
+        options.LogTo(
+            Console.WriteLine,
+            LogLevel.Information);
+    }
 });
 
 builder.Services.AddDbContext<BitacoraDbContext>(options =>
@@ -40,8 +51,6 @@ builder.Services.AddSwaggerGen();
 
 QuestPDF.Settings.License = LicenseType.Community;
 
-builder.Services.AddScoped<ImageService>();
-
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
@@ -51,7 +60,6 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
-app.UseAuthorization();
 
 var rutaRecursos = Path.Combine(
     Directory.GetCurrentDirectory(),
@@ -110,7 +118,16 @@ app.UseStaticFiles(new StaticFileOptions
     RequestPath = "/resources/uploads/categorias-album"
 });
 
+// Se declara el enrutamiento antes del middleware para que este pueda
+// identificar cualquier ControllerActionDescriptor, incluso cuando la ruta
+// del controlador no comienza con /api (por ejemplo MunicipioController).
+app.UseRouting();
+
+// Debe ejecutarse antes de autorización para que también queden registrados
+// futuros 401 y 403 producidos por ASP.NET Core.
 app.UseMiddleware<BitacoraMiddleware>();
+
+app.UseAuthorization();
 
 app.MapControllers();
 app.Run();

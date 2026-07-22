@@ -376,10 +376,11 @@ namespace CONATRADEC_API.Controllers
                     esInterno));
         }
         [HttpPost("{usuarioId:int}/SubirImagenUsuario")]
+        [Consumes("multipart/form-data")]
         [RequestSizeLimit(8 * 1024 * 1024)]
         public async Task<IActionResult> SubirImagenUsuario(
             int usuarioId,
-            [FromForm] IFormFile? archivo)
+            IFormFile? archivo)
         {
             if (usuarioId <= 0)
             {
