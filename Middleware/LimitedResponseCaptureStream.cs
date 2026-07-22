@@ -55,11 +55,20 @@ namespace CONATRADEC_API.Middleware
             destino.Flush();
         }
 
-        public override Task FlushAsync(
+        public override async Task FlushAsync(
             CancellationToken cancellationToken)
         {
-            return destino.FlushAsync(
-                cancellationToken);
+            try
+            {
+                await destino.FlushAsync(
+                    cancellationToken);
+            }
+            catch (OperationCanceledException)
+                when (cancellationToken.IsCancellationRequested)
+            {
+                // El cliente cerró o canceló la solicitud. No hay una
+                // conexión activa sobre la cual completar el vaciado.
+            }
         }
 
         public override void Write(
@@ -85,20 +94,38 @@ namespace CONATRADEC_API.Middleware
             Capturar(
                 buffer.AsSpan(offset, count));
 
-            await destino.WriteAsync(
-                buffer.AsMemory(offset, count),
-                cancellationToken);
+            try
+            {
+                await destino.WriteAsync(
+                    buffer.AsMemory(offset, count),
+                    cancellationToken);
+            }
+            catch (OperationCanceledException)
+                when (cancellationToken.IsCancellationRequested)
+            {
+                // La cancelación proviene del cliente. La respuesta ya no
+                // puede entregarse y no debe convertirse en un error 500.
+            }
         }
 
-        public override ValueTask WriteAsync(
+        public override async ValueTask WriteAsync(
             ReadOnlyMemory<byte> buffer,
             CancellationToken cancellationToken = default)
         {
             Capturar(buffer.Span);
 
-            return destino.WriteAsync(
-                buffer,
-                cancellationToken);
+            try
+            {
+                await destino.WriteAsync(
+                    buffer,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException)
+                when (cancellationToken.IsCancellationRequested)
+            {
+                // La conexión fue cancelada mientras ASP.NET Core escribía
+                // la respuesta. Es un cierre normal del cliente.
+            }
         }
 
         public override void WriteByte(
