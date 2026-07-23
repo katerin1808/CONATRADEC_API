@@ -396,10 +396,10 @@ namespace CONATRADEC_API.Controllers
                     "Debe seleccionar un elemento químico válido.";
             }
 
-            if (valorMinimo < 0)
+            if (valorMinimo <= 0)
             {
                 return
-                    "El valor mínimo no puede ser negativo.";
+                    "El valor mínimo debe ser mayor que cero.";
             }
 
             if (valorMaximo <= valorMinimo)
