@@ -4,7 +4,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace CONATRADEC_API.Controllers
 {
-
     [ApiController]
     [Route("api/configuracion/tipos-cultivo")]
     public class TipoCultivoController : ControllerBase
@@ -16,7 +15,6 @@ namespace CONATRADEC_API.Controllers
             _db = db;
         }
 
-        // Lista únicamente los registros activos
         [HttpGet]
         public async Task<IActionResult> Listar()
         {
@@ -41,7 +39,8 @@ namespace CONATRADEC_API.Controllers
         {
             var data = await _db.TipoCultivos
                 .AsNoTracking()
-                .Where(x => x.tipoCultivoId == id)
+                .Where(x =>
+                    x.tipoCultivoId == id)
                 .Select(x => new
                 {
                     x.tipoCultivoId,
@@ -55,120 +54,188 @@ namespace CONATRADEC_API.Controllers
             {
                 return NotFound(new
                 {
-                    mensaje = "Tipo de cultivo no encontrado."
+                    mensaje =
+                        "Tipo de cultivo no encontrado."
                 });
             }
 
             return Ok(data);
         }
 
-        // El ID no se envía porque lo genera la base de datos
         [HttpPost]
         public async Task<IActionResult> Crear(
             [FromBody] CrearTipoCultivoDto dto)
         {
-            if (string.IsNullOrWhiteSpace(dto.nombreTipoCultivo))
+            if (string.IsNullOrWhiteSpace(
+                    dto.nombreTipoCultivo))
             {
                 return BadRequest(new
                 {
-                    mensaje = "El nombre del tipo de cultivo es obligatorio."
+                    mensaje =
+                        "El nombre del tipo de cultivo es obligatorio."
                 });
             }
 
-            var nombre = dto.nombreTipoCultivo
-                .Trim()
-                .ToUpper();
+            string nombre =
+                dto.nombreTipoCultivo
+                    .Trim()
+                    .ToUpperInvariant();
 
-            var existe = await _db.TipoCultivos.AnyAsync(x =>
-                x.nombreTipoCultivo.Trim().ToUpper() == nombre);
+            string descripcion =
+                dto.descripcionTipoCultivo?
+                    .Trim() ??
+                string.Empty;
 
-            if (existe)
+            TipoCultivo? existente =
+                await _db.TipoCultivos
+                    .FirstOrDefaultAsync(x =>
+                        x.nombreTipoCultivo
+                            .Trim()
+                            .ToUpper() ==
+                        nombre);
+
+            if (existente != null &&
+                existente.activo)
             {
                 return Conflict(new
                 {
-                    mensaje = "Ya existe un tipo de cultivo con ese nombre."
+                    mensaje =
+                        "Ya existe un tipo de cultivo activo con ese nombre."
+                });
+            }
+
+            /*
+             * El listado muestra únicamente registros activos. Antes,
+             * un registro desactivado no era visible, pero impedía volver
+             * a utilizar su nombre. Ahora se reactiva y se actualiza.
+             */
+            if (existente != null &&
+                !existente.activo)
+            {
+                existente.nombreTipoCultivo =
+                    nombre;
+
+                existente.descripcionTipoCultivo =
+                    descripcion;
+
+                existente.activo = true;
+
+                await _db.SaveChangesAsync();
+
+                return Ok(new
+                {
+                    mensaje =
+                        "Tipo de cultivo reactivado correctamente.",
+
+                    data = new
+                    {
+                        existente.tipoCultivoId,
+                        existente.nombreTipoCultivo,
+                        existente.descripcionTipoCultivo,
+                        existente.activo
+                    }
                 });
             }
 
             var entidad = new TipoCultivo
             {
                 nombreTipoCultivo = nombre,
-                descripcionTipoCultivo =
-                    dto.descripcionTipoCultivo?.Trim() ?? string.Empty,
 
-                // Todo nuevo registro se crea activo
+                descripcionTipoCultivo =
+                    descripcion,
+
                 activo = true
             };
 
             _db.TipoCultivos.Add(entidad);
+
             await _db.SaveChangesAsync();
 
-            return StatusCode(StatusCodes.Status201Created, new
-            {
-                mensaje = "Tipo de cultivo creado correctamente.",
-                data = new
+            return StatusCode(
+                StatusCodes.Status201Created,
+                new
                 {
-                    entidad.tipoCultivoId,
-                    entidad.nombreTipoCultivo,
-                    entidad.descripcionTipoCultivo,
-                    entidad.activo
-                }
-            });
+                    mensaje =
+                        "Tipo de cultivo creado correctamente.",
+
+                    data = new
+                    {
+                        entidad.tipoCultivoId,
+                        entidad.nombreTipoCultivo,
+                        entidad.descripcionTipoCultivo,
+                        entidad.activo
+                    }
+                });
         }
 
         [HttpPut("{id:int}")]
         public async Task<IActionResult> Actualizar(
-         int id,
-         [FromBody] ActualizarTipoCultivoDto dto)
+            int id,
+            [FromBody] ActualizarTipoCultivoDto dto)
         {
-            var entidad = await _db.TipoCultivos
-                .FirstOrDefaultAsync(x => x.tipoCultivoId == id);
+            TipoCultivo? entidad =
+                await _db.TipoCultivos
+                    .FirstOrDefaultAsync(x =>
+                        x.tipoCultivoId == id);
 
             if (entidad == null)
             {
                 return NotFound(new
                 {
-                    mensaje = "Tipo de cultivo no encontrado."
+                    mensaje =
+                        "Tipo de cultivo no encontrado."
                 });
             }
 
-            if (string.IsNullOrWhiteSpace(dto.nombreTipoCultivo))
+            if (string.IsNullOrWhiteSpace(
+                    dto.nombreTipoCultivo))
             {
                 return BadRequest(new
                 {
-                    mensaje = "El nombre del tipo de cultivo es obligatorio."
+                    mensaje =
+                        "El nombre del tipo de cultivo es obligatorio."
                 });
             }
 
-            var nombre = dto.nombreTipoCultivo
-                .Trim()
-                .ToUpper();
+            string nombre =
+                dto.nombreTipoCultivo
+                    .Trim()
+                    .ToUpperInvariant();
 
-            var existe = await _db.TipoCultivos.AnyAsync(x =>
-                x.tipoCultivoId != id &&
-                x.nombreTipoCultivo.Trim().ToUpper() == nombre);
+            bool existeOtro =
+                await _db.TipoCultivos
+                    .AnyAsync(x =>
+                        x.tipoCultivoId != id &&
+                        x.activo &&
+                        x.nombreTipoCultivo
+                            .Trim()
+                            .ToUpper() ==
+                        nombre);
 
-            if (existe)
+            if (existeOtro)
             {
                 return Conflict(new
                 {
-                    mensaje = "Ya existe otro tipo de cultivo con ese nombre."
+                    mensaje =
+                        "Ya existe otro tipo de cultivo activo con ese nombre."
                 });
             }
 
-            entidad.nombreTipoCultivo = nombre;
-            entidad.descripcionTipoCultivo =
-                dto.descripcionTipoCultivo?.Trim() ?? string.Empty;
+            entidad.nombreTipoCultivo =
+                nombre;
 
-            // No se modifica:
-            // entidad.tipoCultivoId
-            // entidad.activo
+            entidad.descripcionTipoCultivo =
+                dto.descripcionTipoCultivo?
+                    .Trim() ??
+                string.Empty;
 
             await _db.SaveChangesAsync();
 
             return Ok(new
             {
-                mensaje = "Tipo de cultivo actualizado correctamente.",
+                mensaje =
+                    "Tipo de cultivo actualizado correctamente.",
+
                 data = new
                 {
                     entidad.tipoCultivoId,
@@ -180,50 +247,49 @@ namespace CONATRADEC_API.Controllers
         }
 
         [HttpPut("{id:int}/eliminar")]
-        public async Task<IActionResult> Eliminar(int id)
+        public async Task<IActionResult> Eliminar(
+            int id)
         {
-            var entidad = await _db.TipoCultivos
-                .FirstOrDefaultAsync(x =>
-                    x.tipoCultivoId == id &&
-                    x.activo);
+            TipoCultivo? entidad =
+                await _db.TipoCultivos
+                    .FirstOrDefaultAsync(x =>
+                        x.tipoCultivoId == id &&
+                        x.activo);
 
             if (entidad == null)
             {
                 return NotFound(new
                 {
-                    mensaje = "Tipo de cultivo no encontrado o ya está desactivado."
+                    mensaje =
+                        "Tipo de cultivo no encontrado o ya está desactivado."
                 });
             }
 
-            var dependencias = new List<string>();
+            var dependencias =
+                new List<string>();
 
-            /*
-             * Configuración activa.
-             */
-            var usadoEnRangos =
-                await _db.ParametroRangoNutrienteCultivo
+            bool usadoEnRangos =
+                await _db
+                    .ParametroRangoNutrienteCultivo
                     .AnyAsync(x =>
                         x.tipoCultivoId == id &&
                         x.activo);
 
             if (usadoEnRangos)
             {
-                dependencias.Add("rangos nutricionales por cultivo");
+                dependencias.Add(
+                    "rangos de aporte por cultivo");
             }
 
-            /*
-             * Datos históricos.
-             *
-             * No se filtra por activo porque el cultivo debe seguir
-             * disponible para consultar cálculos anteriores.
-             */
-            var usadoEnCalculos = await _db.AnalisisSueloCalculos
-                .AnyAsync(x =>
-                    x.tipoCultivoId == id);
+            bool usadoEnCalculos =
+                await _db.AnalisisSueloCalculos
+                    .AnyAsync(x =>
+                        x.tipoCultivoId == id);
 
             if (usadoEnCalculos)
             {
-                dependencias.Add("cálculos de análisis de suelo");
+                dependencias.Add(
+                    "cálculos de análisis de suelo");
             }
 
             if (dependencias.Count > 0)
@@ -249,7 +315,9 @@ namespace CONATRADEC_API.Controllers
 
             return Ok(new
             {
-                mensaje = "Tipo de cultivo desactivado correctamente.",
+                mensaje =
+                    "Tipo de cultivo desactivado correctamente.",
+
                 data = new
                 {
                     entidad.tipoCultivoId,
