@@ -648,169 +648,36 @@ namespace CONATRADEC_API.Controllers
             var fuente =
                 await _db.fuenteNutriente
                     .FirstOrDefaultAsync(x =>
-                        x.fuenteNutrientesId == id &&
-                        x.activo);
+                        x.fuenteNutrientesId == id);
 
             if (fuente == null)
             {
                 return NotFound(new
                 {
-                    mensaje =
-                        "Fuente nutriente no encontrada o ya está desactivada."
+                    mensaje = "Fuente nutriente no encontrada."
                 });
             }
 
-            /*
-             * Solamente los datos históricos impiden eliminar.
-             *
-             * Las configuraciones de enmienda, fuente orgánica,
-             * fertilización mixta y matriz química se desactivan
-             * junto con la fuente.
-             */
-            var dependencias =
-                new List<string>();
-
-            bool usadaEnEnmiendas =
-                await _db.enmiendaCalcarea
-                    .AnyAsync(x =>
-                        x.fuenteNutrientesId == id);
-
-            if (usadaEnEnmiendas)
+            if (!fuente.activo)
             {
-                dependencias.Add(
-                    "enmiendas calcáreas guardadas");
-            }
-
-            bool usadaEnFormulas =
-                await _db.formulaNutricionalDetalle
-                    .AnyAsync(x =>
-                        x.fuenteNutrientesId == id);
-
-            if (usadaEnFormulas)
-            {
-                dependencias.Add(
-                    "fórmulas nutricionales guardadas");
-            }
-
-            bool usadaEnFertilizacionesMixtas =
-                await _db.fertilizacionMixtaFuente
-                    .AnyAsync(x =>
-                        x.fuenteNutrientesId == id);
-
-            if (usadaEnFertilizacionesMixtas)
-            {
-                dependencias.Add(
-                    "fertilizaciones mixtas guardadas");
-            }
-
-            bool usadaEnControlesAplicacion =
-                await _db
-                    .FuenteNutrienteControlAplicaciones
-                    .AnyAsync(x =>
-                        x.fuenteNutrientesId == id);
-
-            if (usadaEnControlesAplicacion)
-            {
-                dependencias.Add(
-                    "controles de aplicación");
-            }
-
-            bool usadaEnInterpretaciones =
-                await _db.InterpretacionFuenteNutrientes
-                    .AnyAsync(x =>
-                        x.fuenteNutrientesId == id);
-
-            if (usadaEnInterpretaciones)
-            {
-                dependencias.Add(
-                    "interpretaciones guardadas");
-            }
-
-            if (dependencias.Count > 0)
-            {
-                return Conflict(new
+                return BadRequest(new
                 {
-                    mensaje =
-                        "No se puede eliminar la fuente nutriente porque está siendo utilizada.",
-
-                    fuente = new
-                    {
-                        fuente.fuenteNutrientesId,
-                        fuente.nombreNutriente
-                    },
-
-                    usadoEn =
-                        dependencias
+                    mensaje = "La fuente nutriente ya está desactivada."
                 });
             }
-
-            await using var transaccion =
-                await _db.Database.BeginTransactionAsync();
 
             try
             {
-                fuente.activo =
-                    false;
-
-                var parametrosEnmienda =
-                    await _db.ParametroEnmiendaCalcarea
-                        .Where(x =>
-                            x.fuenteNutrientesId == id &&
-                            x.activo)
-                        .ToListAsync();
-
-                foreach (var parametro
-                         in parametrosEnmienda)
-                {
-                    parametro.activo =
-                        false;
-                }
-
-                var parametrosOrganicos =
-                    await _db.ParametroFuenteOrganicaAporte
-                        .Where(x =>
-                            x.fuenteNutrientesId == id &&
-                            x.activo)
-                        .ToListAsync();
-
-                foreach (var parametro
-                         in parametrosOrganicos)
-                {
-                    parametro.activo =
-                        false;
-                }
-
-                var configuracionesMixtas =
-                    await _db.fuenteFertilizacionMixta
-                        .Where(x =>
-                            x.fuenteNutrientesId == id &&
-                            x.activo)
-                        .ToListAsync();
-
-                foreach (var configuracion
-                         in configuracionesMixtas)
-                {
-                    configuracion.activo =
-                        false;
-                }
-
-                var relaciones =
-                    await _db
-                        .fuenteNutrienteElementoQuimico
-                        .Where(x =>
-                            x.fuenteNutrientesId == id &&
-                            x.activo)
-                        .ToListAsync();
-
-                foreach (var relacion
-                         in relaciones)
-                {
-                    relacion.activo =
-                        false;
-                }
+                /*
+                 * Eliminación lógica:
+                 * se desactiva únicamente la fuente principal.
+                 *
+                 * No se eliminan ni se desactivan las relaciones
+                 * históricas asociadas.
+                 */
+                fuente.activo = false;
 
                 await _db.SaveChangesAsync();
-                await transaccion.CommitAsync();
 
                 return Ok(new
                 {
@@ -821,36 +688,20 @@ namespace CONATRADEC_API.Controllers
                     {
                         fuente.fuenteNutrientesId,
                         fuente.nombreNutriente,
-                        fuente.activo,
-
-                        relacionesDesactivadas =
-                            relaciones.Count,
-
-                        parametrosEnmiendaDesactivados =
-                            parametrosEnmienda.Count,
-
-                        parametrosOrganicosDesactivados =
-                            parametrosOrganicos.Count,
-
-                        configuracionesMixtasDesactivadas =
-                            configuracionesMixtas.Count
+                        fuente.activo
                     }
                 });
             }
             catch (Exception ex)
             {
-                await transaccion.RollbackAsync();
-
                 return StatusCode(
-                    StatusCodes
-                        .Status500InternalServerError,
+                    StatusCodes.Status500InternalServerError,
                     new
                     {
                         mensaje =
                             "Ocurrió un error al desactivar la fuente nutriente.",
 
-                        detalle =
-                            ex.Message
+                        detalle = ex.Message
                     });
             }
         }
