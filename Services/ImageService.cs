@@ -16,13 +16,8 @@ namespace CONATRADEC_API.Services
 
     public class ImageService
     {
-        private readonly IWebHostEnvironment _environment;
+        private readonly IWebHostEnvironment environment;
 
-        /*
-         * Evita que dos solicitudes generen al mismo tiempo la misma
-         * miniatura. El segundo bloqueo limita el trabajo total para no
-         * saturar CPU y memoria cuando un móvil solicita varias tarjetas.
-         */
         private static readonly ConcurrentDictionary<string, SemaphoreSlim>
             BloqueosPorMiniatura =
                 new(StringComparer.OrdinalIgnoreCase);
@@ -32,7 +27,7 @@ namespace CONATRADEC_API.Services
 
         public ImageService(IWebHostEnvironment environment)
         {
-            _environment = environment;
+            this.environment = environment;
         }
 
         public async Task<string> GuardarImagenWebpAsync(
@@ -42,46 +37,22 @@ namespace CONATRADEC_API.Services
             int altoMaximo = 1600,
             int calidad = 80)
         {
-            if (archivo is null || archivo.Length == 0)
-            {
-                throw new ArgumentException(
-                    "Debe seleccionar una imagen.");
-            }
-
-            const long tamanioMaximo = 8 * 1024 * 1024;
-
-            if (archivo.Length > tamanioMaximo)
-            {
-                throw new ArgumentException(
-                    "La imagen no puede superar los 8 MB.");
-            }
-
-            string[] extensionesPermitidas =
-            {
-                ".jpg",
-                ".jpeg",
-                ".png",
-                ".webp"
-            };
-
-            string extensionOriginal =
-                Path.GetExtension(archivo.FileName)
-                    .ToLowerInvariant();
-
-            if (!extensionesPermitidas.Contains(extensionOriginal))
-            {
-                throw new ArgumentException(
-                    "Solo se permiten imágenes JPG, JPEG, PNG o WEBP.");
-            }
+            ValidarArchivo(archivo);
 
             string nombreArchivo =
                 $"{Guid.NewGuid():N}.webp";
 
+            string carpetaNormalizada = carpeta
+                .Replace('\\', '/')
+                .Trim('/');
+
             string rutaCarpeta = Path.Combine(
-                _environment.ContentRootPath,
+                environment.ContentRootPath,
                 "resources",
                 "uploads",
-                carpeta);
+                carpetaNormalizada.Replace(
+                    '/',
+                    Path.DirectorySeparatorChar));
 
             Directory.CreateDirectory(rutaCarpeta);
 
@@ -89,47 +60,49 @@ namespace CONATRADEC_API.Services
                 rutaCarpeta,
                 nombreArchivo);
 
-            using Stream stream = archivo.OpenReadStream();
-            using Image imagen = await Image.LoadAsync(stream);
+            await using Stream stream =
+                archivo.OpenReadStream();
+
+            using Image imagen =
+                await Image.LoadAsync(stream);
 
             imagen.Mutate(x => x.AutoOrient());
 
             if (imagen.Width > anchoMaximo ||
                 imagen.Height > altoMaximo)
             {
-                imagen.Mutate(x => x.Resize(new ResizeOptions
-                {
-                    Size = new Size(anchoMaximo, altoMaximo),
-                    Mode = ResizeMode.Max,
-                    Sampler = KnownResamplers.Lanczos3,
-                    Compand = true
-                }));
+                imagen.Mutate(x => x.Resize(
+                    new ResizeOptions
+                    {
+                        Size = new Size(
+                            anchoMaximo,
+                            altoMaximo),
+                        Mode = ResizeMode.Max,
+                        Sampler = KnownResamplers.Lanczos3,
+                        Compand = true
+                    }));
             }
 
-            WebpEncoder encoder = new()
-            {
-                Quality = calidad
-            };
-
-            await imagen.SaveAsync(rutaFisica, encoder);
-
-            string carpetaNormalizada = carpeta
-                .Replace('\\', '/')
-                .Trim('/');
+            await imagen.SaveAsync(
+                rutaFisica,
+                new WebpEncoder
+                {
+                    Quality = calidad
+                });
 
             string rutaPublica =
                 $"/resources/uploads/{carpetaNormalizada}/" +
                 nombreArchivo;
 
-            /*
-             * Las nuevas imágenes del álbum salen con su miniatura lista.
-             * Si por alguna razón esta optimización falla, no se cancela el
-             * guardado principal; la miniatura se creará bajo demanda.
-             */
+            // Precalienta las miniaturas más utilizadas. Un fallo aquí no
+            // invalida la imagen original, que ya quedó guardada.
             try
             {
                 if (carpetaNormalizada.StartsWith(
                         "album-botanico",
+                        StringComparison.OrdinalIgnoreCase) ||
+                    carpetaNormalizada.StartsWith(
+                        "noticias",
                         StringComparison.OrdinalIgnoreCase))
                 {
                     await ObtenerOCrearMiniaturaAsync(
@@ -151,7 +124,7 @@ namespace CONATRADEC_API.Services
             }
             catch
             {
-                // La imagen original ya está guardada y sigue siendo válida.
+                // La miniatura se volverá a intentar bajo demanda.
             }
 
             return rutaPublica;
@@ -183,7 +156,7 @@ namespace CONATRADEC_API.Services
                 rutaNormalizada);
 
             string carpetaMiniaturas = Path.Combine(
-                _environment.ContentRootPath,
+                environment.ContentRootPath,
                 "resources",
                 "uploads",
                 ".miniaturas",
@@ -260,21 +233,13 @@ namespace CONATRADEC_API.Services
                 return;
 
             string rutaNormalizada;
+            string rutaFisica;
 
             try
             {
                 rutaNormalizada =
                     NormalizarRutaRelativa(rutaRelativa);
-            }
-            catch
-            {
-                return;
-            }
 
-            string rutaFisica;
-
-            try
-            {
                 rutaFisica =
                     ResolverRutaFisicaSegura(rutaNormalizada);
             }
@@ -286,36 +251,8 @@ namespace CONATRADEC_API.Services
             if (File.Exists(rutaFisica))
                 File.Delete(rutaFisica);
 
-            /*
-             * También elimina las versiones pequeñas asociadas para evitar
-             * archivos huérfanos cuando se reemplaza una portada.
-             */
-            string hashRuta = CalcularHashRuta(
+            EliminarMiniaturasAsociadas(
                 rutaNormalizada);
-
-            string raizMiniaturas = Path.Combine(
-                _environment.ContentRootPath,
-                "resources",
-                "uploads",
-                ".miniaturas");
-
-            if (!Directory.Exists(raizMiniaturas))
-                return;
-
-            foreach (string archivo in Directory.EnumerateFiles(
-                         raizMiniaturas,
-                         $"{hashRuta}.webp",
-                         SearchOption.AllDirectories))
-            {
-                try
-                {
-                    File.Delete(archivo);
-                }
-                catch
-                {
-                    // No interrumpe la operación principal por un archivo cacheado.
-                }
-            }
         }
 
         private async Task GenerarMiniaturaAsync(
@@ -350,23 +287,22 @@ namespace CONATRADEC_API.Services
                 if (imagen.Width > ancho ||
                     imagen.Height > alto)
                 {
-                    imagen.Mutate(x => x.Resize(new ResizeOptions
-                    {
-                        Size = new Size(ancho, alto),
-                        Mode = ResizeMode.Max,
-                        Sampler = KnownResamplers.Lanczos3,
-                        Compand = true
-                    }));
+                    imagen.Mutate(x => x.Resize(
+                        new ResizeOptions
+                        {
+                            Size = new Size(ancho, alto),
+                            Mode = ResizeMode.Max,
+                            Sampler = KnownResamplers.Lanczos3,
+                            Compand = true
+                        }));
                 }
-
-                WebpEncoder encoder = new()
-                {
-                    Quality = calidad
-                };
 
                 await imagen.SaveAsync(
                     rutaTemporal,
-                    encoder,
+                    new WebpEncoder
+                    {
+                        Quality = calidad
+                    },
                     cancellationToken);
 
                 File.Move(
@@ -394,13 +330,13 @@ namespace CONATRADEC_API.Services
         {
             string raizPermitida = Path.GetFullPath(
                 Path.Combine(
-                    _environment.ContentRootPath,
+                    environment.ContentRootPath,
                     "resources",
                     "uploads"));
 
             string rutaFisica = Path.GetFullPath(
                 Path.Combine(
-                    _environment.ContentRootPath,
+                    environment.ContentRootPath,
                     rutaNormalizada.Replace(
                         '/',
                         Path.DirectorySeparatorChar)));
@@ -457,8 +393,7 @@ namespace CONATRADEC_API.Services
                     "La ruta de la imagen no es válida.");
             }
 
-            string extension = Path
-                .GetExtension(valor)
+            string extension = Path.GetExtension(valor)
                 .ToLowerInvariant();
 
             if (extension is not
@@ -469,6 +404,32 @@ namespace CONATRADEC_API.Services
             }
 
             return valor;
+        }
+
+        private static void ValidarArchivo(IFormFile archivo)
+        {
+            if (archivo == null || archivo.Length == 0)
+            {
+                throw new ArgumentException(
+                    "Debe seleccionar una imagen.");
+            }
+
+            if (archivo.Length > 8 * 1024 * 1024)
+            {
+                throw new ArgumentException(
+                    "La imagen no puede superar los 8 MB.");
+            }
+
+            string extension = Path
+                .GetExtension(archivo.FileName)
+                .ToLowerInvariant();
+
+            if (extension is not
+                (".jpg" or ".jpeg" or ".png" or ".webp"))
+            {
+                throw new ArgumentException(
+                    "Solo se permiten imágenes JPG, JPEG, PNG o WEBP.");
+            }
         }
 
         private static void ValidarParametrosMiniatura(
@@ -497,14 +458,38 @@ namespace CONATRADEC_API.Services
             if (!File.Exists(rutaMiniatura))
                 return false;
 
-            DateTime modificacionOriginal =
-                File.GetLastWriteTimeUtc(rutaOriginal);
+            return File.GetLastWriteTimeUtc(rutaMiniatura) >=
+                   File.GetLastWriteTimeUtc(rutaOriginal);
+        }
 
-            DateTime modificacionMiniatura =
-                File.GetLastWriteTimeUtc(rutaMiniatura);
+        private void EliminarMiniaturasAsociadas(
+            string rutaNormalizada)
+        {
+            string raizMiniaturas = Path.Combine(
+                environment.ContentRootPath,
+                "resources",
+                "uploads",
+                ".miniaturas");
 
-            return modificacionMiniatura >=
-                modificacionOriginal;
+            if (!Directory.Exists(raizMiniaturas))
+                return;
+
+            string hashRuta = CalcularHashRuta(
+                rutaNormalizada);
+
+            foreach (string archivo in Directory.EnumerateFiles(
+                         raizMiniaturas,
+                         $"{hashRuta}.webp",
+                         SearchOption.AllDirectories))
+            {
+                try
+                {
+                    File.Delete(archivo);
+                }
+                catch
+                {
+                }
+            }
         }
 
         private static MiniaturaImagenResult
@@ -514,9 +499,8 @@ namespace CONATRADEC_API.Services
             FileInfo info = new(rutaMiniatura);
 
             string materialEtag =
-                $"{info.FullName}|" +
-                $"{info.Length}|" +
-                $"{info.LastWriteTimeUtc.Ticks}";
+                $"{info.FullName}|{info.Length}|" +
+                info.LastWriteTimeUtc.Ticks;
 
             string etag = Convert.ToHexString(
                     SHA256.HashData(
