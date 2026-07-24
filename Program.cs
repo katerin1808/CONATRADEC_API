@@ -214,6 +214,88 @@ app.UseAuthorization();
 
 app.MapControllers();
 
+/*
+ * Miniaturas del álbum botánico.
+ *
+ * Esta ruta no usa el prefijo /api y es un endpoint mínimo, no una acción de
+ * controlador. De esa forma BitacoraMiddleware no crea un registro por cada
+ * imagen descargada, lo cual sería costoso y llenaría la bitácora.
+ *
+ * Las miniaturas se crean una sola vez en disco. Las siguientes solicitudes
+ * reciben el archivo WebP cacheado con ETag y Cache-Control de 30 días.
+ */
+app.MapGet(
+    "/imagenes/miniatura",
+    async Task<IResult> (
+        HttpContext context,
+        ImageService imageService,
+        string ruta,
+        int ancho = 720,
+        int alto = 480,
+        int calidad = 68,
+        CancellationToken cancellationToken = default) =>
+    {
+        try
+        {
+            MiniaturaImagenResult? miniatura =
+                await imageService.ObtenerOCrearMiniaturaAsync(
+                    ruta,
+                    ancho,
+                    alto,
+                    calidad,
+                    cancellationToken);
+
+            if (miniatura == null)
+                return Results.NotFound();
+
+            string etag = $"\"{miniatura.ETag}\"";
+
+            context.Response.Headers["ETag"] = etag;
+            context.Response.Headers["Cache-Control"] =
+                "public,max-age=2592000,immutable";
+            context.Response.Headers["Last-Modified"] =
+                miniatura.UltimaModificacion.ToString("R");
+            context.Response.Headers["X-Content-Type-Options"] =
+                "nosniff";
+
+            string ifNoneMatch =
+                context.Request.Headers["If-None-Match"]
+                    .ToString();
+
+            bool noModificada = ifNoneMatch
+                .Split(
+                    ',',
+                    StringSplitOptions.RemoveEmptyEntries |
+                    StringSplitOptions.TrimEntries)
+                .Any(value =>
+                    string.Equals(
+                        value,
+                        etag,
+                        StringComparison.Ordinal));
+
+            if (noModificada)
+                return Results.StatusCode(
+                    StatusCodes.Status304NotModified);
+
+            return Results.File(
+                miniatura.RutaFisica,
+                "image/webp");
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new
+            {
+                success = false,
+                message = ex.Message
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            return Results.StatusCode(
+                499);
+        }
+    });
+
 // Crea de forma idempotente solamente la estructura del nuevo módulo,
 // sus categorías iniciales y la interfaz de permisos. No requiere ejecutar
 // migraciones ni scripts de forma separada.
