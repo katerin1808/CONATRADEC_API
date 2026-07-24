@@ -1,4 +1,4 @@
-﻿using CONATRADEC_API.Auditing;
+using CONATRADEC_API.Auditing;
 using CONATRADEC_API.Filters;
 using CONATRADEC_API.Infrastructure;
 using CONATRADEC_API.Middleware;
@@ -42,6 +42,10 @@ builder.Services.AddScoped<AnalisisSueloCalculoService>();
 builder.Services.AddScoped<AnalisisReporteDatosService>();
 builder.Services.AddScoped<ImageService>();
 
+// Servicios del módulo de noticias.
+builder.Services.AddScoped<PermisoApiService>();
+builder.Services.AddScoped<NoticiasDatabaseInitializer>();
+
 // Contexto e interceptores transversales de auditoría.
 builder.Services.AddScoped<AuditRequestContext>();
 builder.Services.AddScoped<AuditSaveChangesInterceptor>();
@@ -68,6 +72,17 @@ builder.Services.AddDbContext<DBContext>((serviceProvider, options) =>
             Console.WriteLine,
             LogLevel.Information);
     }
+});
+
+// Contexto aislado del módulo. Usa los mismos interceptores para que las
+// publicaciones y sus cambios aparezcan en la bitácora general.
+builder.Services.AddDbContext<NoticiasDbContext>((serviceProvider, options) =>
+{
+    options
+        .UseSqlServer(connectionString)
+        .AddInterceptors(
+            serviceProvider.GetRequiredService<AuditSaveChangesInterceptor>(),
+            serviceProvider.GetRequiredService<AuditTransactionInterceptor>());
 });
 
 builder.Services.AddDbContext<BitacoraDbContext>(options =>
@@ -147,6 +162,21 @@ app.UseStaticFiles(new StaticFileOptions
     RequestPath = "/resources/uploads/categorias-album"
 });
 
+// Portadas del centro de noticias.
+var rutaNoticias = Path.Combine(
+    Directory.GetCurrentDirectory(),
+    "resources",
+    "uploads",
+    "noticias");
+
+Directory.CreateDirectory(rutaNoticias);
+
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(rutaNoticias),
+    RequestPath = "/resources/uploads/noticias"
+});
+
 // Se declara el enrutamiento antes de los middleware transversales.
 app.UseRouting();
 
@@ -183,5 +213,16 @@ app.UseMiddleware<BitacoraMiddleware>();
 app.UseAuthorization();
 
 app.MapControllers();
+
+// Crea de forma idempotente solamente la estructura del nuevo módulo,
+// sus categorías iniciales y la interfaz de permisos. No requiere ejecutar
+// migraciones ni scripts de forma separada.
+await using (AsyncServiceScope scope = app.Services.CreateAsyncScope())
+{
+    NoticiasDatabaseInitializer initializer = scope.ServiceProvider
+        .GetRequiredService<NoticiasDatabaseInitializer>();
+
+    await initializer.InicializarAsync();
+}
 
 app.Run();
