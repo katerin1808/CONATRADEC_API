@@ -26,6 +26,20 @@ namespace CONATRADEC_API.Controllers
             return Ok(data);
         }
 
+
+        [HttpGet("listar-inactivas")]
+        public async Task<IActionResult> ListarInactivas()
+        {
+            var data =
+                await ConstruirRespuestaFuente(
+                        incluirInactivas: true)
+                    .Where(x => !x.activo)
+                    .OrderBy(x => x.nombreNutriente)
+                    .ToListAsync();
+
+            return Ok(data);
+        }
+
         [HttpGet("obtener/{id:int}")]
         public async Task<IActionResult> ObtenerPorId(int id)
         {
@@ -706,6 +720,51 @@ namespace CONATRADEC_API.Controllers
             }
         }
 
+        [HttpPut("reactivar/{id:int}")]
+        public async Task<IActionResult> Reactivar(int id)
+        {
+            var fuente =
+                await _db.fuenteNutriente
+                    .FirstOrDefaultAsync(x =>
+                        x.fuenteNutrientesId == id);
+
+            if (fuente == null)
+            {
+                return NotFound(new
+                {
+                    mensaje =
+                        "Fuente nutriente no encontrada."
+                });
+            }
+
+            if (fuente.activo)
+            {
+                return BadRequest(new
+                {
+                    mensaje =
+                        "La fuente nutriente ya se encuentra activa."
+                });
+            }
+
+            fuente.activo = true;
+
+            await _db.SaveChangesAsync();
+
+            var respuesta =
+                await ConstruirRespuestaFuente(
+                        incluirInactivas: true)
+                    .FirstAsync(x =>
+                        x.fuenteNutrientesId == id);
+
+            return Ok(new
+            {
+                mensaje =
+                    "Fuente nutriente reactivada correctamente.",
+
+                data = respuesta
+            });
+        }
+
         [HttpGet("aportes-tabla")]
         public async Task<IActionResult> AportesTabla()
         {
@@ -801,29 +860,42 @@ namespace CONATRADEC_API.Controllers
                     .Trim()
                     .ToUpper();
 
-            bool existe =
-                await _db.fuenteNutriente
-                    .AnyAsync(x =>
-                        (!idExcluir.HasValue ||
-                         x.fuenteNutrientesId !=
-                         idExcluir.Value) &&
-                        x.nombreNutriente
-                            .Trim()
-                            .ToUpper() ==
-                        nombre &&
-                        x.activo);
+            var fuenteExistente =
+             await _db.fuenteNutriente
+                 .FirstOrDefaultAsync(x =>
+                     (!idExcluir.HasValue ||
+                      x.fuenteNutrientesId != idExcluir.Value) &&
+                     x.nombreNutriente
+                         .Trim()
+                         .ToUpper() ==
+                     nombre);
 
-            if (existe)
+            if (fuenteExistente != null)
             {
-                return BadRequest(new
+                if (fuenteExistente.activo)
+                {
+                    return Conflict(new
+                    {
+                        mensaje =
+                            idExcluir.HasValue
+                                ? "Ya existe otra fuente nutriente activa con ese nombre."
+                                : "Ya existe una fuente nutriente activa con ese nombre."
+                    });
+                }
+
+                return Conflict(new
                 {
                     mensaje =
-                        idExcluir.HasValue
-                            ? "Ya existe otra fuente nutriente con ese nombre."
-                            : "Ya existe una fuente nutriente con ese nombre."
+                        "Ya existe una fuente nutriente inactiva con ese nombre. Debe reactivarla en lugar de crear una nueva.",
+
+                    data = new
+                    {
+                        fuenteExistente.fuenteNutrientesId,
+                        fuenteExistente.nombreNutriente,
+                        fuenteExistente.activo
+                    }
                 });
             }
-
             var elementos =
                 dto.elementosQuimicos ??
                 new List<ElementoFuenteCrearDto>();
