@@ -1,4 +1,5 @@
-﻿using CONATRADEC_API.Models;
+using CONATRADEC_API.Constants;
+using CONATRADEC_API.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -6,269 +7,962 @@ namespace CONATRADEC_API.Controllers
 {
     [ApiController]
     [Route("api/configuracion/tipos-analisis-suelo")]
-    public class TipoAnalisisSueloController : ControllerBase
+    public sealed class TipoAnalisisSueloController : ControllerBase
     {
-        private readonly DBContext _db;
+        private readonly DBContext db;
+        private readonly ILogger<TipoAnalisisSueloController> logger;
 
-        public TipoAnalisisSueloController(DBContext db)
+        public TipoAnalisisSueloController(
+            DBContext db,
+            ILogger<TipoAnalisisSueloController> logger)
         {
-            _db = db;
+            this.db = db;
+            this.logger = logger;
         }
 
-        // GET:
-        // Lista únicamente registros activos.
+        // ==========================================================
+        // LISTADO COMPLETO PARA FORMULARIOS Y SELECTORES
+        // ==========================================================
         [HttpGet]
-        public async Task<IActionResult> Listar()
+        public async Task<ActionResult<IEnumerable<TipoAnalisisSueloRespuestaDto>>>
+            Listar(CancellationToken cancellationToken)
         {
-            var data = await _db.TipoAnalisisSuelos
-                .AsNoTracking()
-                .Where(x => x.activo)
-                .OrderBy(x => x.nombreTipoAnalisisSuelo)
-                .Select(x => new
-                {
-                    x.tipoAnalisisSueloId,
-                    x.nombreTipoAnalisisSuelo,
-                    x.descripcionTipoAnalisisSuelo,
-                    x.activo
-                })
-                .ToListAsync();
+            List<TipoAnalisisSueloRespuestaDto> data =
+                await db.TipoAnalisisSuelos
+                    .AsNoTracking()
+                    .Where(item =>
+                        item.activo)
+                    .OrderBy(item =>
+                        item.nombreTipoAnalisisSuelo)
+                    .Select(item =>
+                        new TipoAnalisisSueloRespuestaDto
+                        {
+                            tipoAnalisisSueloId =
+                                item.tipoAnalisisSueloId,
+
+                            codigoTipoAnalisisSuelo =
+                                item.codigoTipoAnalisisSuelo,
+
+                            nombreTipoAnalisisSuelo =
+                                item.nombreTipoAnalisisSuelo,
+
+                            descripcionTipoAnalisisSuelo =
+                                item.descripcionTipoAnalisisSuelo,
+
+                            activo =
+                                item.activo,
+
+                            esTipoSistema =
+                                (
+                                    item.codigoTipoAnalisisSuelo ==
+                                        TipoAnalisisSueloCodigos.RequerimientoAnual ||
+                                    item.codigoTipoAnalisisSuelo ==
+                                        TipoAnalisisSueloCodigos.BalanceFormula ||
+                                    item.codigoTipoAnalisisSuelo ==
+                                        TipoAnalisisSueloCodigos.EnmiendaCalcarea ||
+                                    item.codigoTipoAnalisisSuelo ==
+                                        TipoAnalisisSueloCodigos.FertilizacionMixta
+                                ),
+
+                            puedeEliminar =
+                                item.codigoTipoAnalisisSuelo !=
+                                    TipoAnalisisSueloCodigos.RequerimientoAnual &&
+                                item.codigoTipoAnalisisSuelo !=
+                                    TipoAnalisisSueloCodigos.BalanceFormula &&
+                                item.codigoTipoAnalisisSuelo !=
+                                    TipoAnalisisSueloCodigos.EnmiendaCalcarea &&
+                                item.codigoTipoAnalisisSuelo !=
+                                    TipoAnalisisSueloCodigos.FertilizacionMixta
+                        })
+                    .ToListAsync(cancellationToken);
 
             return Ok(data);
         }
 
-        // GET por ID.
-        [HttpGet("{id:int}")]
-        public async Task<IActionResult> Obtener(int id)
+        // ==========================================================
+        // BÚSQUEDA PAGINADA PARA LA PANTALLA ADMINISTRATIVA
+        // ==========================================================
+        [HttpGet("buscar")]
+        public async Task<ActionResult<TipoAnalisisSueloPaginaResponse>>
+            Buscar(
+                [FromQuery] string? buscar = null,
+                [FromQuery] int pagina = 1,
+                [FromQuery] int tamanoPagina = 20,
+                [FromQuery] string orden = "nombre",
+                [FromQuery] string direccion = "asc",
+                CancellationToken cancellationToken = default)
         {
-            var data = await _db.TipoAnalisisSuelos
-                .AsNoTracking()
-                .Where(x =>
-                    x.tipoAnalisisSueloId == id &&
-                    x.activo)
-                .Select(x => new
+            pagina =
+                Math.Max(
+                    1,
+                    pagina);
+
+            tamanoPagina =
+                Math.Clamp(
+                    tamanoPagina,
+                    5,
+                    100);
+
+            IQueryable<TipoAnalisisSuelo> query =
+                db.TipoAnalisisSuelos
+                    .AsNoTracking()
+                    .Where(item =>
+                        item.activo);
+
+            if (!string.IsNullOrWhiteSpace(buscar))
+            {
+                string texto =
+                    buscar
+                        .ReplaceLineEndings(" ")
+                        .Trim();
+
+                if (texto.Length > 200)
+                    texto = texto[..200];
+
+                query = query.Where(item =>
+                    item.nombreTipoAnalisisSuelo.Contains(texto) ||
+                    item.descripcionTipoAnalisisSuelo.Contains(texto) ||
+                    item.codigoTipoAnalisisSuelo.Contains(texto));
+            }
+
+            bool descendente =
+                string.Equals(
+                    direccion,
+                    "desc",
+                    StringComparison.OrdinalIgnoreCase);
+
+            query =
+                descendente
+                    ? query.OrderByDescending(item =>
+                        item.nombreTipoAnalisisSuelo)
+                    : query.OrderBy(item =>
+                        item.nombreTipoAnalisisSuelo);
+
+            int totalRegistros =
+                await query.CountAsync(cancellationToken);
+
+            List<TipoAnalisisSueloRespuestaDto> items =
+                await query
+                    .Skip(
+                        (pagina - 1) *
+                        tamanoPagina)
+                    .Take(tamanoPagina)
+                    .Select(item =>
+                        new TipoAnalisisSueloRespuestaDto
+                        {
+                            tipoAnalisisSueloId =
+                                item.tipoAnalisisSueloId,
+
+                            codigoTipoAnalisisSuelo =
+                                item.codigoTipoAnalisisSuelo,
+
+                            nombreTipoAnalisisSuelo =
+                                item.nombreTipoAnalisisSuelo,
+
+                            descripcionTipoAnalisisSuelo =
+                                item.descripcionTipoAnalisisSuelo,
+
+                            activo =
+                                item.activo,
+
+                            esTipoSistema =
+                                (
+                                    item.codigoTipoAnalisisSuelo ==
+                                        TipoAnalisisSueloCodigos.RequerimientoAnual ||
+                                    item.codigoTipoAnalisisSuelo ==
+                                        TipoAnalisisSueloCodigos.BalanceFormula ||
+                                    item.codigoTipoAnalisisSuelo ==
+                                        TipoAnalisisSueloCodigos.EnmiendaCalcarea ||
+                                    item.codigoTipoAnalisisSuelo ==
+                                        TipoAnalisisSueloCodigos.FertilizacionMixta
+                                ),
+
+                            puedeEliminar =
+                                item.codigoTipoAnalisisSuelo !=
+                                    TipoAnalisisSueloCodigos.RequerimientoAnual &&
+                                item.codigoTipoAnalisisSuelo !=
+                                    TipoAnalisisSueloCodigos.BalanceFormula &&
+                                item.codigoTipoAnalisisSuelo !=
+                                    TipoAnalisisSueloCodigos.EnmiendaCalcarea &&
+                                item.codigoTipoAnalisisSuelo !=
+                                    TipoAnalisisSueloCodigos.FertilizacionMixta
+                        })
+                    .ToListAsync(cancellationToken);
+
+            await AsignarConteosAsync(
+                items,
+                cancellationToken);
+
+            int totalPaginas =
+                totalRegistros == 0
+                    ? 1
+                    : (int)Math.Ceiling(
+                        totalRegistros /
+                        (double)tamanoPagina);
+
+            return Ok(
+                new TipoAnalisisSueloPaginaResponse
                 {
-                    x.tipoAnalisisSueloId,
-                    x.nombreTipoAnalisisSuelo,
-                    x.descripcionTipoAnalisisSuelo,
-                    x.activo
-                })
-                .FirstOrDefaultAsync();
+                    Items = items,
+                    PaginaActual = pagina,
+                    TamanoPagina = tamanoPagina,
+                    TotalRegistros = totalRegistros,
+                    TotalPaginas = totalPaginas
+                });
+        }
+
+        [HttpGet("{id:int}")]
+        public async Task<ActionResult<TipoAnalisisSueloRespuestaDto>>
+            Obtener(
+                int id,
+                CancellationToken cancellationToken)
+        {
+            TipoAnalisisSueloRespuestaDto? data =
+                await db.TipoAnalisisSuelos
+                    .AsNoTracking()
+                    .Where(item =>
+                        item.tipoAnalisisSueloId == id &&
+                        item.activo)
+                    .Select(item =>
+                        new TipoAnalisisSueloRespuestaDto
+                        {
+                            tipoAnalisisSueloId =
+                                item.tipoAnalisisSueloId,
+
+                            codigoTipoAnalisisSuelo =
+                                item.codigoTipoAnalisisSuelo,
+
+                            nombreTipoAnalisisSuelo =
+                                item.nombreTipoAnalisisSuelo,
+
+                            descripcionTipoAnalisisSuelo =
+                                item.descripcionTipoAnalisisSuelo,
+
+                            activo =
+                                item.activo,
+
+                            esTipoSistema =
+                                (
+                                    item.codigoTipoAnalisisSuelo ==
+                                        TipoAnalisisSueloCodigos.RequerimientoAnual ||
+                                    item.codigoTipoAnalisisSuelo ==
+                                        TipoAnalisisSueloCodigos.BalanceFormula ||
+                                    item.codigoTipoAnalisisSuelo ==
+                                        TipoAnalisisSueloCodigos.EnmiendaCalcarea ||
+                                    item.codigoTipoAnalisisSuelo ==
+                                        TipoAnalisisSueloCodigos.FertilizacionMixta
+                                ),
+
+                            puedeEliminar =
+                                item.codigoTipoAnalisisSuelo !=
+                                    TipoAnalisisSueloCodigos.RequerimientoAnual &&
+                                item.codigoTipoAnalisisSuelo !=
+                                    TipoAnalisisSueloCodigos.BalanceFormula &&
+                                item.codigoTipoAnalisisSuelo !=
+                                    TipoAnalisisSueloCodigos.EnmiendaCalcarea &&
+                                item.codigoTipoAnalisisSuelo !=
+                                    TipoAnalisisSueloCodigos.FertilizacionMixta
+                        })
+                    .SingleOrDefaultAsync(cancellationToken);
 
             if (data == null)
             {
                 return NotFound(new
                 {
-                    mensaje = "Tipo de análisis de suelo no encontrado."
+                    success = false,
+                    message =
+                        "El tipo de análisis de suelo no existe o está inactivo."
                 });
             }
+
+            await AsignarConteosAsync(
+                new List<TipoAnalisisSueloRespuestaDto>
+                {
+                    data
+                },
+                cancellationToken);
 
             return Ok(data);
         }
 
-        // POST:
-        // No solicita ID ni activo.
-        [HttpPost]
-        public async Task<IActionResult> Crear(
-            [FromBody] CrearTipoAnalisisSueloDto dto)
+        // ==========================================================
+        // DIAGNÓSTICO DE RELACIONES
+        // ==========================================================
+        [HttpGet("diagnostico-relaciones")]
+        public async Task<ActionResult> DiagnosticoRelaciones(
+            CancellationToken cancellationToken)
         {
-            if (string.IsNullOrWhiteSpace(dto.nombreTipoAnalisisSuelo))
-            {
-                return BadRequest(new
-                {
-                    mensaje = "El nombre del tipo de análisis es obligatorio."
-                });
-            }
+            int formulasSinRelacion =
+                await db.formulaNutricional
+                    .AsNoTracking()
+                    .CountAsync(
+                        item =>
+                            item.analisisSueloCalculoId.HasValue &&
+                            !db.AnalisisSueloCalculos.Any(calculo =>
+                                calculo.analisisSueloCalculoId ==
+                                item.analisisSueloCalculoId.Value),
+                        cancellationToken);
 
-            if (string.IsNullOrWhiteSpace(dto.descripcionTipoAnalisisSuelo))
-            {
-                return BadRequest(new
-                {
-                    mensaje = "La descripción es obligatoria."
-                });
-            }
+            int enmiendasSinRelacion =
+                await db.enmiendaCalcarea
+                    .AsNoTracking()
+                    .CountAsync(
+                        item =>
+                            item.analisisSueloCalculoId.HasValue &&
+                            !db.AnalisisSueloCalculos.Any(calculo =>
+                                calculo.analisisSueloCalculoId ==
+                                item.analisisSueloCalculoId.Value),
+                        cancellationToken);
 
-            var nombre = dto.nombreTipoAnalisisSuelo
-                .Trim()
-                .ToUpper();
+            int mixtasSinRelacion =
+                await db.fertilizacionMixta
+                    .AsNoTracking()
+                    .CountAsync(
+                        item =>
+                            !db.AnalisisSueloCalculos.Any(calculo =>
+                                calculo.analisisSueloCalculoId ==
+                                item.analisisSueloCalculoId),
+                        cancellationToken);
 
-            var existe = await _db.TipoAnalisisSuelos
-                .AnyAsync(x =>
-                    x.nombreTipoAnalisisSuelo
-                        .Trim()
-                        .ToUpper() == nombre);
+            int formulasNoVinculadas =
+                await db.formulaNutricional
+                    .AsNoTracking()
+                    .CountAsync(
+                        item =>
+                            !item.analisisSueloCalculoId.HasValue,
+                        cancellationToken);
 
-            if (existe)
-            {
-                return Conflict(new
-                {
-                    mensaje = "Ya existe un tipo de análisis de suelo con ese nombre."
-                });
-            }
-
-            var entidad = new TipoAnalisisSuelo
-            {
-                nombreTipoAnalisisSuelo = nombre,
-                descripcionTipoAnalisisSuelo =
-                    dto.descripcionTipoAnalisisSuelo.Trim(),
-
-                // Todos los registros nuevos se crean activos.
-                activo = true
-            };
-
-            _db.TipoAnalisisSuelos.Add(entidad);
-            await _db.SaveChangesAsync();
-
-            return StatusCode(
-                StatusCodes.Status201Created,
-                new
-                {
-                    mensaje = "Tipo de análisis de suelo creado correctamente.",
-                    data = new
-                    {
-                        entidad.tipoAnalisisSueloId,
-                        entidad.nombreTipoAnalisisSuelo,
-                        entidad.descripcionTipoAnalisisSuelo,
-                        entidad.activo
-                    }
-                });
-        }
-
-        // PUT:
-        // El ID se recibe en la URL.
-        // No permite modificar el ID ni el estado activo.
-        [HttpPut("{id:int}")]
-        public async Task<IActionResult> Actualizar(
-            int id,
-            [FromBody] ActualizarTipoAnalisisSueloDto dto)
-        {
-            var entidad = await _db.TipoAnalisisSuelos
-                .FirstOrDefaultAsync(x =>
-                    x.tipoAnalisisSueloId == id &&
-                    x.activo);
-
-            if (entidad == null)
-            {
-                return NotFound(new
-                {
-                    mensaje = "Tipo de análisis de suelo no encontrado."
-                });
-            }
-
-            if (string.IsNullOrWhiteSpace(dto.nombreTipoAnalisisSuelo))
-            {
-                return BadRequest(new
-                {
-                    mensaje = "El nombre del tipo de análisis es obligatorio."
-                });
-            }
-
-            if (string.IsNullOrWhiteSpace(dto.descripcionTipoAnalisisSuelo))
-            {
-                return BadRequest(new
-                {
-                    mensaje = "La descripción es obligatoria."
-                });
-            }
-
-            var nombre = dto.nombreTipoAnalisisSuelo
-                .Trim()
-                .ToUpper();
-
-            var existe = await _db.TipoAnalisisSuelos
-                .AnyAsync(x =>
-                    x.tipoAnalisisSueloId != id &&
-                    x.nombreTipoAnalisisSuelo
-                        .Trim()
-                        .ToUpper() == nombre);
-
-            if (existe)
-            {
-                return Conflict(new
-                {
-                    mensaje = "Ya existe otro tipo de análisis de suelo con ese nombre."
-                });
-            }
-
-            entidad.nombreTipoAnalisisSuelo = nombre;
-            entidad.descripcionTipoAnalisisSuelo =
-                dto.descripcionTipoAnalisisSuelo.Trim();
-
-            // No se modifica:
-            // entidad.tipoAnalisisSueloId
-            // entidad.activo
-
-            await _db.SaveChangesAsync();
+            int enmiendasNoVinculadas =
+                await db.enmiendaCalcarea
+                    .AsNoTracking()
+                    .CountAsync(
+                        item =>
+                            !item.analisisSueloCalculoId.HasValue,
+                        cancellationToken);
 
             return Ok(new
             {
-                mensaje = "Tipo de análisis de suelo actualizado correctamente.",
+                success = true,
+                relacionesValidas =
+                    formulasSinRelacion == 0 &&
+                    enmiendasSinRelacion == 0 &&
+                    mixtasSinRelacion == 0,
+
                 data = new
                 {
-                    entidad.tipoAnalisisSueloId,
-                    entidad.nombreTipoAnalisisSuelo,
-                    entidad.descripcionTipoAnalisisSuelo,
-                    entidad.activo
+                    formulasSinRelacion,
+                    enmiendasSinRelacion,
+                    mixtasSinRelacion,
+
+                    /*
+                     * Fórmula y enmienda permiten null porque existieron
+                     * registros independientes antes del guardado integral.
+                     * No son huérfanos, pero no se cuentan como asociados
+                     * a un análisis de suelo.
+                     */
+                    formulasNoVinculadas,
+                    enmiendasNoVinculadas
                 }
             });
         }
 
-        [HttpPut("{id:int}/eliminar")]
-        public async Task<IActionResult> Eliminar(int id)
+        // ==========================================================
+        // CREAR O REACTIVAR
+        // ==========================================================
+        [HttpPost]
+        public async Task<ActionResult> Crear(
+            [FromBody] CrearTipoAnalisisSueloDto? request,
+            CancellationToken cancellationToken)
         {
-            var entidad = await _db.TipoAnalisisSuelos
-                .FirstOrDefaultAsync(x =>
-                    x.tipoAnalisisSueloId == id &&
-                    x.activo);
-
-            if (entidad == null)
+            if (request == null)
             {
-                return NotFound(new
+                return BadRequest(new
                 {
-                    mensaje = "Tipo de análisis de suelo no encontrado o ya está desactivado."
+                    success = false,
+                    message =
+                        "No se recibieron los datos del tipo de análisis de suelo."
                 });
             }
 
-            var dependencias = new List<string>();
+            string nombre =
+                NormalizarNombre(
+                    request.nombreTipoAnalisisSuelo);
 
-            var usadoEnCalculos = await _db.AnalisisSueloCalculos
-                .AnyAsync(x => x.tipoAnalisisSueloId == id);
+            string descripcion =
+                NormalizarDescripcion(
+                    request.descripcionTipoAnalisisSuelo);
 
-            if (usadoEnCalculos)
-            {
-                dependencias.Add("cálculos de análisis de suelo");
-            }
+            ActionResult? validacion =
+                ValidarDatos(
+                    nombre,
+                    descripcion);
 
-            if (dependencias.Count > 0)
+            if (validacion != null)
+                return validacion;
+
+            bool existeActivo =
+                await db.TipoAnalisisSuelos
+                    .AsNoTracking()
+                    .AnyAsync(
+                        item =>
+                            item.activo &&
+                            EF.Functions.Collate(
+                                item.nombreTipoAnalisisSuelo,
+                                "Modern_Spanish_CI_AI") ==
+                            nombre,
+                        cancellationToken);
+
+            if (existeActivo)
             {
                 return Conflict(new
                 {
-                    mensaje =
+                    success = false,
+                    message =
+                        "Ya existe un tipo de análisis de suelo activo con ese nombre."
+                });
+            }
+
+            TipoAnalisisSuelo? existenteInactivo =
+                await db.TipoAnalisisSuelos
+                    .FirstOrDefaultAsync(
+                        item =>
+                            !item.activo &&
+                            EF.Functions.Collate(
+                                item.nombreTipoAnalisisSuelo,
+                                "Modern_Spanish_CI_AI") ==
+                            nombre,
+                        cancellationToken);
+
+            try
+            {
+                if (existenteInactivo != null)
+                {
+                    existenteInactivo.nombreTipoAnalisisSuelo =
+                        nombre;
+
+                    existenteInactivo.descripcionTipoAnalisisSuelo =
+                        descripcion;
+
+                    existenteInactivo.activo =
+                        true;
+
+                    if (string.IsNullOrWhiteSpace(
+                            existenteInactivo.codigoTipoAnalisisSuelo))
+                    {
+                        existenteInactivo.codigoTipoAnalisisSuelo =
+                            TipoAnalisisSueloCodigos
+                                .CrearCodigoPersonalizado();
+                    }
+
+                    await db.SaveChangesAsync(
+                        cancellationToken);
+
+                    return Ok(new
+                    {
+                        success = true,
+                        message =
+                            "Tipo de análisis de suelo reactivado correctamente.",
+
+                        data =
+                            CrearRespuesta(existenteInactivo)
+                    });
+                }
+
+                var entity =
+                    new TipoAnalisisSuelo
+                    {
+                        codigoTipoAnalisisSuelo =
+                            TipoAnalisisSueloCodigos
+                                .CrearCodigoPersonalizado(),
+
+                        nombreTipoAnalisisSuelo =
+                            nombre,
+
+                        descripcionTipoAnalisisSuelo =
+                            descripcion,
+
+                        activo =
+                            true
+                    };
+
+                db.TipoAnalisisSuelos.Add(entity);
+
+                await db.SaveChangesAsync(
+                    cancellationToken);
+
+                return StatusCode(
+                    StatusCodes.Status201Created,
+                    new
+                    {
+                        success = true,
+                        message =
+                            "Tipo de análisis de suelo creado correctamente.",
+
+                        data =
+                            CrearRespuesta(entity)
+                    });
+            }
+            catch (DbUpdateException ex)
+            {
+                logger.LogWarning(
+                    ex,
+                    "Conflicto al crear el tipo de análisis de suelo {Nombre}.",
+                    nombre);
+
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        "No fue posible crear el tipo de análisis de suelo porque ya existe un registro activo con el mismo nombre."
+                });
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(
+                    ex,
+                    "Error inesperado al crear un tipo de análisis de suelo.");
+
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message =
+                        "Ocurrió un error inesperado al crear el tipo de análisis de suelo."
+                });
+            }
+        }
+
+        // ==========================================================
+        // ACTUALIZAR
+        // El código interno nunca se modifica.
+        // ==========================================================
+        [HttpPut("{id:int}")]
+        public async Task<ActionResult> Actualizar(
+            int id,
+            [FromBody] ActualizarTipoAnalisisSueloDto? request,
+            CancellationToken cancellationToken)
+        {
+            if (id <= 0)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "El identificador del tipo de análisis no es válido."
+                });
+            }
+
+            if (request == null)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "No se recibieron los datos del tipo de análisis de suelo."
+                });
+            }
+
+            string nombre =
+                NormalizarNombre(
+                    request.nombreTipoAnalisisSuelo);
+
+            string descripcion =
+                NormalizarDescripcion(
+                    request.descripcionTipoAnalisisSuelo);
+
+            ActionResult? validacion =
+                ValidarDatos(
+                    nombre,
+                    descripcion);
+
+            if (validacion != null)
+                return validacion;
+
+            TipoAnalisisSuelo? entity =
+                await db.TipoAnalisisSuelos
+                    .FirstOrDefaultAsync(
+                        item =>
+                            item.tipoAnalisisSueloId == id,
+                        cancellationToken);
+
+            if (entity == null)
+            {
+                return NotFound(new
+                {
+                    success = false,
+                    message =
+                        "El tipo de análisis de suelo indicado no existe."
+                });
+            }
+
+            if (!entity.activo)
+            {
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        "No se puede actualizar un tipo de análisis de suelo que está inactivo."
+                });
+            }
+
+            bool duplicado =
+                await db.TipoAnalisisSuelos.AnyAsync(
+                    item =>
+                        item.tipoAnalisisSueloId != id &&
+                        item.activo &&
+                        EF.Functions.Collate(
+                            item.nombreTipoAnalisisSuelo,
+                            "Modern_Spanish_CI_AI") ==
+                        nombre,
+                    cancellationToken);
+
+            if (duplicado)
+            {
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        "Ya existe otro tipo de análisis de suelo activo con ese nombre."
+                });
+            }
+
+            entity.nombreTipoAnalisisSuelo =
+                nombre;
+
+            entity.descripcionTipoAnalisisSuelo =
+                descripcion;
+
+            try
+            {
+                await db.SaveChangesAsync(
+                    cancellationToken);
+
+                return Ok(new
+                {
+                    success = true,
+                    message =
+                        "Tipo de análisis de suelo actualizado correctamente.",
+
+                    data =
+                        CrearRespuesta(entity)
+                });
+            }
+            catch (DbUpdateException ex)
+            {
+                logger.LogWarning(
+                    ex,
+                    "Conflicto al actualizar el tipo de análisis de suelo {TipoAnalisisSueloId}.",
+                    id);
+
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        "No fue posible actualizar el tipo de análisis de suelo porque ya existe un registro activo con el mismo nombre."
+                });
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(
+                    ex,
+                    "Error inesperado al actualizar el tipo de análisis de suelo {TipoAnalisisSueloId}.",
+                    id);
+
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message =
+                        "Ocurrió un error inesperado al actualizar el tipo de análisis de suelo."
+                });
+            }
+        }
+
+        // ==========================================================
+        // ELIMINACIÓN LÓGICA
+        // Los cuatro tipos internos del sistema no se eliminan.
+        // ==========================================================
+        [HttpPut("{id:int}/eliminar")]
+        public async Task<ActionResult> Eliminar(
+            int id,
+            CancellationToken cancellationToken)
+        {
+            TipoAnalisisSuelo? entity =
+                await db.TipoAnalisisSuelos
+                    .FirstOrDefaultAsync(
+                        item =>
+                            item.tipoAnalisisSueloId == id &&
+                            item.activo,
+                        cancellationToken);
+
+            if (entity == null)
+            {
+                return NotFound(new
+                {
+                    success = false,
+                    message =
+                        "El tipo de análisis de suelo no existe o ya está desactivado."
+                });
+            }
+
+            if (TipoAnalisisSueloCodigos.EsTipoSistema(
+                    entity.codigoTipoAnalisisSuelo))
+            {
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        "Este tipo de análisis pertenece a un módulo interno del sistema y no puede eliminarse."
+                });
+            }
+
+            bool usadoEnAnalisis =
+                await db.AnalisisSueloCalculos
+                    .AsNoTracking()
+                    .AnyAsync(
+                        item =>
+                            item.tipoAnalisisSueloId == id,
+                        cancellationToken);
+
+            if (usadoEnAnalisis)
+            {
+                return Conflict(new
+                {
+                    success = false,
+                    message =
                         "No se puede eliminar el tipo de análisis de suelo porque está siendo utilizado.",
 
-                    tipoAnalisisSuelo = new
-                    {
-                        entidad.tipoAnalisisSueloId,
-                        entidad.nombreTipoAnalisisSuelo
-                    },
-
-                    usadoEn = dependencias
+                    usadoEn =
+                        new[]
+                        {
+                            "análisis de suelo guardados"
+                        }
                 });
             }
 
-            entidad.activo = false;
+            entity.activo =
+                false;
 
-            await _db.SaveChangesAsync();
-
-            return Ok(new
+            try
             {
-                mensaje = "Tipo de análisis de suelo desactivado correctamente.",
-                data = new
+                await db.SaveChangesAsync(
+                    cancellationToken);
+
+                return Ok(new
                 {
-                    entidad.tipoAnalisisSueloId,
-                    entidad.nombreTipoAnalisisSuelo,
-                    entidad.activo
-                }
-            });
+                    success = true,
+                    message =
+                        "Tipo de análisis de suelo desactivado correctamente."
+                });
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(
+                    ex,
+                    "Error inesperado al desactivar el tipo de análisis de suelo {TipoAnalisisSueloId}.",
+                    id);
+
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message =
+                        "Ocurrió un error inesperado al eliminar el tipo de análisis de suelo."
+                });
+            }
         }
+
+        private async Task AsignarConteosAsync(
+            List<TipoAnalisisSueloRespuestaDto> items,
+            CancellationToken cancellationToken)
+        {
+            if (items.Count == 0)
+                return;
+
+            Dictionary<int, int> conteosDirectos =
+                await db.AnalisisSueloCalculos
+                    .AsNoTracking()
+                    .Where(item =>
+                        item.activo)
+                    .GroupBy(item =>
+                        item.tipoAnalisisSueloId)
+                    .Select(grupo =>
+                        new
+                        {
+                            TipoId =
+                                grupo.Key,
+
+                            Cantidad =
+                                grupo
+                                    .Select(item =>
+                                        item.analisisSueloCalculoId)
+                                    .Distinct()
+                                    .Count()
+                        })
+                    .ToDictionaryAsync(
+                        item =>
+                            item.TipoId,
+
+                        item =>
+                            item.Cantidad,
+
+                        cancellationToken);
+
+            int cantidadBalances =
+                await db.formulaNutricional
+                    .AsNoTracking()
+                    .Where(item =>
+                        item.activo &&
+                        item.analisisSueloCalculoId.HasValue &&
+                        db.AnalisisSueloCalculos.Any(calculo =>
+                            calculo.analisisSueloCalculoId ==
+                                item.analisisSueloCalculoId.Value &&
+                            calculo.activo))
+                    .Select(item =>
+                        item.analisisSueloCalculoId!.Value)
+                    .Distinct()
+                    .CountAsync(cancellationToken);
+
+            int cantidadEnmiendas =
+                await db.enmiendaCalcarea
+                    .AsNoTracking()
+                    .Where(item =>
+                        item.activo &&
+                        item.analisisSueloCalculoId.HasValue &&
+                        db.AnalisisSueloCalculos.Any(calculo =>
+                            calculo.analisisSueloCalculoId ==
+                                item.analisisSueloCalculoId.Value &&
+                            calculo.activo))
+                    .Select(item =>
+                        item.analisisSueloCalculoId!.Value)
+                    .Distinct()
+                    .CountAsync(cancellationToken);
+
+            int cantidadMixtas =
+                await db.fertilizacionMixta
+                    .AsNoTracking()
+                    .Where(item =>
+                        item.activo &&
+                        db.AnalisisSueloCalculos.Any(calculo =>
+                            calculo.analisisSueloCalculoId ==
+                                item.analisisSueloCalculoId &&
+                            calculo.activo))
+                    .Select(item =>
+                        item.analisisSueloCalculoId)
+                    .Distinct()
+                    .CountAsync(cancellationToken);
+
+            foreach (TipoAnalisisSueloRespuestaDto item in items)
+            {
+                item.cantidadAnalisis =
+                    item.codigoTipoAnalisisSuelo switch
+                    {
+                        TipoAnalisisSueloCodigos.BalanceFormula =>
+                            cantidadBalances,
+
+                        TipoAnalisisSueloCodigos.EnmiendaCalcarea =>
+                            cantidadEnmiendas,
+
+                        TipoAnalisisSueloCodigos.FertilizacionMixta =>
+                            cantidadMixtas,
+
+                        _ =>
+                            conteosDirectos.TryGetValue(
+                                item.tipoAnalisisSueloId,
+                                out int cantidad)
+                                    ? cantidad
+                                    : 0
+                    };
+            }
+        }
+
+        private ActionResult? ValidarDatos(
+            string nombre,
+            string descripcion)
+        {
+            if (string.IsNullOrWhiteSpace(nombre))
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "El nombre del tipo de análisis es obligatorio."
+                });
+            }
+
+            if (nombre.Length > 100)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "El nombre del tipo de análisis no puede superar 100 caracteres."
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(descripcion))
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "La descripción del tipo de análisis es obligatoria."
+                });
+            }
+
+            if (descripcion.Length > 200)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "La descripción no puede superar 200 caracteres."
+                });
+            }
+
+            return null;
+        }
+
+        private static TipoAnalisisSueloRespuestaDto CrearRespuesta(
+            TipoAnalisisSuelo item)
+        {
+            bool esSistema =
+                TipoAnalisisSueloCodigos.EsTipoSistema(
+                    item.codigoTipoAnalisisSuelo);
+
+            return new TipoAnalisisSueloRespuestaDto
+            {
+                tipoAnalisisSueloId =
+                    item.tipoAnalisisSueloId,
+
+                codigoTipoAnalisisSuelo =
+                    item.codigoTipoAnalisisSuelo,
+
+                nombreTipoAnalisisSuelo =
+                    item.nombreTipoAnalisisSuelo,
+
+                descripcionTipoAnalisisSuelo =
+                    item.descripcionTipoAnalisisSuelo,
+
+                activo =
+                    item.activo,
+
+                esTipoSistema =
+                    esSistema,
+
+                puedeEliminar =
+                    !esSistema
+            };
+        }
+
+        private static string NormalizarNombre(
+            string? valor) =>
+            (valor ?? string.Empty)
+                .ReplaceLineEndings(" ")
+                .Trim()
+                .ToUpperInvariant();
+
+        private static string NormalizarDescripcion(
+            string? valor) =>
+            (valor ?? string.Empty)
+                .ReplaceLineEndings(" ")
+                .Trim();
     }
 }
