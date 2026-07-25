@@ -1,409 +1,782 @@
-﻿using CONATRADEC_API.Models;
-using Microsoft.AspNetCore.Http;
+using CONATRADEC_API.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using System;
 using static CONATRADEC_API.DTOs.DepartamentoDto;
 
 namespace CONATRADEC_API.Controllers
 {
     [ApiController]
     [Route("api/departamento")]
-    public class DepartamentoController : Controller
+    public sealed class DepartamentoController : ControllerBase
     {
-        private readonly DBContext _ctx;
+        private readonly DBContext context;
+        private readonly ILogger<DepartamentoController> logger;
 
-        public DepartamentoController(DBContext ctx)
+        public DepartamentoController(
+            DBContext context,
+            ILogger<DepartamentoController> logger)
         {
-            _ctx = ctx;
+            this.context = context;
+            this.logger = logger;
         }
 
-        // =========================
-        // 1) CREAR
-        // POST /api/departamento/crear
-        // =========================
-        [HttpPost("crear")]
-        [Consumes("application/json")]
-        public async Task<ActionResult> Create(
-            [FromBody] DepartamentoCreateRequest? req)
-        {
-            if (req is null)
-                return BadRequest("Body vacío o JSON mal formado.");
-
-            string? nombre =
-                req.NombreDepartamento?
-                    .ReplaceLineEndings(" ")
-                    .Trim();
-
-            if (string.IsNullOrWhiteSpace(nombre))
-            {
-                return BadRequest(
-                    "El nombre del departamento es requerido.");
-            }
-
-            await using var trx =
-                await _ctx.Database.BeginTransactionAsync();
-
-            try
-            {
-                var pais = await _ctx.Pais
-                    .AsNoTracking()
-                    .Where(
-                        p => p.PaisId == req.PaisId &&
-                             p.Activo)
-                    .Select(
-                        p => new
-                        {
-                            p.PaisId,
-                            p.NombrePais
-                        })
-                    .SingleOrDefaultAsync();
-
-                if (pais is null)
-                {
-                    return BadRequest(
-                        "No se puede crear: el país no existe o está inactivo.");
-                }
-
-                bool duplicado =
-                    await _ctx.Departamento.AnyAsync(
-                        d => d.PaisId == req.PaisId &&
-                             d.Activo &&
-                             EF.Functions.Collate(
-                                 d.NombreDepartamento.ToUpper(),
-                                 "Modern_Spanish_CI_AI") ==
-                             nombre.ToUpper());
-
-                if (duplicado)
-                {
-                    return Conflict(
-                        "Ya existe un departamento activo con ese nombre en ese país.");
-                }
-
-                var entity = new Departamento
-                {
-                    NombreDepartamento =
-                        nombre.ToUpper(),
-                    PaisId = pais.PaisId,
-                    Activo = true
-                };
-
-                _ctx.Departamento.Add(entity);
-
-                await _ctx.SaveChangesAsync();
-                await trx.CommitAsync();
-
-                return Ok(
-                    new
-                    {
-                        message =
-                            "Departamento creado exitosamente",
-                        departamento =
-                            new
-                            {
-                                entity.DepartamentoId,
-                                entity.NombreDepartamento,
-                                entity.PaisId,
-                                NombrePais =
-                                    pais.NombrePais
-                            }
-                    });
-            }
-            catch
-            {
-                await trx.RollbackAsync();
-                throw;
-            }
-        }
-
-        // ===========================================
-        // 2) LISTAR POR PAÍS
-        // GET /api/departamento/por-pais/{paisId}
-        // ===========================================
+        // ==========================================================
+        // LISTADO COMPATIBLE PARA FORMULARIOS Y SELECTORES
+        // ==========================================================
         [HttpGet("por-pais/{paisId:int}")]
         public async Task<ActionResult<IEnumerable<DepartamentoResponse>>>
-            BuscarPorPais(int paisId)
+            BuscarPorPais(
+                int paisId,
+                CancellationToken cancellationToken)
         {
-            var pais = await _ctx.Pais
+            var pais = await context.Pais
                 .AsNoTracking()
-                .Where(
-                    p => p.PaisId == paisId &&
-                         p.Activo)
-                .Select(
-                    p => new
-                    {
-                        p.PaisId,
-                        p.NombrePais,
-                        p.CodigoISOPais
-                    })
-                .SingleOrDefaultAsync();
+                .Where(item =>
+                    item.PaisId == paisId &&
+                    item.Activo)
+                .Select(item => new
+                {
+                    item.PaisId,
+                    item.NombrePais
+                })
+                .SingleOrDefaultAsync(cancellationToken);
 
-            if (pais is null)
+            if (pais == null)
             {
-                return NotFound(
-                    $"No existe un país activo con el ID {paisId}.");
+                return NotFound(new
+                {
+                    success = false,
+                    message =
+                        "El país indicado no existe o está inactivo."
+                });
             }
 
             List<DepartamentoResponse> departamentos =
-                await _ctx.Departamento
+                await context.Departamento
                     .AsNoTracking()
-                    .Where(
-                        d => d.PaisId == paisId &&
-                             d.Activo)
-                    .OrderBy(
-                        d => d.NombreDepartamento)
-                    .Select(
-                        d => new DepartamentoResponse
+                    .Where(item =>
+                        item.PaisId == paisId &&
+                        item.Activo)
+                    .OrderBy(item =>
+                        item.NombreDepartamento)
+                    .Select(item =>
+                        new DepartamentoResponse
                         {
                             DepartamentoId =
-                                d.DepartamentoId,
+                                item.DepartamentoId,
+
                             NombreDepartamento =
-                                d.NombreDepartamento,
+                                item.NombreDepartamento,
+
+                            PaisId =
+                                item.PaisId,
+
                             NombrePais =
                                 pais.NombrePais,
-                            Activo =
-                                d.Activo
-                        })
-                    .ToListAsync();
 
-            // Un país existente sin departamentos no representa un error.
-            // Se responde 200 OK con una colección vacía.
+                            Activo =
+                                item.Activo,
+
+                            CantidadMunicipios =
+                                item.Municipios.Count(
+                                    municipio =>
+                                        municipio.Activo)
+                        })
+                    .ToListAsync(cancellationToken);
+
             return Ok(departamentos);
         }
 
-        [HttpPost("conteo-paginado")]
-        public async Task<ActionResult> ConteoPaginado(
-            [FromBody] ConteoPaginadoRequest req)
+        // ==========================================================
+        // BÚSQUEDA PAGINADA PARA LA PANTALLA ADMINISTRATIVA
+        // ==========================================================
+        [HttpGet("buscar")]
+        public async Task<ActionResult<DepartamentoPaginaResponse>>
+            Buscar(
+                [FromQuery] int paisId,
+                [FromQuery] string? buscar = null,
+                [FromQuery] int pagina = 1,
+                [FromQuery] int tamanoPagina = 20,
+                [FromQuery] string orden = "nombre",
+                [FromQuery] string direccion = "asc",
+                CancellationToken cancellationToken = default)
         {
-            if (req == null)
-                return BadRequest("Debe enviar datos en el JSON.");
-
-            var query = _ctx.Departamento
-                .AsNoTracking()
-                .Where(d => d.Activo);
-
-            int totalRegistros =
-                await query.CountAsync();
-
-            int totalPaginas =
-                (int)Math.Ceiling(
-                    totalRegistros /
-                    (double)req.PageSize);
-
-            if (!req.ContarIntervalo ||
-                req.Inicio <= 0 ||
-                req.Fin <= 0)
+            if (paisId <= 0)
             {
-                return Ok(
-                    new
-                    {
-                        totalRegistros,
-                        totalPaginas
-                    });
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "Debe indicar un país válido para buscar departamentos."
+                });
             }
 
-            if (req.Inicio > totalPaginas)
-                req.Inicio = totalPaginas;
+            var pais = await context.Pais
+                .AsNoTracking()
+                .Where(item =>
+                    item.PaisId == paisId &&
+                    item.Activo)
+                .Select(item => new
+                {
+                    item.PaisId,
+                    item.NombrePais
+                })
+                .SingleOrDefaultAsync(cancellationToken);
 
-            if (req.Fin > totalPaginas)
-                req.Fin = totalPaginas;
+            if (pais == null)
+            {
+                return NotFound(new
+                {
+                    success = false,
+                    message =
+                        "El país indicado no existe o está inactivo."
+                });
+            }
 
-            if (req.Inicio > req.Fin)
-                req.Inicio = req.Fin;
+            pagina = Math.Max(1, pagina);
+            tamanoPagina = Math.Clamp(
+                tamanoPagina,
+                5,
+                100);
 
-            int skip =
-                (req.Inicio - 1) *
-                req.PageSize;
+            IQueryable<Departamento> query =
+                context.Departamento
+                    .AsNoTracking()
+                    .Where(item =>
+                        item.PaisId == paisId &&
+                        item.Activo);
 
-            int take =
-                (req.Fin - req.Inicio + 1) *
-                req.PageSize;
+            if (!string.IsNullOrWhiteSpace(buscar))
+            {
+                string texto = buscar.Trim();
 
-            int cantidadIntervalo =
+                if (texto.Length > 80)
+                    texto = texto[..80];
+
+                query = query.Where(item =>
+                    item.NombreDepartamento.Contains(texto));
+            }
+
+            bool descendente = string.Equals(
+                direccion,
+                "desc",
+                StringComparison.OrdinalIgnoreCase);
+
+            query = orden.Trim().ToLowerInvariant() switch
+            {
+                "municipios" when descendente =>
+                    query
+                        .OrderByDescending(item =>
+                            item.Municipios.Count(
+                                municipio =>
+                                    municipio.Activo))
+                        .ThenBy(item =>
+                            item.NombreDepartamento),
+
+                "municipios" =>
+                    query
+                        .OrderBy(item =>
+                            item.Municipios.Count(
+                                municipio =>
+                                    municipio.Activo))
+                        .ThenBy(item =>
+                            item.NombreDepartamento),
+
+                _ when descendente =>
+                    query
+                        .OrderByDescending(item =>
+                            item.NombreDepartamento),
+
+                _ =>
+                    query
+                        .OrderBy(item =>
+                            item.NombreDepartamento)
+            };
+
+            int totalRegistros =
+                await query.CountAsync(cancellationToken);
+
+            List<DepartamentoResponse> items =
                 await query
-                    .Skip(skip)
-                    .Take(take)
-                    .CountAsync();
+                    .Skip(
+                        (pagina - 1) *
+                        tamanoPagina)
+                    .Take(tamanoPagina)
+                    .Select(item =>
+                        new DepartamentoResponse
+                        {
+                            DepartamentoId =
+                                item.DepartamentoId,
+
+                            NombreDepartamento =
+                                item.NombreDepartamento,
+
+                            PaisId =
+                                item.PaisId,
+
+                            NombrePais =
+                                pais.NombrePais,
+
+                            Activo =
+                                item.Activo,
+
+                            CantidadMunicipios =
+                                item.Municipios.Count(
+                                    municipio =>
+                                        municipio.Activo)
+                        })
+                    .ToListAsync(cancellationToken);
+
+            int totalPaginas =
+                totalRegistros == 0
+                    ? 1
+                    : (int)Math.Ceiling(
+                        totalRegistros /
+                        (double)tamanoPagina);
 
             return Ok(
-                new
+                new DepartamentoPaginaResponse
                 {
-                    inicio =
-                        req.Inicio,
-                    fin =
-                        req.Fin,
-                    pageSize =
-                        req.PageSize,
-                    cantidad =
-                        cantidadIntervalo
+                    Items = items,
+                    PaginaActual = pagina,
+                    TamanoPagina = tamanoPagina,
+                    TotalRegistros = totalRegistros,
+                    TotalPaginas = totalPaginas,
+                    PaisId = pais.PaisId,
+                    NombrePais = pais.NombrePais
                 });
         }
 
+        // ==========================================================
+        // CREAR
+        // ==========================================================
+        [HttpPost("crear")]
+        [Consumes("application/json")]
+        public async Task<ActionResult> Create(
+            [FromBody] DepartamentoCreateRequest? request,
+            CancellationToken cancellationToken)
+        {
+            if (request == null)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "No se recibieron los datos del departamento."
+                });
+            }
+
+            string nombre =
+                NormalizarNombre(
+                    request.NombreDepartamento);
+
+            ActionResult? validacion =
+                ValidarDatos(
+                    nombre,
+                    request.PaisId);
+
+            if (validacion != null)
+                return validacion;
+
+            var pais = await context.Pais
+                .AsNoTracking()
+                .Where(item =>
+                    item.PaisId == request.PaisId &&
+                    item.Activo)
+                .Select(item => new
+                {
+                    item.PaisId,
+                    item.NombrePais
+                })
+                .SingleOrDefaultAsync(cancellationToken);
+
+            if (pais == null)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "No se puede crear el departamento porque el país no existe o está inactivo."
+                });
+            }
+
+            bool duplicado =
+                await context.Departamento.AnyAsync(
+                    item =>
+                        item.PaisId == request.PaisId &&
+                        item.Activo &&
+                        EF.Functions.Collate(
+                            item.NombreDepartamento,
+                            "Modern_Spanish_CI_AI") ==
+                        nombre,
+                    cancellationToken);
+
+            if (duplicado)
+            {
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        $"Ya existe un departamento activo con el nombre {nombre} en {pais.NombrePais}."
+                });
+            }
+
+            var entity = new Departamento
+            {
+                NombreDepartamento = nombre,
+                PaisId = pais.PaisId,
+                Activo = true
+            };
+
+            try
+            {
+                context.Departamento.Add(entity);
+                await context.SaveChangesAsync(cancellationToken);
+
+                return Ok(new
+                {
+                    success = true,
+                    message =
+                        "Departamento creado correctamente.",
+
+                    data =
+                        new DepartamentoResponse
+                        {
+                            DepartamentoId =
+                                entity.DepartamentoId,
+
+                            NombreDepartamento =
+                                entity.NombreDepartamento,
+
+                            PaisId =
+                                entity.PaisId,
+
+                            NombrePais =
+                                pais.NombrePais,
+
+                            Activo =
+                                entity.Activo,
+
+                            CantidadMunicipios = 0
+                        }
+                });
+            }
+            catch (DbUpdateException ex)
+            {
+                logger.LogWarning(
+                    ex,
+                    "Conflicto al crear el departamento {Nombre} en el país {PaisId}.",
+                    nombre,
+                    request.PaisId);
+
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        "No fue posible crear el departamento porque ya existe un registro con el mismo nombre en este país."
+                });
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(
+                    ex,
+                    "Error inesperado al crear un departamento.");
+
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message =
+                        "Ocurrió un error inesperado al crear el departamento."
+                });
+            }
+        }
+
+        // ==========================================================
+        // ACTUALIZAR
+        // ==========================================================
         [HttpPut("actualizar/{id:int}")]
         [Consumes("application/json")]
         public async Task<ActionResult> Update(
             int id,
-            [FromBody] DepartamentoUpdateRequest? req)
+            [FromBody] DepartamentoUpdateRequest? request,
+            CancellationToken cancellationToken)
         {
-            if (req is null)
-                return BadRequest("Body vacío o JSON mal formado.");
+            if (id <= 0)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "El identificador del departamento no es válido."
+                });
+            }
 
-            Departamento? entity =
-                await _ctx.Departamento.FindAsync(id);
+            if (request == null)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "No se recibieron los datos del departamento."
+                });
+            }
 
-            if (entity is null)
-                return NotFound("El departamento no existe.");
-
-            string? nombre =
-                req.NombreDepartamento?
-                    .ReplaceLineEndings(" ")
-                    .Trim();
+            string nombre =
+                NormalizarNombre(
+                    request.NombreDepartamento);
 
             if (string.IsNullOrWhiteSpace(nombre))
             {
-                return BadRequest(
-                    "El nombre del departamento es requerido.");
-            }
-
-            await using var trx =
-                await _ctx.Database.BeginTransactionAsync();
-
-            try
-            {
-                int paisIdActual =
-                    entity.PaisId;
-
-                bool duplicadoActivoMismoPais =
-                    await _ctx.Departamento.AnyAsync(
-                        d => d.DepartamentoId != id &&
-                             d.PaisId == paisIdActual &&
-                             d.Activo &&
-                             EF.Functions.Collate(
-                                 d.NombreDepartamento.ToUpper(),
-                                 "Modern_Spanish_CI_AI") ==
-                             nombre.ToUpper());
-
-                if (duplicadoActivoMismoPais)
+                return BadRequest(new
                 {
-                    return Conflict(
-                        "Ya existe un departamento activo con ese nombre en este país.");
-                }
-
-                if (!entity.Activo)
-                {
-                    return Conflict(
-                        "No se puede actualizar un departamento que está inactivo.");
-                }
-
-                entity.NombreDepartamento =
-                    nombre.ToUpper();
-
-                await _ctx.SaveChangesAsync();
-                await trx.CommitAsync();
-
-                string nombrePais =
-                    await _ctx.Pais
-                        .AsNoTracking()
-                        .Where(
-                            p => p.PaisId ==
-                                 paisIdActual)
-                        .Select(
-                            p => p.NombrePais)
-                        .SingleOrDefaultAsync()
-                    ?? string.Empty;
-
-                return Ok(
-                    new
-                    {
-                        message =
-                            "Departamento actualizado",
-                        departamento =
-                            new
-                            {
-                                entity.DepartamentoId,
-                                entity.NombreDepartamento,
-                                entity.PaisId,
-                                NombrePais =
-                                    nombrePais
-                            }
-                    });
+                    success = false,
+                    message =
+                        "El nombre del departamento es obligatorio."
+                });
             }
-            catch
+
+            if (nombre.Length > 80)
             {
-                await trx.RollbackAsync();
-                throw;
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "El nombre del departamento no puede superar 80 caracteres."
+                });
             }
-        }
 
-        // ===========================================
-        // 4) ELIMINAR
-        // DELETE lógico /api/departamento/eliminar/{id}
-        // ===========================================
-        [HttpDelete("eliminar/{id:int}")]
-        public async Task<ActionResult> Delete(int id)
-        {
             Departamento? entity =
-                await _ctx.Departamento
+                await context.Departamento
                     .FirstOrDefaultAsync(
-                        x => x.DepartamentoId == id &&
-                             x.Activo);
+                        item =>
+                            item.DepartamentoId == id,
+                        cancellationToken);
 
             if (entity == null)
             {
-                return NotFound(
-                    new
-                    {
-                        mensaje =
-                            "El departamento no existe o ya está desactivado."
-                    });
+                return NotFound(new
+                {
+                    success = false,
+                    message =
+                        "El departamento indicado no existe."
+                });
             }
 
-            var dependencias =
-                new List<string>();
+            if (!entity.Activo)
+            {
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        "No se puede actualizar un departamento que está inactivo."
+                });
+            }
+
+            bool duplicado =
+                await context.Departamento.AnyAsync(
+                    item =>
+                        item.DepartamentoId != id &&
+                        item.PaisId == entity.PaisId &&
+                        item.Activo &&
+                        EF.Functions.Collate(
+                            item.NombreDepartamento,
+                            "Modern_Spanish_CI_AI") ==
+                        nombre,
+                    cancellationToken);
+
+            if (duplicado)
+            {
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        "Ya existe otro departamento activo con ese nombre en el mismo país."
+                });
+            }
+
+            entity.NombreDepartamento = nombre;
+
+            try
+            {
+                await context.SaveChangesAsync(cancellationToken);
+
+                string nombrePais =
+                    await context.Pais
+                        .AsNoTracking()
+                        .Where(item =>
+                            item.PaisId == entity.PaisId)
+                        .Select(item =>
+                            item.NombrePais)
+                        .SingleOrDefaultAsync(cancellationToken)
+                    ?? string.Empty;
+
+                int cantidadMunicipios =
+                    await context.Municipios
+                        .AsNoTracking()
+                        .CountAsync(
+                            item =>
+                                item.DepartamentoId == id &&
+                                item.Activo,
+                            cancellationToken);
+
+                return Ok(new
+                {
+                    success = true,
+                    message =
+                        "Departamento actualizado correctamente.",
+
+                    data =
+                        new DepartamentoResponse
+                        {
+                            DepartamentoId =
+                                entity.DepartamentoId,
+
+                            NombreDepartamento =
+                                entity.NombreDepartamento,
+
+                            PaisId =
+                                entity.PaisId,
+
+                            NombrePais =
+                                nombrePais,
+
+                            Activo =
+                                entity.Activo,
+
+                            CantidadMunicipios =
+                                cantidadMunicipios
+                        }
+                });
+            }
+            catch (DbUpdateException ex)
+            {
+                logger.LogWarning(
+                    ex,
+                    "Conflicto al actualizar el departamento {DepartamentoId}.",
+                    id);
+
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        "No fue posible actualizar el departamento porque ya existe un registro con el mismo nombre en este país."
+                });
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(
+                    ex,
+                    "Error inesperado al actualizar el departamento {DepartamentoId}.",
+                    id);
+
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message =
+                        "Ocurrió un error inesperado al actualizar el departamento."
+                });
+            }
+        }
+
+        // ==========================================================
+        // ELIMINACIÓN LÓGICA
+        // ==========================================================
+        [HttpDelete("eliminar/{id:int}")]
+        public async Task<ActionResult> Delete(
+            int id,
+            CancellationToken cancellationToken)
+        {
+            Departamento? entity =
+                await context.Departamento
+                    .FirstOrDefaultAsync(
+                        item =>
+                            item.DepartamentoId == id &&
+                            item.Activo,
+                        cancellationToken);
+
+            if (entity == null)
+            {
+                return NotFound(new
+                {
+                    success = false,
+                    message =
+                        "El departamento no existe o ya está desactivado."
+                });
+            }
 
             bool tieneMunicipios =
-                await _ctx.Municipios.AnyAsync(
-                    x => x.DepartamentoId == id);
+                await context.Municipios.AnyAsync(
+                    item =>
+                        item.DepartamentoId == id,
+                    cancellationToken);
 
             if (tieneMunicipios)
-                dependencias.Add("municipios");
-
-            if (dependencias.Count > 0)
             {
-                return Conflict(
-                    new
-                    {
-                        mensaje =
-                            "No se puede eliminar el departamento porque está siendo utilizado.",
-                        departamento =
-                            new
-                            {
-                                entity.DepartamentoId,
-                                entity.NombreDepartamento,
-                                entity.PaisId
-                            },
-                        usadoEn =
-                            dependencias
-                    });
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        "No se puede eliminar el departamento porque tiene municipios relacionados."
+                });
             }
 
             entity.Activo = false;
 
-            await _ctx.SaveChangesAsync();
+            try
+            {
+                await context.SaveChangesAsync(cancellationToken);
 
-            return Ok(
-                new
+                return Ok(new
                 {
-                    mensaje =
-                        "Departamento desactivado correctamente.",
-                    data =
-                        new
-                        {
-                            entity.DepartamentoId,
-                            entity.NombreDepartamento,
-                            entity.Activo
-                        }
+                    success = true,
+                    message =
+                        "Departamento desactivado correctamente."
                 });
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(
+                    ex,
+                    "Error inesperado al desactivar el departamento {DepartamentoId}.",
+                    id);
+
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message =
+                        "Ocurrió un error inesperado al eliminar el departamento."
+                });
+            }
         }
+
+        // ==========================================================
+        // ENDPOINT ANTERIOR CONSERVADO POR COMPATIBILIDAD
+        // ==========================================================
+        [HttpPost("conteo-paginado")]
+        public async Task<ActionResult> ConteoPaginado(
+            [FromBody] ConteoPaginadoRequest? request,
+            CancellationToken cancellationToken)
+        {
+            if (request == null)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "Debe enviar los datos del conteo."
+                });
+            }
+
+            int pageSize =
+                Math.Clamp(
+                    request.PageSize,
+                    1,
+                    100);
+
+            IQueryable<Departamento> query =
+                context.Departamento
+                    .AsNoTracking()
+                    .Where(item =>
+                        item.Activo);
+
+            int totalRegistros =
+                await query.CountAsync(cancellationToken);
+
+            int totalPaginas =
+                totalRegistros == 0
+                    ? 1
+                    : (int)Math.Ceiling(
+                        totalRegistros /
+                        (double)pageSize);
+
+            if (!request.ContarIntervalo ||
+                request.Inicio <= 0 ||
+                request.Fin <= 0)
+            {
+                return Ok(new
+                {
+                    totalRegistros,
+                    totalPaginas
+                });
+            }
+
+            int inicio =
+                Math.Clamp(
+                    request.Inicio,
+                    1,
+                    totalPaginas);
+
+            int fin =
+                Math.Clamp(
+                    request.Fin,
+                    inicio,
+                    totalPaginas);
+
+            int skip =
+                (inicio - 1) *
+                pageSize;
+
+            int take =
+                (fin - inicio + 1) *
+                pageSize;
+
+            int cantidad =
+                await query
+                    .Skip(skip)
+                    .Take(take)
+                    .CountAsync(cancellationToken);
+
+            return Ok(new
+            {
+                inicio,
+                fin,
+                pageSize,
+                cantidad
+            });
+        }
+
+        private ActionResult? ValidarDatos(
+            string nombre,
+            int paisId)
+        {
+            if (paisId <= 0)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "Debe seleccionar un país válido."
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(nombre))
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "El nombre del departamento es obligatorio."
+                });
+            }
+
+            if (nombre.Length > 80)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "El nombre del departamento no puede superar 80 caracteres."
+                });
+            }
+
+            return null;
+        }
+
+        private static string NormalizarNombre(
+            string? valor) =>
+            (valor ?? string.Empty)
+                .ReplaceLineEndings(" ")
+                .Trim()
+                .ToUpperInvariant();
     }
 }
