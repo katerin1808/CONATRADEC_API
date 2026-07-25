@@ -1,4 +1,4 @@
-﻿using CONATRADEC_API.Models;
+using CONATRADEC_API.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -6,262 +6,587 @@ namespace CONATRADEC_API.Controllers
 {
     [ApiController]
     [Route("api/configuracion/tipos-cultivo")]
-    public class TipoCultivoController : ControllerBase
+    public sealed class TipoCultivoController : ControllerBase
     {
-        private readonly DBContext _db;
+        private readonly DBContext db;
+        private readonly ILogger<TipoCultivoController> logger;
 
-        public TipoCultivoController(DBContext db)
+        public TipoCultivoController(
+            DBContext db,
+            ILogger<TipoCultivoController> logger)
         {
-            _db = db;
+            this.db = db;
+            this.logger = logger;
         }
 
+        // ==========================================================
+        // LISTADO COMPLETO PARA FORMULARIOS Y SELECTORES
+        // ==========================================================
         [HttpGet]
-        public async Task<IActionResult> Listar()
+        public async Task<ActionResult<IEnumerable<TipoCultivoRespuestaDto>>>
+            Listar(CancellationToken cancellationToken)
         {
-            var data = await _db.TipoCultivos
-                .AsNoTracking()
-                .Where(x => x.activo)
-                .OrderBy(x => x.nombreTipoCultivo)
-                .Select(x => new
-                {
-                    x.tipoCultivoId,
-                    x.nombreTipoCultivo,
-                    x.descripcionTipoCultivo,
-                    x.activo
-                })
-                .ToListAsync();
+            List<TipoCultivoRespuestaDto> data =
+                await db.TipoCultivos
+                    .AsNoTracking()
+                    .Where(item =>
+                        item.activo)
+                    .OrderBy(item =>
+                        item.nombreTipoCultivo)
+                    .Select(item =>
+                        new TipoCultivoRespuestaDto
+                        {
+                            tipoCultivoId =
+                                item.tipoCultivoId,
+
+                            nombreTipoCultivo =
+                                item.nombreTipoCultivo,
+
+                            tipoCultivo =
+                                item.nombreTipoCultivo,
+
+                            descripcionTipoCultivo =
+                                item.descripcionTipoCultivo,
+
+                            activo =
+                                item.activo
+                        })
+                    .ToListAsync(cancellationToken);
 
             return Ok(data);
         }
 
-        [HttpGet("{id:int}")]
-        public async Task<IActionResult> Obtener(int id)
+        // ==========================================================
+        // BÚSQUEDA PAGINADA PARA LA PANTALLA ADMINISTRATIVA
+        // ==========================================================
+        [HttpGet("buscar")]
+        public async Task<ActionResult<TipoCultivoPaginaResponse>>
+            Buscar(
+                [FromQuery] string? buscar = null,
+                [FromQuery] int pagina = 1,
+                [FromQuery] int tamanoPagina = 20,
+                [FromQuery] string orden = "nombre",
+                [FromQuery] string direccion = "asc",
+                CancellationToken cancellationToken = default)
         {
-            var data = await _db.TipoCultivos
-                .AsNoTracking()
-                .Where(x =>
-                    x.tipoCultivoId == id)
-                .Select(x => new
+            pagina = Math.Max(
+                1,
+                pagina);
+
+            tamanoPagina = Math.Clamp(
+                tamanoPagina,
+                5,
+                100);
+
+            IQueryable<TipoCultivo> query =
+                db.TipoCultivos
+                    .AsNoTracking()
+                    .Where(item =>
+                        item.activo);
+
+            if (!string.IsNullOrWhiteSpace(buscar))
+            {
+                string texto =
+                    buscar
+                        .ReplaceLineEndings(" ")
+                        .Trim();
+
+                if (texto.Length > 150)
+                    texto = texto[..150];
+
+                query = query.Where(item =>
+                    item.nombreTipoCultivo.Contains(texto) ||
+                    item.descripcionTipoCultivo.Contains(texto));
+            }
+
+            bool descendente =
+                string.Equals(
+                    direccion,
+                    "desc",
+                    StringComparison.OrdinalIgnoreCase);
+
+            query = orden.Trim().ToLowerInvariant() switch
+            {
+                "rangos" when descendente =>
+                    query
+                        .OrderByDescending(item =>
+                            db.ParametroRangoNutrienteCultivo
+                                .Count(rango =>
+                                    rango.tipoCultivoId ==
+                                        item.tipoCultivoId &&
+                                    rango.activo))
+                        .ThenBy(item =>
+                            item.nombreTipoCultivo),
+
+                "rangos" =>
+                    query
+                        .OrderBy(item =>
+                            db.ParametroRangoNutrienteCultivo
+                                .Count(rango =>
+                                    rango.tipoCultivoId ==
+                                        item.tipoCultivoId &&
+                                    rango.activo))
+                        .ThenBy(item =>
+                            item.nombreTipoCultivo),
+
+                "analisis" when descendente =>
+                    query
+                        .OrderByDescending(item =>
+                            db.AnalisisSueloCalculos
+                                .Count(analisis =>
+                                    analisis.tipoCultivoId ==
+                                        item.tipoCultivoId))
+                        .ThenBy(item =>
+                            item.nombreTipoCultivo),
+
+                "analisis" =>
+                    query
+                        .OrderBy(item =>
+                            db.AnalisisSueloCalculos
+                                .Count(analisis =>
+                                    analisis.tipoCultivoId ==
+                                        item.tipoCultivoId))
+                        .ThenBy(item =>
+                            item.nombreTipoCultivo),
+
+                _ when descendente =>
+                    query
+                        .OrderByDescending(item =>
+                            item.nombreTipoCultivo),
+
+                _ =>
+                    query
+                        .OrderBy(item =>
+                            item.nombreTipoCultivo)
+            };
+
+            int totalRegistros =
+                await query.CountAsync(cancellationToken);
+
+            List<TipoCultivoRespuestaDto> items =
+                await query
+                    .Skip(
+                        (pagina - 1) *
+                        tamanoPagina)
+                    .Take(tamanoPagina)
+                    .Select(item =>
+                        new TipoCultivoRespuestaDto
+                        {
+                            tipoCultivoId =
+                                item.tipoCultivoId,
+
+                            nombreTipoCultivo =
+                                item.nombreTipoCultivo,
+
+                            tipoCultivo =
+                                item.nombreTipoCultivo,
+
+                            descripcionTipoCultivo =
+                                item.descripcionTipoCultivo,
+
+                            activo =
+                                item.activo,
+
+                            cantidadRangosActivos =
+                                db.ParametroRangoNutrienteCultivo
+                                    .Count(rango =>
+                                        rango.tipoCultivoId ==
+                                            item.tipoCultivoId &&
+                                        rango.activo),
+
+                            cantidadAnalisis =
+                                db.AnalisisSueloCalculos
+                                    .Count(analisis =>
+                                        analisis.tipoCultivoId ==
+                                            item.tipoCultivoId)
+                        })
+                    .ToListAsync(cancellationToken);
+
+            int totalPaginas =
+                totalRegistros == 0
+                    ? 1
+                    : (int)Math.Ceiling(
+                        totalRegistros /
+                        (double)tamanoPagina);
+
+            return Ok(
+                new TipoCultivoPaginaResponse
                 {
-                    x.tipoCultivoId,
-                    x.nombreTipoCultivo,
-                    x.descripcionTipoCultivo,
-                    x.activo
-                })
-                .FirstOrDefaultAsync();
+                    Items = items,
+                    PaginaActual = pagina,
+                    TamanoPagina = tamanoPagina,
+                    TotalRegistros = totalRegistros,
+                    TotalPaginas = totalPaginas
+                });
+        }
+
+        [HttpGet("{id:int}")]
+        public async Task<ActionResult<TipoCultivoRespuestaDto>>
+            Obtener(
+                int id,
+                CancellationToken cancellationToken)
+        {
+            TipoCultivoRespuestaDto? data =
+                await db.TipoCultivos
+                    .AsNoTracking()
+                    .Where(item =>
+                        item.tipoCultivoId == id &&
+                        item.activo)
+                    .Select(item =>
+                        new TipoCultivoRespuestaDto
+                        {
+                            tipoCultivoId =
+                                item.tipoCultivoId,
+
+                            nombreTipoCultivo =
+                                item.nombreTipoCultivo,
+
+                            tipoCultivo =
+                                item.nombreTipoCultivo,
+
+                            descripcionTipoCultivo =
+                                item.descripcionTipoCultivo,
+
+                            activo =
+                                item.activo,
+
+                            cantidadRangosActivos =
+                                db.ParametroRangoNutrienteCultivo
+                                    .Count(rango =>
+                                        rango.tipoCultivoId ==
+                                            item.tipoCultivoId &&
+                                        rango.activo),
+
+                            cantidadAnalisis =
+                                db.AnalisisSueloCalculos
+                                    .Count(analisis =>
+                                        analisis.tipoCultivoId ==
+                                            item.tipoCultivoId)
+                        })
+                    .SingleOrDefaultAsync(cancellationToken);
 
             if (data == null)
             {
                 return NotFound(new
                 {
-                    mensaje =
-                        "Tipo de cultivo no encontrado."
+                    success = false,
+                    message =
+                        "El tipo de cultivo no existe o está inactivo."
                 });
             }
 
             return Ok(data);
         }
 
+        // ==========================================================
+        // CREAR O REACTIVAR
+        // ==========================================================
         [HttpPost]
-        public async Task<IActionResult> Crear(
-            [FromBody] CrearTipoCultivoDto dto)
+        public async Task<ActionResult> Crear(
+            [FromBody] CrearTipoCultivoDto? request,
+            CancellationToken cancellationToken)
         {
-            if (string.IsNullOrWhiteSpace(
-                    dto.nombreTipoCultivo))
+            if (request == null)
             {
                 return BadRequest(new
                 {
-                    mensaje =
-                        "El nombre del tipo de cultivo es obligatorio."
+                    success = false,
+                    message =
+                        "No se recibieron los datos del tipo de cultivo."
                 });
             }
 
             string nombre =
-                dto.nombreTipoCultivo
-                    .Trim()
-                    .ToUpperInvariant();
+                NormalizarNombre(
+                    request.nombreTipoCultivo);
 
             string descripcion =
-                dto.descripcionTipoCultivo?
-                    .Trim() ??
-                string.Empty;
+                NormalizarDescripcion(
+                    request.descripcionTipoCultivo);
+
+            ActionResult? validacion =
+                ValidarDatos(
+                    nombre,
+                    descripcion);
+
+            if (validacion != null)
+                return validacion;
 
             TipoCultivo? existente =
-                await _db.TipoCultivos
-                    .FirstOrDefaultAsync(x =>
-                        x.nombreTipoCultivo
-                            .Trim()
-                            .ToUpper() ==
-                        nombre);
+                await db.TipoCultivos
+                    .FirstOrDefaultAsync(
+                        item =>
+                            EF.Functions.Collate(
+                                item.nombreTipoCultivo,
+                                "Modern_Spanish_CI_AI") ==
+                            nombre,
+                        cancellationToken);
 
             if (existente != null &&
                 existente.activo)
             {
                 return Conflict(new
                 {
-                    mensaje =
+                    success = false,
+                    message =
                         "Ya existe un tipo de cultivo activo con ese nombre."
                 });
             }
 
-            /*
-             * El listado muestra únicamente registros activos. Antes,
-             * un registro desactivado no era visible, pero impedía volver
-             * a utilizar su nombre. Ahora se reactiva y se actualiza.
-             */
-            if (existente != null &&
-                !existente.activo)
+            try
             {
-                existente.nombreTipoCultivo =
-                    nombre;
-
-                existente.descripcionTipoCultivo =
-                    descripcion;
-
-                existente.activo = true;
-
-                await _db.SaveChangesAsync();
-
-                return Ok(new
+                if (existente != null)
                 {
-                    mensaje =
-                        "Tipo de cultivo reactivado correctamente.",
+                    existente.nombreTipoCultivo =
+                        nombre;
 
-                    data = new
+                    existente.descripcionTipoCultivo =
+                        descripcion;
+
+                    existente.activo =
+                        true;
+
+                    await db.SaveChangesAsync(
+                        cancellationToken);
+
+                    return Ok(new
                     {
-                        existente.tipoCultivoId,
-                        existente.nombreTipoCultivo,
-                        existente.descripcionTipoCultivo,
-                        existente.activo
-                    }
+                        success = true,
+                        message =
+                            "Tipo de cultivo reactivado correctamente.",
+
+                        data =
+                            CrearRespuesta(existente)
+                    });
+                }
+
+                var entity =
+                    new TipoCultivo
+                    {
+                        nombreTipoCultivo =
+                            nombre,
+
+                        descripcionTipoCultivo =
+                            descripcion,
+
+                        activo =
+                            true
+                    };
+
+                db.TipoCultivos.Add(entity);
+
+                await db.SaveChangesAsync(
+                    cancellationToken);
+
+                return StatusCode(
+                    StatusCodes.Status201Created,
+                    new
+                    {
+                        success = true,
+                        message =
+                            "Tipo de cultivo creado correctamente.",
+
+                        data =
+                            CrearRespuesta(entity)
+                    });
+            }
+            catch (DbUpdateException ex)
+            {
+                logger.LogWarning(
+                    ex,
+                    "Conflicto al crear el tipo de cultivo {Nombre}.",
+                    nombre);
+
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        "No fue posible crear el tipo de cultivo porque ya existe un registro activo con el mismo nombre."
                 });
             }
-
-            var entidad = new TipoCultivo
+            catch (Exception ex)
             {
-                nombreTipoCultivo = nombre,
+                logger.LogError(
+                    ex,
+                    "Error inesperado al crear un tipo de cultivo.");
 
-                descripcionTipoCultivo =
-                    descripcion,
-
-                activo = true
-            };
-
-            _db.TipoCultivos.Add(entidad);
-
-            await _db.SaveChangesAsync();
-
-            return StatusCode(
-                StatusCodes.Status201Created,
-                new
+                return StatusCode(500, new
                 {
-                    mensaje =
-                        "Tipo de cultivo creado correctamente.",
-
-                    data = new
-                    {
-                        entidad.tipoCultivoId,
-                        entidad.nombreTipoCultivo,
-                        entidad.descripcionTipoCultivo,
-                        entidad.activo
-                    }
+                    success = false,
+                    message =
+                        "Ocurrió un error inesperado al crear el tipo de cultivo."
                 });
+            }
         }
 
+        // ==========================================================
+        // ACTUALIZAR
+        // ==========================================================
         [HttpPut("{id:int}")]
-        public async Task<IActionResult> Actualizar(
+        public async Task<ActionResult> Actualizar(
             int id,
-            [FromBody] ActualizarTipoCultivoDto dto)
+            [FromBody] ActualizarTipoCultivoDto? request,
+            CancellationToken cancellationToken)
         {
-            TipoCultivo? entidad =
-                await _db.TipoCultivos
-                    .FirstOrDefaultAsync(x =>
-                        x.tipoCultivoId == id);
-
-            if (entidad == null)
-            {
-                return NotFound(new
-                {
-                    mensaje =
-                        "Tipo de cultivo no encontrado."
-                });
-            }
-
-            if (string.IsNullOrWhiteSpace(
-                    dto.nombreTipoCultivo))
+            if (id <= 0)
             {
                 return BadRequest(new
                 {
-                    mensaje =
-                        "El nombre del tipo de cultivo es obligatorio."
+                    success = false,
+                    message =
+                        "El identificador del tipo de cultivo no es válido."
+                });
+            }
+
+            if (request == null)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "No se recibieron los datos del tipo de cultivo."
                 });
             }
 
             string nombre =
-                dto.nombreTipoCultivo
-                    .Trim()
-                    .ToUpperInvariant();
+                NormalizarNombre(
+                    request.nombreTipoCultivo);
 
-            bool existeOtro =
-                await _db.TipoCultivos
-                    .AnyAsync(x =>
-                        x.tipoCultivoId != id &&
-                        x.activo &&
-                        x.nombreTipoCultivo
-                            .Trim()
-                            .ToUpper() ==
-                        nombre);
+            string descripcion =
+                NormalizarDescripcion(
+                    request.descripcionTipoCultivo);
 
-            if (existeOtro)
+            ActionResult? validacion =
+                ValidarDatos(
+                    nombre,
+                    descripcion);
+
+            if (validacion != null)
+                return validacion;
+
+            TipoCultivo? entity =
+                await db.TipoCultivos
+                    .FirstOrDefaultAsync(
+                        item =>
+                            item.tipoCultivoId == id,
+                        cancellationToken);
+
+            if (entity == null)
+            {
+                return NotFound(new
+                {
+                    success = false,
+                    message =
+                        "El tipo de cultivo indicado no existe."
+                });
+            }
+
+            if (!entity.activo)
             {
                 return Conflict(new
                 {
-                    mensaje =
+                    success = false,
+                    message =
+                        "No se puede actualizar un tipo de cultivo que está inactivo."
+                });
+            }
+
+            bool duplicado =
+                await db.TipoCultivos.AnyAsync(
+                    item =>
+                        item.tipoCultivoId != id &&
+                        item.activo &&
+                        EF.Functions.Collate(
+                            item.nombreTipoCultivo,
+                            "Modern_Spanish_CI_AI") ==
+                        nombre,
+                    cancellationToken);
+
+            if (duplicado)
+            {
+                return Conflict(new
+                {
+                    success = false,
+                    message =
                         "Ya existe otro tipo de cultivo activo con ese nombre."
                 });
             }
 
-            entidad.nombreTipoCultivo =
+            entity.nombreTipoCultivo =
                 nombre;
 
-            entidad.descripcionTipoCultivo =
-                dto.descripcionTipoCultivo?
-                    .Trim() ??
-                string.Empty;
+            entity.descripcionTipoCultivo =
+                descripcion;
 
-            await _db.SaveChangesAsync();
-
-            return Ok(new
+            try
             {
-                mensaje =
-                    "Tipo de cultivo actualizado correctamente.",
+                await db.SaveChangesAsync(
+                    cancellationToken);
 
-                data = new
+                return Ok(new
                 {
-                    entidad.tipoCultivoId,
-                    entidad.nombreTipoCultivo,
-                    entidad.descripcionTipoCultivo,
-                    entidad.activo
-                }
-            });
+                    success = true,
+                    message =
+                        "Tipo de cultivo actualizado correctamente.",
+
+                    data =
+                        CrearRespuesta(entity)
+                });
+            }
+            catch (DbUpdateException ex)
+            {
+                logger.LogWarning(
+                    ex,
+                    "Conflicto al actualizar el tipo de cultivo {TipoCultivoId}.",
+                    id);
+
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        "No fue posible actualizar el tipo de cultivo porque ya existe un registro activo con el mismo nombre."
+                });
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(
+                    ex,
+                    "Error inesperado al actualizar el tipo de cultivo {TipoCultivoId}.",
+                    id);
+
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message =
+                        "Ocurrió un error inesperado al actualizar el tipo de cultivo."
+                });
+            }
         }
 
+        // ==========================================================
+        // ELIMINACIÓN LÓGICA
+        // Se conserva PUT para compatibilidad con el frontend actual.
+        // ==========================================================
         [HttpPut("{id:int}/eliminar")]
-        public async Task<IActionResult> Eliminar(
-            int id)
+        public async Task<ActionResult> Eliminar(
+            int id,
+            CancellationToken cancellationToken)
         {
-            TipoCultivo? entidad =
-                await _db.TipoCultivos
-                    .FirstOrDefaultAsync(x =>
-                        x.tipoCultivoId == id &&
-                        x.activo);
+            TipoCultivo? entity =
+                await db.TipoCultivos
+                    .FirstOrDefaultAsync(
+                        item =>
+                            item.tipoCultivoId == id &&
+                            item.activo,
+                        cancellationToken);
 
-            if (entidad == null)
+            if (entity == null)
             {
                 return NotFound(new
                 {
-                    mensaje =
-                        "Tipo de cultivo no encontrado o ya está desactivado."
+                    success = false,
+                    message =
+                        "El tipo de cultivo no existe o ya está desactivado."
                 });
             }
 
@@ -269,62 +594,150 @@ namespace CONATRADEC_API.Controllers
                 new List<string>();
 
             bool usadoEnRangos =
-                await _db
-                    .ParametroRangoNutrienteCultivo
-                    .AnyAsync(x =>
-                        x.tipoCultivoId == id &&
-                        x.activo);
+                await db.ParametroRangoNutrienteCultivo
+                    .AsNoTracking()
+                    .AnyAsync(
+                        item =>
+                            item.tipoCultivoId == id &&
+                            item.activo,
+                        cancellationToken);
 
             if (usadoEnRangos)
             {
                 dependencias.Add(
-                    "rangos de aporte por cultivo");
+                    "rangos nutricionales por cultivo");
             }
 
-            bool usadoEnCalculos =
-                await _db.AnalisisSueloCalculos
-                    .AnyAsync(x =>
-                        x.tipoCultivoId == id);
+            /*
+             * Se revisa todo el historial de análisis, no solo los activos,
+             * porque el cultivo debe seguir disponible para consultarlos.
+             */
+            bool usadoEnAnalisis =
+                await db.AnalisisSueloCalculos
+                    .AsNoTracking()
+                    .AnyAsync(
+                        item =>
+                            item.tipoCultivoId == id,
+                        cancellationToken);
 
-            if (usadoEnCalculos)
+            if (usadoEnAnalisis)
             {
                 dependencias.Add(
-                    "cálculos de análisis de suelo");
+                    "análisis de suelo guardados");
             }
 
             if (dependencias.Count > 0)
             {
                 return Conflict(new
                 {
-                    mensaje =
+                    success = false,
+                    message =
                         "No se puede eliminar el tipo de cultivo porque está siendo utilizado.",
 
-                    tipoCultivo = new
-                    {
-                        entidad.tipoCultivoId,
-                        entidad.nombreTipoCultivo
-                    },
-
-                    usadoEn = dependencias
+                    usadoEn =
+                        dependencias
                 });
             }
 
-            entidad.activo = false;
+            entity.activo =
+                false;
 
-            await _db.SaveChangesAsync();
-
-            return Ok(new
+            try
             {
-                mensaje =
-                    "Tipo de cultivo desactivado correctamente.",
+                await db.SaveChangesAsync(
+                    cancellationToken);
 
-                data = new
+                return Ok(new
                 {
-                    entidad.tipoCultivoId,
-                    entidad.nombreTipoCultivo,
-                    entidad.activo
-                }
-            });
+                    success = true,
+                    message =
+                        "Tipo de cultivo desactivado correctamente."
+                });
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(
+                    ex,
+                    "Error inesperado al desactivar el tipo de cultivo {TipoCultivoId}.",
+                    id);
+
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message =
+                        "Ocurrió un error inesperado al eliminar el tipo de cultivo."
+                });
+            }
         }
+
+        private ActionResult? ValidarDatos(
+            string nombre,
+            string descripcion)
+        {
+            if (string.IsNullOrWhiteSpace(nombre))
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "El nombre del tipo de cultivo es obligatorio."
+                });
+            }
+
+            if (nombre.Length > 80)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "El nombre del tipo de cultivo no puede superar 80 caracteres."
+                });
+            }
+
+            if (descripcion.Length > 150)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "La descripción no puede superar 150 caracteres."
+                });
+            }
+
+            return null;
+        }
+
+        private static TipoCultivoRespuestaDto CrearRespuesta(
+            TipoCultivo item) =>
+            new()
+            {
+                tipoCultivoId =
+                    item.tipoCultivoId,
+
+                nombreTipoCultivo =
+                    item.nombreTipoCultivo,
+
+                tipoCultivo =
+                    item.nombreTipoCultivo,
+
+                descripcionTipoCultivo =
+                    item.descripcionTipoCultivo,
+
+                activo =
+                    item.activo
+            };
+
+        private static string NormalizarNombre(
+            string? valor) =>
+            (valor ?? string.Empty)
+                .ReplaceLineEndings(" ")
+                .Trim()
+                .ToUpperInvariant();
+
+        private static string NormalizarDescripcion(
+            string? valor) =>
+            (valor ?? string.Empty)
+                .ReplaceLineEndings(" ")
+                .Trim();
     }
 }
