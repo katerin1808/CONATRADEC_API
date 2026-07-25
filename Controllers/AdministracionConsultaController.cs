@@ -213,11 +213,15 @@ namespace CONATRADEC_API.Controllers
                     on interfaz.interfazId equals relacion.interfazId
                     into relaciones
                     from relacion in relaciones.DefaultIfEmpty()
-                    orderby interfaz.nombreInterfaz
+                    orderby
+                        interfaz.nombreAmigableInterfaz,
+                        interfaz.nombreInterfaz
                     select new InterfazPermisoDto
                     {
                         interfazId = interfaz.interfazId,
                         nombreInterfaz = interfaz.nombreInterfaz,
+                        nombreAmigableInterfaz =
+                            interfaz.nombreAmigableInterfaz,
                         leer = relacion != null && relacion.leer == true,
                         agregar = relacion != null && relacion.agregar == true,
                         actualizar =
