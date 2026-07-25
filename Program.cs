@@ -45,6 +45,7 @@ builder.Services.AddScoped<ImageService>();
 // Servicios del módulo de noticias.
 builder.Services.AddScoped<PermisoApiService>();
 builder.Services.AddScoped<NoticiasDatabaseInitializer>();
+builder.Services.AddScoped<BusquedaTextoCompletoNoticiasService>();
 
 // Contexto e interceptores transversales de auditoría.
 builder.Services.AddScoped<AuditRequestContext>();
@@ -215,7 +216,7 @@ app.UseAuthorization();
 app.MapControllers();
 
 /*
- * Miniaturas del álbum botánico.
+ * Miniaturas del álbum botánico y del centro de noticias.
  *
  * Esta ruta no usa el prefijo /api y es un endpoint mínimo, no una acción de
  * controlador. De esa forma BitacoraMiddleware no crea un registro por cada
@@ -274,8 +275,10 @@ app.MapGet(
                         StringComparison.Ordinal));
 
             if (noModificada)
+            {
                 return Results.StatusCode(
                     StatusCodes.Status304NotModified);
+            }
 
             return Results.File(
                 miniatura.RutaFisica,
@@ -291,14 +294,13 @@ app.MapGet(
         }
         catch (OperationCanceledException)
         {
-            return Results.StatusCode(
-                499);
+            return Results.StatusCode(499);
         }
     });
 
 // Crea de forma idempotente solamente la estructura del nuevo módulo,
-// sus categorías iniciales y la interfaz de permisos. No requiere ejecutar
-// migraciones ni scripts de forma separada.
+// sus categorías iniciales, permisos e índice de búsqueda. No requiere
+// ejecutar migraciones ni scripts de forma separada.
 await using (AsyncServiceScope scope = app.Services.CreateAsyncScope())
 {
     NoticiasDatabaseInitializer initializer = scope.ServiceProvider

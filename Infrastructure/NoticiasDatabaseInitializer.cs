@@ -147,7 +147,6 @@ BEGIN
     WHERE [nombreInterfaz] = N'noticiasPage';
 END;
 
-
 IF NOT EXISTS
 (
     SELECT 1
@@ -263,8 +262,77 @@ WHERE r.[activo] = 1
                 sql,
                 cancellationToken);
 
+            await InicializarBusquedaTextoCompletoAsync(
+                cancellationToken);
+
             logger.LogInformation(
                 "Estructura del módulo de noticias verificada correctamente.");
+        }
+
+        /// <summary>
+        /// Crea el índice Full-Text utilizado para buscar en título, resumen,
+        /// contenido y ubicación sin recorrer NVARCHAR(MAX) con LIKE.
+        ///
+        /// Si la edición de SQL Server no posee Full-Text o la cuenta no tiene
+        /// permisos DDL, la API sigue iniciando y usa la búsqueda de respaldo.
+        /// </summary>
+        private async Task InicializarBusquedaTextoCompletoAsync(
+            CancellationToken cancellationToken)
+        {
+            const string sql = """
+IF FULLTEXTSERVICEPROPERTY('IsFullTextInstalled') = 1
+BEGIN
+    IF NOT EXISTS
+    (
+        SELECT 1
+        FROM sys.fulltext_catalogs
+        WHERE [name] = N'FTCatalogoNoticias'
+    )
+    BEGIN
+        CREATE FULLTEXT CATALOG [FTCatalogoNoticias];
+    END;
+
+    IF NOT EXISTS
+    (
+        SELECT 1
+        FROM sys.fulltext_indexes
+        WHERE object_id = OBJECT_ID(N'[dbo].[publicacion]')
+    )
+    BEGIN
+        CREATE FULLTEXT INDEX ON [dbo].[publicacion]
+        (
+            [titulo] LANGUAGE 3082,
+            [resumen] LANGUAGE 3082,
+            [contenido] LANGUAGE 3082,
+            [ubicacion] LANGUAGE 3082
+        )
+        KEY INDEX [PK_publicacion]
+        ON [FTCatalogoNoticias]
+        WITH CHANGE_TRACKING AUTO;
+    END;
+END;
+""";
+
+            try
+            {
+                await db.Database.ExecuteSqlRawAsync(
+                    sql,
+                    cancellationToken);
+
+                logger.LogInformation(
+                    "Índice Full-Text de noticias verificado correctamente.");
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(
+                    ex,
+                    "El servidor no permitió configurar Full-Text para " +
+                    "noticias. Se utilizará la búsqueda liviana de respaldo.");
+            }
         }
     }
 }

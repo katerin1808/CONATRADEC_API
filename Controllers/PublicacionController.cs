@@ -19,6 +19,8 @@ namespace CONATRADEC_API.Controllers
         private readonly DBContext db;
         private readonly PermisoApiService permisoApiService;
         private readonly ImageService imageService;
+        private readonly BusquedaTextoCompletoNoticiasService
+            busquedaTextoCompletoService;
         private readonly ILogger<PublicacionController> logger;
 
         public PublicacionController(
@@ -26,12 +28,16 @@ namespace CONATRADEC_API.Controllers
             DBContext db,
             PermisoApiService permisoApiService,
             ImageService imageService,
+            BusquedaTextoCompletoNoticiasService
+                busquedaTextoCompletoService,
             ILogger<PublicacionController> logger)
         {
             this.noticiasDb = noticiasDb;
             this.db = db;
             this.permisoApiService = permisoApiService;
             this.imageService = imageService;
+            this.busquedaTextoCompletoService =
+                busquedaTextoCompletoService;
             this.logger = logger;
         }
 
@@ -123,15 +129,10 @@ namespace CONATRADEC_API.Controllers
                     x.fechaEventoInicioUtc.HasValue);
             }
 
-            if (!string.IsNullOrWhiteSpace(buscar))
-            {
-                string texto = buscar.Trim();
-                query = query.Where(x =>
-                    x.titulo.Contains(texto) ||
-                    x.resumen.Contains(texto) ||
-                    x.contenido.Contains(texto) ||
-                    x.ubicacion.Contains(texto));
-            }
+            query = await AplicarBusquedaAsync(
+                query,
+                buscar,
+                cancellationToken);
 
             PublicacionPaginadaDto data = await ConstruirPaginaAsync(
                 query,
@@ -188,7 +189,9 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
-            PublicacionDetalleDto data = MapearDetalle(publicacion, ahoraUtc);
+            PublicacionDetalleDto data =
+                MapearDetalle(publicacion, ahoraUtc);
+
             data.Autor = "CONATRADEC";
             data.UltimoEditor = string.Empty;
 
@@ -233,11 +236,13 @@ namespace CONATRADEC_API.Controllers
 
             if (!string.IsNullOrWhiteSpace(estado))
             {
-                string estadoNormalizado = estado.Trim().ToUpperInvariant();
+                string estadoNormalizado =
+                    estado.Trim().ToUpperInvariant();
 
                 if (estadoNormalizado == "PROGRAMADA")
                 {
                     DateTime ahoraUtc = DateTime.UtcNow;
+
                     query = query.Where(x =>
                         x.estadoPublicacion == EstadoPublicada &&
                         x.fechaInicioPublicacionUtc > ahoraUtc);
@@ -245,6 +250,7 @@ namespace CONATRADEC_API.Controllers
                 else if (estadoNormalizado == "VENCIDA")
                 {
                     DateTime ahoraUtc = DateTime.UtcNow;
+
                     query = query.Where(x =>
                         x.estadoPublicacion == EstadoPublicada &&
                         x.fechaFinPublicacionUtc.HasValue &&
@@ -253,6 +259,7 @@ namespace CONATRADEC_API.Controllers
                 else if (estadoNormalizado == EstadoPublicada)
                 {
                     DateTime ahoraUtc = DateTime.UtcNow;
+
                     query = query.Where(x =>
                         x.estadoPublicacion == EstadoPublicada &&
                         x.fechaInicioPublicacionUtc <= ahoraUtc &&
@@ -266,15 +273,10 @@ namespace CONATRADEC_API.Controllers
                 }
             }
 
-            if (!string.IsNullOrWhiteSpace(buscar))
-            {
-                string texto = buscar.Trim();
-                query = query.Where(x =>
-                    x.titulo.Contains(texto) ||
-                    x.resumen.Contains(texto) ||
-                    x.contenido.Contains(texto) ||
-                    x.ubicacion.Contains(texto));
-            }
+            query = await AplicarBusquedaAsync(
+                query,
+                buscar,
+                cancellationToken);
 
             PublicacionPaginadaDto data = await ConstruirPaginaAsync(
                 query,
@@ -286,7 +288,8 @@ namespace CONATRADEC_API.Controllers
             return Ok(new
             {
                 success = true,
-                message = "Publicaciones administrativas obtenidas correctamente.",
+                message =
+                    "Publicaciones administrativas obtenidas correctamente.",
                 data
             });
         }
@@ -325,13 +328,14 @@ namespace CONATRADEC_API.Controllers
                 publicacion,
                 DateTime.UtcNow);
 
-            Dictionary<int, string> autores = await ObtenerNombresUsuariosAsync(
-                new[]
-                {
-                    publicacion.usuarioCreacionId,
-                    publicacion.usuarioUltimaModificacionId
-                },
-                cancellationToken);
+            Dictionary<int, string> autores =
+                await ObtenerNombresUsuariosAsync(
+                    new[]
+                    {
+                        publicacion.usuarioCreacionId,
+                        publicacion.usuarioUltimaModificacionId
+                    },
+                    cancellationToken);
 
             data.Autor = ObtenerNombreUsuario(
                 autores,
@@ -459,7 +463,8 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
-            publicacion.categoriaPublicacionId = dto.CategoriaPublicacionId;
+            publicacion.categoriaPublicacionId =
+                dto.CategoriaPublicacionId;
             publicacion.titulo = dto.Titulo.Trim();
             publicacion.resumen = dto.Resumen.Trim();
             publicacion.contenido = dto.Contenido.Trim();
@@ -467,7 +472,8 @@ namespace CONATRADEC_API.Controllers
                 dto.EnlaceExterno?.Trim() ?? string.Empty;
             publicacion.textoEnlace =
                 dto.TextoEnlace?.Trim() ?? string.Empty;
-            publicacion.ubicacion = dto.Ubicacion?.Trim() ?? string.Empty;
+            publicacion.ubicacion =
+                dto.Ubicacion?.Trim() ?? string.Empty;
             publicacion.fechaEventoInicioUtc =
                 dto.FechaEventoInicio?.UtcDateTime;
             publicacion.fechaEventoFinUtc =
@@ -479,8 +485,10 @@ namespace CONATRADEC_API.Controllers
             publicacion.estadoPublicacion =
                 NormalizarEstado(dto.EstadoPublicacion);
             publicacion.destacada = dto.Destacada;
-            publicacion.usuarioUltimaModificacionId = usuarioSesionId!.Value;
-            publicacion.fechaUltimaModificacionUtc = DateTime.UtcNow;
+            publicacion.usuarioUltimaModificacionId =
+                usuarioSesionId!.Value;
+            publicacion.fechaUltimaModificacionUtc =
+                DateTime.UtcNow;
 
             await noticiasDb.SaveChangesAsync(cancellationToken);
 
@@ -506,7 +514,8 @@ namespace CONATRADEC_API.Controllers
             if (acceso != null)
                 return acceso;
 
-            string estado = NormalizarEstado(dto.EstadoPublicacion);
+            string estado =
+                NormalizarEstado(dto.EstadoPublicacion);
 
             if (!EsEstadoValido(estado))
             {
@@ -533,8 +542,10 @@ namespace CONATRADEC_API.Controllers
             }
 
             publicacion.estadoPublicacion = estado;
-            publicacion.usuarioUltimaModificacionId = usuarioSesionId!.Value;
-            publicacion.fechaUltimaModificacionUtc = DateTime.UtcNow;
+            publicacion.usuarioUltimaModificacionId =
+                usuarioSesionId!.Value;
+            publicacion.fechaUltimaModificacionUtc =
+                DateTime.UtcNow;
 
             await noticiasDb.SaveChangesAsync(cancellationToken);
 
@@ -543,9 +554,12 @@ namespace CONATRADEC_API.Controllers
                 success = true,
                 message = estado switch
                 {
-                    EstadoPublicada => "Publicación habilitada correctamente.",
-                    EstadoArchivada => "Publicación archivada correctamente.",
-                    _ => "Publicación convertida en borrador correctamente."
+                    EstadoPublicada =>
+                        "Publicación habilitada correctamente.",
+                    EstadoArchivada =>
+                        "Publicación archivada correctamente.",
+                    _ =>
+                        "Publicación convertida en borrador correctamente."
                 }
             });
         }
@@ -580,8 +594,10 @@ namespace CONATRADEC_API.Controllers
             }
 
             publicacion.destacada = dto.Destacada;
-            publicacion.usuarioUltimaModificacionId = usuarioSesionId!.Value;
-            publicacion.fechaUltimaModificacionUtc = DateTime.UtcNow;
+            publicacion.usuarioUltimaModificacionId =
+                usuarioSesionId!.Value;
+            publicacion.fechaUltimaModificacionUtc =
+                DateTime.UtcNow;
 
             await noticiasDb.SaveChangesAsync(cancellationToken);
 
@@ -618,15 +634,18 @@ namespace CONATRADEC_API.Controllers
                 return NotFound(new
                 {
                     success = false,
-                    message = "La publicación no existe o ya fue eliminada."
+                    message =
+                        "La publicación no existe o ya fue eliminada."
                 });
             }
 
             publicacion.activo = false;
             publicacion.estadoPublicacion = EstadoArchivada;
             publicacion.destacada = false;
-            publicacion.usuarioUltimaModificacionId = usuarioSesionId!.Value;
-            publicacion.fechaUltimaModificacionUtc = DateTime.UtcNow;
+            publicacion.usuarioUltimaModificacionId =
+                usuarioSesionId!.Value;
+            publicacion.fechaUltimaModificacionUtc =
+                DateTime.UtcNow;
 
             await noticiasDb.SaveChangesAsync(cancellationToken);
 
@@ -690,20 +709,26 @@ namespace CONATRADEC_API.Controllers
             {
                 logger.LogError(
                     ex,
-                    "No fue posible procesar la portada de la publicación {PublicacionId}.",
+                    "No fue posible procesar la portada de la " +
+                    "publicación {PublicacionId}.",
                     id);
 
                 return StatusCode(500, new
                 {
                     success = false,
-                    message = "No fue posible procesar la imagen seleccionada."
+                    message =
+                        "No fue posible procesar la imagen seleccionada."
                 });
             }
 
-            string rutaAnterior = publicacion.rutaImagenPortada;
+            string rutaAnterior =
+                publicacion.rutaImagenPortada;
+
             publicacion.rutaImagenPortada = rutaNueva;
-            publicacion.usuarioUltimaModificacionId = usuarioSesionId!.Value;
-            publicacion.fechaUltimaModificacionUtc = DateTime.UtcNow;
+            publicacion.usuarioUltimaModificacionId =
+                usuarioSesionId!.Value;
+            publicacion.fechaUltimaModificacionUtc =
+                DateTime.UtcNow;
 
             try
             {
@@ -757,20 +782,24 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
-            string rutaAnterior = publicacion.rutaImagenPortada;
+            string rutaAnterior =
+                publicacion.rutaImagenPortada;
 
             if (string.IsNullOrWhiteSpace(rutaAnterior))
             {
                 return Ok(new
                 {
                     success = true,
-                    message = "La publicación no tiene una portada asignada."
+                    message =
+                        "La publicación no tiene una portada asignada."
                 });
             }
 
             publicacion.rutaImagenPortada = string.Empty;
-            publicacion.usuarioUltimaModificacionId = usuarioSesionId!.Value;
-            publicacion.fechaUltimaModificacionUtc = DateTime.UtcNow;
+            publicacion.usuarioUltimaModificacionId =
+                usuarioSesionId!.Value;
+            publicacion.fechaUltimaModificacionUtc =
+                DateTime.UtcNow;
 
             await noticiasDb.SaveChangesAsync(cancellationToken);
             EliminarArchivoNoticias(rutaAnterior);
@@ -780,6 +809,49 @@ namespace CONATRADEC_API.Controllers
                 success = true,
                 message = "Portada eliminada correctamente."
             });
+        }
+
+        /// <summary>
+        /// Usa Full-Text para consultar también el contenido completo sin
+        /// ejecutar LIKE sobre la columna NVARCHAR(MAX). Si el servidor no
+        /// dispone de Full-Text, busca únicamente en los campos pequeños.
+        /// </summary>
+        private async Task<IQueryable<Publicacion>>
+            AplicarBusquedaAsync(
+                IQueryable<Publicacion> query,
+                string? buscar,
+                CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(buscar))
+                return query;
+
+            string texto = buscar.Trim();
+
+            // Evita expresiones excesivamente grandes enviadas por el cliente.
+            if (texto.Length > 120)
+                texto = texto[..120];
+
+            bool usarTextoCompleto =
+                await busquedaTextoCompletoService
+                    .EstaDisponibleAsync(cancellationToken);
+
+            if (usarTextoCompleto)
+            {
+                return query.Where(x =>
+                    EF.Functions.FreeText(x.titulo, texto) ||
+                    EF.Functions.FreeText(x.resumen, texto) ||
+                    EF.Functions.FreeText(x.contenido, texto) ||
+                    EF.Functions.FreeText(x.ubicacion, texto));
+            }
+
+            /*
+             * Respaldo compatible con SQL Server sin Full-Text. Se excluye
+             * contenido porque NVARCHAR(MAX) obligaría a recorrer cada noticia.
+             */
+            return query.Where(x =>
+                x.titulo.Contains(texto) ||
+                x.resumen.Contains(texto) ||
+                x.ubicacion.Contains(texto));
         }
 
         private async Task<ActionResult?> ValidarAccesoAsync(
@@ -810,7 +882,8 @@ namespace CONATRADEC_API.Controllers
             PublicacionGuardarDto dto,
             CancellationToken cancellationToken)
         {
-            string estado = NormalizarEstado(dto.EstadoPublicacion);
+            string estado =
+                NormalizarEstado(dto.EstadoPublicacion);
 
             if (!EsEstadoValido(estado))
             {
@@ -834,7 +907,8 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
-            bool categoriaExiste = await noticiasDb.CategoriasPublicacion
+            bool categoriaExiste = await noticiasDb
+                .CategoriasPublicacion
                 .AsNoTracking()
                 .AnyAsync(
                     x =>
@@ -848,7 +922,8 @@ namespace CONATRADEC_API.Controllers
                 return BadRequest(new
                 {
                     success = false,
-                    message = "La categoría seleccionada no existe o está inactiva."
+                    message =
+                        "La categoría seleccionada no existe o está inactiva."
                 });
             }
 
@@ -857,18 +932,21 @@ namespace CONATRADEC_API.Controllers
                 return BadRequest(new
                 {
                     success = false,
-                    message = "La fecha de inicio de publicación no es válida."
+                    message =
+                        "La fecha de inicio de publicación no es válida."
                 });
             }
 
             if (dto.FechaFinPublicacion.HasValue &&
-                dto.FechaFinPublicacion.Value < dto.FechaInicioPublicacion)
+                dto.FechaFinPublicacion.Value <
+                    dto.FechaInicioPublicacion)
             {
                 return BadRequest(new
                 {
                     success = false,
                     message =
-                        "La fecha final de publicación no puede ser anterior a la fecha inicial."
+                        "La fecha final de publicación no puede ser " +
+                        "anterior a la fecha inicial."
                 });
             }
 
@@ -879,19 +957,22 @@ namespace CONATRADEC_API.Controllers
                 {
                     success = false,
                     message =
-                        "Debe indicar la fecha de inicio del evento antes de indicar su fecha final."
+                        "Debe indicar la fecha de inicio del evento antes " +
+                        "de indicar su fecha final."
                 });
             }
 
             if (dto.FechaEventoInicio.HasValue &&
                 dto.FechaEventoFin.HasValue &&
-                dto.FechaEventoFin.Value < dto.FechaEventoInicio.Value)
+                dto.FechaEventoFin.Value <
+                    dto.FechaEventoInicio.Value)
             {
                 return BadRequest(new
                 {
                     success = false,
                     message =
-                        "La fecha final del evento no puede ser anterior a la fecha inicial."
+                        "La fecha final del evento no puede ser anterior " +
+                        "a la fecha inicial."
                 });
             }
 
@@ -907,19 +988,21 @@ namespace CONATRADEC_API.Controllers
                 {
                     success = false,
                     message =
-                        "El enlace externo debe ser una dirección HTTP o HTTPS válida."
+                        "El enlace externo debe ser una dirección HTTP o " +
+                        "HTTPS válida."
                 });
             }
 
             return null;
         }
 
-        private async Task<PublicacionPaginadaDto> ConstruirPaginaAsync(
-            IQueryable<Publicacion> query,
-            int pagina,
-            int tamanoPagina,
-            bool incluirAutores,
-            CancellationToken cancellationToken)
+        private async Task<PublicacionPaginadaDto>
+            ConstruirPaginaAsync(
+                IQueryable<Publicacion> query,
+                int pagina,
+                int tamanoPagina,
+                bool incluirAutores,
+                CancellationToken cancellationToken)
         {
             int total = await query.CountAsync(cancellationToken);
             DateTime ahoraUtc = DateTime.UtcNow;
@@ -933,10 +1016,13 @@ namespace CONATRADEC_API.Controllers
                 .Select(x => new PublicacionListadoDto
                 {
                     PublicacionId = x.publicacionId,
-                    CategoriaPublicacionId = x.categoriaPublicacionId,
+                    CategoriaPublicacionId =
+                        x.categoriaPublicacionId,
                     Categoria =
-                        x.CategoriaPublicacion.nombreCategoriaPublicacion,
-                    ColorCategoria = x.CategoriaPublicacion.colorHex,
+                        x.CategoriaPublicacion
+                            .nombreCategoriaPublicacion,
+                    ColorCategoria =
+                        x.CategoriaPublicacion.colorHex,
                     Titulo = x.titulo,
                     Resumen = x.resumen,
                     RutaImagenPortada = x.rutaImagenPortada,
@@ -945,7 +1031,8 @@ namespace CONATRADEC_API.Controllers
                     FechaEventoFinUtc = x.fechaEventoFinUtc,
                     FechaInicioPublicacionUtc =
                         x.fechaInicioPublicacionUtc,
-                    FechaFinPublicacionUtc = x.fechaFinPublicacionUtc,
+                    FechaFinPublicacionUtc =
+                        x.fechaFinPublicacionUtc,
                     EstadoPublicacion = x.estadoPublicacion,
                     Destacada = x.destacada,
                     FechaCreacionUtc = x.fechaCreacionUtc,
@@ -1008,7 +1095,8 @@ namespace CONATRADEC_API.Controllers
                 TotalRegistros = total,
                 TotalPaginas = total == 0
                     ? 1
-                    : (int)Math.Ceiling(total / (double)tamanoPagina)
+                    : (int)Math.Ceiling(
+                        total / (double)tamanoPagina)
             };
         }
 
@@ -1038,7 +1126,8 @@ namespace CONATRADEC_API.Controllers
 
             return usuarios.ToDictionary(
                 x => x.UsuarioId,
-                x => !string.IsNullOrWhiteSpace(x.nombreCompletoUsuario)
+                x => !string.IsNullOrWhiteSpace(
+                        x.nombreCompletoUsuario)
                     ? x.nombreCompletoUsuario.Trim()
                     : x.nombreUsuario.Trim());
         }
@@ -1047,7 +1136,9 @@ namespace CONATRADEC_API.Controllers
             IReadOnlyDictionary<int, string> usuarios,
             int usuarioId)
         {
-            return usuarios.TryGetValue(usuarioId, out string? nombre)
+            return usuarios.TryGetValue(
+                usuarioId,
+                out string? nombre)
                 ? nombre
                 : $"Usuario #{usuarioId}";
         }
@@ -1063,21 +1154,26 @@ namespace CONATRADEC_API.Controllers
                     publicacion.categoriaPublicacionId,
                 Categoria = publicacion.CategoriaPublicacion
                     .nombreCategoriaPublicacion,
-                ColorCategoria = publicacion.CategoriaPublicacion.colorHex,
+                ColorCategoria =
+                    publicacion.CategoriaPublicacion.colorHex,
                 Titulo = publicacion.titulo,
                 Resumen = publicacion.resumen,
                 Contenido = publicacion.contenido,
-                RutaImagenPortada = publicacion.rutaImagenPortada,
+                RutaImagenPortada =
+                    publicacion.rutaImagenPortada,
                 EnlaceExterno = publicacion.enlaceExterno,
                 TextoEnlace = publicacion.textoEnlace,
                 Ubicacion = publicacion.ubicacion,
-                FechaEventoInicioUtc = publicacion.fechaEventoInicioUtc,
-                FechaEventoFinUtc = publicacion.fechaEventoFinUtc,
+                FechaEventoInicioUtc =
+                    publicacion.fechaEventoInicioUtc,
+                FechaEventoFinUtc =
+                    publicacion.fechaEventoFinUtc,
                 FechaInicioPublicacionUtc =
                     publicacion.fechaInicioPublicacionUtc,
                 FechaFinPublicacionUtc =
                     publicacion.fechaFinPublicacionUtc,
-                EstadoPublicacion = publicacion.estadoPublicacion,
+                EstadoPublicacion =
+                    publicacion.estadoPublicacion,
                 EstadoVisual = ObtenerEstadoVisual(
                     publicacion.estadoPublicacion,
                     publicacion.fechaInicioPublicacionUtc,
@@ -1087,7 +1183,8 @@ namespace CONATRADEC_API.Controllers
                 FechaCreacionUtc = publicacion.fechaCreacionUtc,
                 FechaUltimaModificacionUtc =
                     publicacion.fechaUltimaModificacionUtc,
-                UsuarioCreacionId = publicacion.usuarioCreacionId,
+                UsuarioCreacionId =
+                    publicacion.usuarioCreacionId,
                 UsuarioUltimaModificacionId =
                     publicacion.usuarioUltimaModificacionId,
                 Activo = publicacion.activo
@@ -1100,7 +1197,8 @@ namespace CONATRADEC_API.Controllers
             DateTime? fechaFinUtc,
             DateTime ahoraUtc)
         {
-            string estadoNormalizado = NormalizarEstado(estado);
+            string estadoNormalizado =
+                NormalizarEstado(estado);
 
             if (estadoNormalizado == EstadoBorrador)
                 return "BORRADOR";
@@ -1111,8 +1209,11 @@ namespace CONATRADEC_API.Controllers
             if (fechaInicioUtc > ahoraUtc)
                 return "PROGRAMADA";
 
-            if (fechaFinUtc.HasValue && fechaFinUtc.Value < ahoraUtc)
+            if (fechaFinUtc.HasValue &&
+                fechaFinUtc.Value < ahoraUtc)
+            {
                 return "VENCIDA";
+            }
 
             return "PUBLICADA";
         }
@@ -1131,7 +1232,8 @@ namespace CONATRADEC_API.Controllers
                 : estado.Trim().ToUpperInvariant();
         }
 
-        private static void EliminarArchivoNoticias(string? rutaRelativa)
+        private static void EliminarArchivoNoticias(
+            string? rutaRelativa)
         {
             if (string.IsNullOrWhiteSpace(rutaRelativa))
                 return;
@@ -1140,7 +1242,8 @@ namespace CONATRADEC_API.Controllers
                 .Replace('\\', '/')
                 .Trim();
 
-            const string prefijo = "/resources/uploads/noticias/";
+            const string prefijo =
+                "/resources/uploads/noticias/";
 
             if (!rutaNormalizada.StartsWith(
                     prefijo,
@@ -1151,8 +1254,11 @@ namespace CONATRADEC_API.Controllers
 
             string rutaFisica = Path.Combine(
                 Directory.GetCurrentDirectory(),
-                rutaNormalizada.TrimStart('/')
-                    .Replace('/', Path.DirectorySeparatorChar));
+                rutaNormalizada
+                    .TrimStart('/')
+                    .Replace(
+                        '/',
+                        Path.DirectorySeparatorChar));
 
             if (System.IO.File.Exists(rutaFisica))
                 System.IO.File.Delete(rutaFisica);
