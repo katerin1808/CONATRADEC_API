@@ -1,11 +1,13 @@
-﻿namespace CONATRADEC_API.DTOs
+namespace CONATRADEC_API.DTOs
 {
     public class TerrenoDto
     {
-
         public class TerrenoCrearDto
         {
-            public string codigoTerreno { get; set; } = null!;
+            // Se conserva opcional por compatibilidad con versiones anteriores
+            // del frontend. La API no utiliza este valor al crear el terreno.
+            public string? codigoTerreno { get; set; }
+
             public string identificacionPropietarioTerreno { get; set; } = null!;
             public string nombrePropietarioTerreno { get; set; } = null!;
             public int telefonoPropietario { get; set; }
@@ -13,20 +15,19 @@
             public string direccionTerreno { get; set; } = null!;
             public decimal extensionManzanaTerreno { get; set; }
             public DateOnly fechaIngresoTerreno { get; set; }
-
             public int cantidadPlantasTerreno { get; set; }
-
             public int municipioId { get; set; }
             public decimal cantidadQuintalesOro { get; set; }
-
             public decimal latitud { get; set; }
             public decimal longitud { get; set; }
         }
 
-
         public class TerrenoEditarDto
         {
-            public string codigoTerreno { get; set; } = null!;
+            // Se acepta para no romper clientes antiguos, pero nunca se aplica.
+            // El código del terreno es inmutable una vez generado.
+            public string? codigoTerreno { get; set; }
+
             public string identificacionPropietarioTerreno { get; set; } = null!;
             public string nombrePropietarioTerreno { get; set; } = null!;
             public int telefonoPropietario { get; set; }
@@ -43,19 +44,14 @@
 
         public class TerrenoUbicacionDto
         {
-            // PAÍS
             public int paisId { get; set; }
             public string nombrePais { get; set; } = null!;
-
-            // DEPARTAMENTO
             public int departamentoId { get; set; }
             public string nombreDepartamento { get; set; } = null!;
-
-            // MUNICIPIO
             public int municipioId { get; set; }
             public string nombreMunicipio { get; set; } = null!;
         }
-     
+
         public class TerrenoListarDto
         {
             public int terrenoId { get; set; }
@@ -72,12 +68,7 @@
             public decimal cantidadQuintalesOro { get; set; }
             public decimal latitud { get; set; }
             public decimal longitud { get; set; }
-
-            // DTO único para la ubicación
             public TerrenoUbicacionDto ubicacion { get; set; } = null!;
-           
         }
-
-      
     }
 }

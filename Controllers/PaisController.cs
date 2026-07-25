@@ -1,210 +1,527 @@
-﻿using CONATRADEC_API.DTOs;
+using CONATRADEC_API.DTOs;
 using CONATRADEC_API.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using System;
-using static CONATRADEC_API.DTOs.DepartamentoDto;
 using static CONATRADEC_API.DTOs.PaisDto;
 
 namespace CONATRADEC_API.Controllers
 {
     [ApiController]
     [Route("api/pais")]
-    public class PaisController : ControllerBase
+    public sealed class PaisController : ControllerBase
     {
-        private readonly DBContext _ctx;
-        public PaisController(DBContext ctx) => _ctx = ctx;
+        private readonly DBContext context;
+        private readonly ILogger<PaisController> logger;
+
+        public PaisController(
+            DBContext context,
+            ILogger<PaisController> logger)
+        {
+            this.context = context;
+            this.logger = logger;
+        }
 
         // ==========================================================
-        // LISTAR SOLO ACTIVOS
+        // LISTADO COMPATIBLE PARA FORMULARIOS Y SELECTORES
         // ==========================================================
         [HttpGet]
-        public async Task<ActionResult<IEnumerable<PaisResponse>>> GetAll()
+        public async Task<ActionResult<IEnumerable<PaisResponse>>> GetAll(
+            CancellationToken cancellationToken)
         {
-            var data = await _ctx.Pais
+            List<PaisResponse> data = await context.Pais
                 .AsNoTracking()
-                .Where(p => p.Activo)
-                .OrderBy(p => p.NombrePais)
-                .Select(p => new PaisResponse
+                .Where(pais => pais.Activo)
+                .OrderBy(pais => pais.NombrePais)
+                .Select(pais => new PaisResponse
                 {
-                    PaisId = p.PaisId,
-                    NombrePais = p.NombrePais,
-                    CodigoISOPais = p.CodigoISOPais,
-                    Activo = p.Activo
+                    PaisId = pais.PaisId,
+                    NombrePais = pais.NombrePais,
+                    CodigoISOPais = pais.CodigoISOPais,
+                    Activo = pais.Activo,
+                    CantidadDepartamentos = pais.Departamentos.Count(
+                        departamento => departamento.Activo)
                 })
-                .ToListAsync();
+                .ToListAsync(cancellationToken);
 
             return Ok(data);
         }
 
-        // POST /api/departamento/crear
-        // POST /api/pais/crearPais
+        // ==========================================================
+        // BÚSQUEDA PAGINADA PARA LA PANTALLA ADMINISTRATIVA
+        // ==========================================================
+        [HttpGet("buscar")]
+        public async Task<ActionResult<PaisPaginaResponse>> Buscar(
+            [FromQuery] string? buscar = null,
+            [FromQuery] int pagina = 1,
+            [FromQuery] int tamanoPagina = 20,
+            [FromQuery] string orden = "nombre",
+            [FromQuery] string direccion = "asc",
+            CancellationToken cancellationToken = default)
+        {
+            pagina = Math.Max(1, pagina);
+            tamanoPagina = Math.Clamp(tamanoPagina, 5, 100);
+
+            IQueryable<Pais> query = context.Pais
+                .AsNoTracking()
+                .Where(pais => pais.Activo);
+
+            if (!string.IsNullOrWhiteSpace(buscar))
+            {
+                string texto = buscar.Trim();
+
+                if (texto.Length > 80)
+                    texto = texto[..80];
+
+                query = query.Where(pais =>
+                    pais.NombrePais.Contains(texto) ||
+                    pais.CodigoISOPais.Contains(texto));
+            }
+
+            bool descendente = string.Equals(
+                direccion,
+                "desc",
+                StringComparison.OrdinalIgnoreCase);
+
+            query = orden.Trim().ToLowerInvariant() switch
+            {
+                "codigo" when descendente =>
+                    query.OrderByDescending(pais => pais.CodigoISOPais)
+                         .ThenBy(pais => pais.NombrePais),
+
+                "codigo" =>
+                    query.OrderBy(pais => pais.CodigoISOPais)
+                         .ThenBy(pais => pais.NombrePais),
+
+                "departamentos" when descendente =>
+                    query.OrderByDescending(
+                            pais => pais.Departamentos.Count(
+                                departamento => departamento.Activo))
+                         .ThenBy(pais => pais.NombrePais),
+
+                "departamentos" =>
+                    query.OrderBy(
+                            pais => pais.Departamentos.Count(
+                                departamento => departamento.Activo))
+                         .ThenBy(pais => pais.NombrePais),
+
+                _ when descendente =>
+                    query.OrderByDescending(pais => pais.NombrePais)
+                         .ThenBy(pais => pais.CodigoISOPais),
+
+                _ =>
+                    query.OrderBy(pais => pais.NombrePais)
+                         .ThenBy(pais => pais.CodigoISOPais)
+            };
+
+            int totalRegistros = await query.CountAsync(cancellationToken);
+
+            List<PaisResponse> items = await query
+                .Skip((pagina - 1) * tamanoPagina)
+                .Take(tamanoPagina)
+                .Select(pais => new PaisResponse
+                {
+                    PaisId = pais.PaisId,
+                    NombrePais = pais.NombrePais,
+                    CodigoISOPais = pais.CodigoISOPais,
+                    Activo = pais.Activo,
+                    CantidadDepartamentos = pais.Departamentos.Count(
+                        departamento => departamento.Activo)
+                })
+                .ToListAsync(cancellationToken);
+
+            int totalPaginas = totalRegistros == 0
+                ? 1
+                : (int)Math.Ceiling(
+                    totalRegistros / (double)tamanoPagina);
+
+            return Ok(new PaisPaginaResponse
+            {
+                Items = items,
+                PaginaActual = pagina,
+                TamanoPagina = tamanoPagina,
+                TotalRegistros = totalRegistros,
+                TotalPaginas = totalPaginas
+            });
+        }
+
+        // ==========================================================
+        // CREAR
+        // ==========================================================
         [HttpPost("crearPais")]
         [Consumes("application/json")]
-        public async Task<ActionResult> Create([FromBody] PaisRequest? req)
+        public async Task<ActionResult> Create(
+            [FromBody] PaisRequest? request,
+            CancellationToken cancellationToken)
         {
-            if (req is null) return BadRequest("Body vacío o JSON mal formado.");
+            if (request == null)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "No se recibieron los datos del país."
+                });
+            }
 
-            var nombre = req.NombrePais?.ReplaceLineEndings(" ").Trim();
-            var iso = req.CodigoISOPais?.Trim().ToUpperInvariant();
+            string nombre = NormalizarNombre(request.NombrePais);
+            string codigoIso = NormalizarCodigoIso(request.CodigoISOPais);
 
-            if (string.IsNullOrWhiteSpace(nombre))
-                return BadRequest("El nombre del país es requerido.");
+            ActionResult? validacion = ValidarDatos(nombre, codigoIso);
+            if (validacion != null)
+                return validacion;
 
-            if (string.IsNullOrWhiteSpace(iso) || iso.Length != 3 || !iso.All(char.IsLetter))
-                return BadRequest("El Código ISO debe tener exactamente 3 letras (A-Z).");
+            bool codigoDuplicado = await context.Pais.AnyAsync(
+                pais =>
+                    pais.Activo &&
+                    pais.CodigoISOPais == codigoIso,
+                cancellationToken);
 
-            await using var tx = await _ctx.Database.BeginTransactionAsync();
+            if (codigoDuplicado)
+            {
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        $"Ya existe un país activo con el código ISO {codigoIso}."
+                });
+            }
+
+            bool nombreDuplicado = await context.Pais.AnyAsync(
+                pais =>
+                    pais.Activo &&
+                    EF.Functions.Collate(
+                        pais.NombrePais,
+                        "Modern_Spanish_CI_AI") == nombre,
+                cancellationToken);
+
+            if (nombreDuplicado)
+            {
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        $"Ya existe un país activo con el nombre {nombre}."
+                });
+            }
+
+            var entity = new Pais
+            {
+                NombrePais = nombre,
+                CodigoISOPais = codigoIso,
+                Activo = true
+            };
+
             try
             {
-                // ✅ Unicidad SOLO contra activos
-                bool isoDup = await _ctx.Pais.AnyAsync(p => p.Activo && p.CodigoISOPais.ToUpper() == iso);
-                if (isoDup) return Conflict("Ya existe un país ACTIVO con ese Código ISO.");
-
-                bool nombreDup = await _ctx.Pais.AnyAsync(p => p.Activo &&
-                EF.Functions.Collate(p.NombrePais.ToUpper(), "Modern_Spanish_CI_AI") == nombre!.ToUpper());
-                if (nombreDup) return Conflict("Ya existe un país ACTIVO con ese nombre.");
-
-                var entity = new Pais
-                {
-                    NombrePais = nombre!.ToUpper(),
-                    CodigoISOPais = iso.ToUpper(),
-                    Activo = true
-                };
-
-                _ctx.Pais.Add(entity);
-                await _ctx.SaveChangesAsync();
-                await tx.CommitAsync();
+                context.Pais.Add(entity);
+                await context.SaveChangesAsync(cancellationToken);
 
                 return Ok(new
                 {
-                    message = "País creado correctamente",
-                    pais = new { entity.PaisId, entity.NombrePais, entity.CodigoISOPais, entity.Activo }
+                    success = true,
+                    message = "País creado correctamente.",
+                    data = new PaisResponse
+                    {
+                        PaisId = entity.PaisId,
+                        NombrePais = entity.NombrePais,
+                        CodigoISOPais = entity.CodigoISOPais,
+                        Activo = entity.Activo,
+                        CantidadDepartamentos = 0
+                    }
                 });
             }
-            catch
+            catch (DbUpdateException ex)
             {
-                await tx.RollbackAsync();
-                throw;
+                logger.LogWarning(
+                    ex,
+                    "Conflicto al crear el país con código ISO {CodigoIso}.",
+                    codigoIso);
+
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        "No fue posible crear el país porque el nombre o el código ISO ya está registrado."
+                });
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error inesperado al crear un país.");
+
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message =
+                        "Ocurrió un error inesperado al crear el país."
+                });
             }
         }
 
-        // PUT /api/pais/actualizarPais/{id}
+        // ==========================================================
+        // ACTUALIZAR
+        // ==========================================================
         [HttpPut("actualizarPais/{id:int}")]
         [Consumes("application/json")]
-        public async Task<ActionResult> Update(int id, [FromBody] PaisRequest req)
+        public async Task<ActionResult> Update(
+            int id,
+            [FromBody] PaisRequest? request,
+            CancellationToken cancellationToken)
         {
-            if (req is null) return BadRequest("Body vacío o JSON mal formado.");
-
-            var nombre = req.NombrePais?.ReplaceLineEndings(" ").Trim();
-            var iso = req.CodigoISOPais?.Trim().ToUpperInvariant();
-
-            if (string.IsNullOrWhiteSpace(nombre))
-                return BadRequest("El nombre del país es requerido.");
-            if (string.IsNullOrWhiteSpace(iso) || iso.Length != 3 || !iso.All(char.IsLetter))
-                return BadRequest("El Código ISO debe tener exactamente 3 letras (A-Z).");
-
-            await using var tx = await _ctx.Database.BeginTransactionAsync();
-            try
+            if (id <= 0)
             {
-                var entity = await _ctx.Pais.FindAsync(id);
-                if (entity is null) return NotFound("El país indicado no existe.");
-
-                if (!entity.Activo)
-                    return Conflict("No se puede actualizar un pais que está inactivo.");
-
-                // ✅ Solo contra activos (permite reutilizar valores que estén inactivos)
-                bool isoDup = await _ctx.Pais.AnyAsync(p => p.PaisId != id && p.Activo && p.CodigoISOPais.ToUpper() == iso);
-                if (isoDup) return Conflict("Ya existe un país ACTIVO con ese Código ISO.");
-
-                bool nombreDup = await _ctx.Pais.AnyAsync(p => p.PaisId != id && p.Activo && EF.Functions.Collate(p.NombrePais.ToUpper(), "Modern_Spanish_CI_AI") == nombre!.ToUpper());
-                if (nombreDup) return Conflict("Ya existe un país ACTIVO con ese nombre.");
-
-                entity.NombrePais = nombre!.ToUpper();
-                entity.CodigoISOPais = iso.ToUpper();
-
-                await _ctx.SaveChangesAsync();
-                await tx.CommitAsync();
-
-                return Ok(new
+                return BadRequest(new
                 {
-                    message = "País actualizado correctamente",
-                    pais = new { entity.PaisId, entity.NombrePais, entity.CodigoISOPais, entity.Activo }
+                    success = false,
+                    message = "El identificador del país no es válido."
                 });
             }
-            catch
-            {
-                await tx.RollbackAsync();
-                throw;
-            }
-        }
 
-        // ==========================================================
-        // ELIMINAR (borrado lógico, con transacción)
-        // ==========================================================
-        [HttpDelete("eliminarPais/{id:int}")]
-        public async Task<ActionResult> Delete(int id)
-        {
-            var entity = await _ctx.Pais
-                .FirstOrDefaultAsync(x =>
-                    x.PaisId == id &&
-                    x.Activo);
+            if (request == null)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "No se recibieron los datos del país."
+                });
+            }
+
+            string nombre = NormalizarNombre(request.NombrePais);
+            string codigoIso = NormalizarCodigoIso(request.CodigoISOPais);
+
+            ActionResult? validacion = ValidarDatos(nombre, codigoIso);
+            if (validacion != null)
+                return validacion;
+
+            Pais? entity = await context.Pais.FirstOrDefaultAsync(
+                pais => pais.PaisId == id,
+                cancellationToken);
 
             if (entity == null)
             {
                 return NotFound(new
                 {
-                    mensaje = "El país no existe o ya está desactivado."
+                    success = false,
+                    message = "El país indicado no existe."
                 });
             }
 
-            var dependencias = new List<string>();
-
-            var tieneDepartamentos = await _ctx.Departamento
-                .AnyAsync(x => x.PaisId == id);
-
-            if (tieneDepartamentos)
-            {
-                dependencias.Add("departamentos");
-            }
-
-            if (dependencias.Count > 0)
+            if (!entity.Activo)
             {
                 return Conflict(new
                 {
-                    mensaje =
-                        "No se puede eliminar el país porque está siendo utilizado.",
+                    success = false,
+                    message =
+                        "No se puede actualizar un país que está inactivo."
+                });
+            }
 
-                    pais = new
+            bool codigoDuplicado = await context.Pais.AnyAsync(
+                pais =>
+                    pais.PaisId != id &&
+                    pais.Activo &&
+                    pais.CodigoISOPais == codigoIso,
+                cancellationToken);
+
+            if (codigoDuplicado)
+            {
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        $"Ya existe otro país activo con el código ISO {codigoIso}."
+                });
+            }
+
+            bool nombreDuplicado = await context.Pais.AnyAsync(
+                pais =>
+                    pais.PaisId != id &&
+                    pais.Activo &&
+                    EF.Functions.Collate(
+                        pais.NombrePais,
+                        "Modern_Spanish_CI_AI") == nombre,
+                cancellationToken);
+
+            if (nombreDuplicado)
+            {
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        $"Ya existe otro país activo con el nombre {nombre}."
+                });
+            }
+
+            entity.NombrePais = nombre;
+            entity.CodigoISOPais = codigoIso;
+
+            try
+            {
+                await context.SaveChangesAsync(cancellationToken);
+
+                return Ok(new
+                {
+                    success = true,
+                    message = "País actualizado correctamente.",
+                    data = new PaisResponse
                     {
-                        entity.PaisId,
-                        entity.NombrePais,
-                        entity.CodigoISOPais
-                    },
+                        PaisId = entity.PaisId,
+                        NombrePais = entity.NombrePais,
+                        CodigoISOPais = entity.CodigoISOPais,
+                        Activo = entity.Activo,
+                        CantidadDepartamentos = await context.Departamento
+                            .AsNoTracking()
+                            .CountAsync(
+                                departamento =>
+                                    departamento.PaisId == entity.PaisId &&
+                                    departamento.Activo,
+                                cancellationToken)
+                    }
+                });
+            }
+            catch (DbUpdateException ex)
+            {
+                logger.LogWarning(
+                    ex,
+                    "Conflicto al actualizar el país {PaisId}.",
+                    id);
 
-                    usadoEn = dependencias
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        "No fue posible actualizar el país porque el nombre o el código ISO ya está registrado."
+                });
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(
+                    ex,
+                    "Error inesperado al actualizar el país {PaisId}.",
+                    id);
+
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message =
+                        "Ocurrió un error inesperado al actualizar el país."
+                });
+            }
+        }
+
+        // ==========================================================
+        // ELIMINAR LÓGICAMENTE
+        // ==========================================================
+        [HttpDelete("eliminarPais/{id:int}")]
+        public async Task<ActionResult> Delete(
+            int id,
+            CancellationToken cancellationToken)
+        {
+            Pais? entity = await context.Pais.FirstOrDefaultAsync(
+                pais =>
+                    pais.PaisId == id &&
+                    pais.Activo,
+                cancellationToken);
+
+            if (entity == null)
+            {
+                return NotFound(new
+                {
+                    success = false,
+                    message =
+                        "El país no existe o ya está desactivado."
+                });
+            }
+
+            bool tieneDepartamentos = await context.Departamento.AnyAsync(
+                departamento => departamento.PaisId == id,
+                cancellationToken);
+
+            if (tieneDepartamentos)
+            {
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        "No se puede eliminar el país porque tiene departamentos relacionados."
                 });
             }
 
             entity.Activo = false;
 
-            await _ctx.SaveChangesAsync();
-
-            return Ok(new
+            try
             {
-                mensaje = "País desactivado correctamente.",
-                data = new
+                await context.SaveChangesAsync(cancellationToken);
+
+                return Ok(new
                 {
-                    entity.PaisId,
-                    entity.NombrePais,
-                    entity.CodigoISOPais,
-                    entity.Activo
-                }
-            });
+                    success = true,
+                    message = "País desactivado correctamente."
+                });
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(
+                    ex,
+                    "Error inesperado al desactivar el país {PaisId}.",
+                    id);
+
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message =
+                        "Ocurrió un error inesperado al eliminar el país."
+                });
+            }
         }
 
+        private ActionResult? ValidarDatos(
+            string nombre,
+            string codigoIso)
+        {
+            if (string.IsNullOrWhiteSpace(nombre))
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "El nombre del país es obligatorio."
+                });
+            }
 
+            if (nombre.Length > 80)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "El nombre del país no puede superar 80 caracteres."
+                });
+            }
+
+            if (codigoIso.Length != 3 ||
+                !codigoIso.All(char.IsLetter))
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "El código ISO debe contener exactamente 3 letras."
+                });
+            }
+
+            return null;
+        }
+
+        private static string NormalizarNombre(string? valor) =>
+            (valor ?? string.Empty)
+                .ReplaceLineEndings(" ")
+                .Trim()
+                .ToUpperInvariant();
+
+        private static string NormalizarCodigoIso(string? valor) =>
+            new string(
+                (valor ?? string.Empty)
+                    .Where(char.IsLetter)
+                    .Take(3)
+                    .ToArray())
+                .ToUpperInvariant();
     }
 }
-
-

@@ -1,10 +1,14 @@
-﻿using Microsoft.EntityFrameworkCore.Metadata.Internal;
+using Microsoft.EntityFrameworkCore;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace CONATRADEC_API.Models
 {
     [Table("terreno", Schema = "dbo")]
+    [Index(
+        nameof(codigoTerreno),
+        IsUnique = true,
+        Name = "UX_terreno_codigoTerreno")]
     public class Terreno
     {
         [Key]
@@ -28,7 +32,6 @@ namespace CONATRADEC_API.Models
         public decimal extensionManzanaTerreno { get; set; }
         public DateOnly fechaIngresoTerreno { get; set; }
         public int cantidadPlantasTerreno { get; set; }
-
         public bool activo { get; set; }
 
         public int municipioId { get; set; }
@@ -38,13 +41,11 @@ namespace CONATRADEC_API.Models
 
         [Column(TypeName = "decimal(20,17)")]
         public decimal latitud { get; set; }
+
         [Column(TypeName = "decimal(20,17)")]
         public decimal longitud { get; set; }
 
         public virtual ICollection<FotoTerreno> FotosTerreno { get; set; }
-    = new List<FotoTerreno>();
-
+            = new List<FotoTerreno>();
     }
 }
-
-
