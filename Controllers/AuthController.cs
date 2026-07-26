@@ -1,107 +1,205 @@
-﻿using CONATRADEC_API.DTOs;
+using CONATRADEC_API.DTOs;
 using CONATRADEC_API.Models;
 using CONATRADEC_API.Security;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Identity;
+using CONATRADEC_API.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.IdentityModel.Tokens;
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
 using System.Security.Cryptography;
-using System.Text;
 using static CONATRADEC_API.DTOs.AuthDtos;
 using static CONATRADEC_API.Models.Usuario;
 
 namespace CONATRADEC_API.Controllers
 {
-
-    /// Endpoints de autenticación (login).
+    /// <summary>
+    /// Endpoints de autenticación.
+    /// </summary>
     [ApiController]
     [Route("api/auth")]
-
-    public class AuthController : Controller
+    public sealed class AuthController :
+        Controller
     {
-        private readonly DBContext _db;
-        public AuthController(DBContext db) => _db = db;
+        private readonly DBContext db;
 
-        // PBKDF2 verifier
-        private static bool VerifyHash(string password, string stored)
+        public AuthController(
+            DBContext db)
         {
-            var parts = stored.Split('$');
-            if (parts.Length != 4 || parts[0] != "PBKDF2") return false;
-            if (!int.TryParse(parts[1], out var iter)) return false;
-
-            var salt = Convert.FromBase64String(parts[2]);
-            var hash = Convert.FromBase64String(parts[3]);
-
-            using var pbkdf2 = new Rfc2898DeriveBytes(password, salt, iter, HashAlgorithmName.SHA256);
-            var computed = pbkdf2.GetBytes(hash.Length);
-            return CryptographicOperations.FixedTimeEquals(computed, hash);
+            this.db = db;
         }
 
-        // ==========================
-        // LOGIN
-        // POST: api/Auth/login
-        // ==========================
-        // POST: api/Auth/login
-        [HttpPost("login")]
-        public async Task<ActionResult<UsuarioLoginResponseDto>> Login([FromBody] UsuarioLoginDto req)
+        private static bool VerifyHash(
+            string password,
+            string stored)
         {
-            if (!ModelState.IsValid) return BadRequest(ModelState);
+            string[] parts =
+                stored.Split('$');
 
-            var u = await _db.Usuarios
-                .Include(x => x.Rol)
-                .Include(x => x.Procedencia)
-                .FirstOrDefaultAsync(x =>
-                    x.nombreUsuario == req.usuarioOEmail || x.correoUsuario == req.usuarioOEmail);
-
-            if (u is null) return Unauthorized("Usuario o contraseña inválidos.");
-            if (!u.activo) return Unauthorized("Usuario inactivo.");
-            if (!VerifyHash(req.clave, u.claveHashUsuario)) return Unauthorized("Usuario o contraseña inválidos.");
-
-            // 🔹 Traer la matriz de permisos del rol del usuario
-            // Ajusta nombres de DbSet si en tu DbContext difieren (_db.RolInteraz / _db.Interfaz)
-            var permisos = await _db.RolInterfaz
-                .Where(ri => ri.rolId == u.rolId)
-                .Join(
-                    _db.Interfaz.Where(i => i.activo),                      // filtra interfaces activas (si tienes esa columna)
-                    ri => ri.interfazId,
-                    i => i.interfazId,
-                    (ri, i) => new PermisoInterfazDto
-                    {
-                        interfazId = i.interfazId,
-                        nombreInterfaz = i.nombreInterfaz,
-                        leer = ri.leer,
-                        agregar = ri.agregar,
-                        actualizar = ri.actualizar,
-                        eliminar = ri.eliminar
-                    }
-                )
-                .OrderBy(p => p.nombreInterfaz)
-                .ToListAsync();
-
-            // 🔹 Construir respuesta
-            var resp = new UsuarioLoginResponseDto
+            if (parts.Length != 4 ||
+                parts[0] != "PBKDF2")
             {
-                UsuarioId = u.UsuarioId,
-                nombreUsuario = u.nombreUsuario,
-                nombreCompletoUsuario = u.nombreCompletoUsuario,
-                correoUsuario = u.correoUsuario,
-                activo = u.activo,
+                return false;
+            }
 
-                rolId = u.rolId,
-                rolNombre = u.Rol.nombreRol,
+            if (!int.TryParse(
+                    parts[1],
+                    out int iter))
+            {
+                return false;
+            }
 
-                procedenciaId = u.procedenciaId,
-                procedenciaNombre = u.Procedencia.nombreProcedencia,
-                esInterno = u.Procedencia.nombreProcedencia.Equals("Interno", StringComparison.OrdinalIgnoreCase),
-                urlImagenUsuario = u.urlImagenUsuario,
-                permisos = permisos
-            };
+            byte[] salt =
+                Convert.FromBase64String(
+                    parts[2]);
 
-            return Ok(resp);
+            byte[] hash =
+                Convert.FromBase64String(
+                    parts[3]);
+
+            using var pbkdf2 =
+                new Rfc2898DeriveBytes(
+                    password,
+                    salt,
+                    iter,
+                    HashAlgorithmName.SHA256);
+
+            byte[] computed =
+                pbkdf2.GetBytes(
+                    hash.Length);
+
+            return CryptographicOperations
+                .FixedTimeEquals(
+                    computed,
+                    hash);
+        }
+
+        [HttpPost("login")]
+        public async Task<
+            ActionResult<UsuarioLoginResponseDto>>
+            Login(
+                [FromBody] UsuarioLoginDto req,
+                CancellationToken cancellationToken =
+                    default)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            Usuario? usuario =
+                await db.Usuarios
+                    .Include(item =>
+                        item.Rol)
+                    .Include(item =>
+                        item.Procedencia)
+                    .FirstOrDefaultAsync(
+                        item =>
+                            item.nombreUsuario ==
+                                req.usuarioOEmail ||
+                            item.correoUsuario ==
+                                req.usuarioOEmail,
+                        cancellationToken);
+
+            if (usuario == null)
+            {
+                return Unauthorized(
+                    "Usuario o contraseña inválidos.");
+            }
+
+            if (!usuario.activo)
+            {
+                return Unauthorized(
+                    "Usuario inactivo.");
+            }
+
+            if (!VerifyHash(
+                    req.clave,
+                    usuario.claveHashUsuario))
+            {
+                return Unauthorized(
+                    "Usuario o contraseña inválidos.");
+            }
+
+            /*
+             * Crea la nueva opción de la matriz de forma idempotente antes de
+             * devolver los permisos. No requiere ejecutar scripts.
+             */
+            await OfflinePermissionProvisioner
+                .AsegurarAsync(
+                    db,
+                    cancellationToken);
+
+            List<PermisoInterfazDto> permisos =
+                await db.RolInterfaz
+                    .AsNoTracking()
+                    .Where(item =>
+                        item.rolId ==
+                            usuario.rolId)
+                    .Join(
+                        db.Interfaz
+                            .AsNoTracking()
+                            .Where(item =>
+                                item.activo),
+                        relacion =>
+                            relacion.interfazId,
+                        interfaz =>
+                            interfaz.interfazId,
+                        (relacion, interfaz) =>
+                            new PermisoInterfazDto
+                            {
+                                interfazId =
+                                    interfaz.interfazId,
+                                nombreInterfaz =
+                                    interfaz.nombreInterfaz,
+                                leer =
+                                    relacion.leer,
+                                agregar =
+                                    relacion.agregar,
+                                actualizar =
+                                    relacion.actualizar,
+                                eliminar =
+                                    relacion.eliminar
+                            })
+                    .OrderBy(item =>
+                        item.nombreInterfaz)
+                    .ToListAsync(
+                        cancellationToken);
+
+            var response =
+                new UsuarioLoginResponseDto
+                {
+                    UsuarioId =
+                        usuario.UsuarioId,
+                    nombreUsuario =
+                        usuario.nombreUsuario,
+                    nombreCompletoUsuario =
+                        usuario
+                            .nombreCompletoUsuario,
+                    correoUsuario =
+                        usuario.correoUsuario,
+                    activo =
+                        usuario.activo,
+                    rolId =
+                        usuario.rolId,
+                    rolNombre =
+                        usuario.Rol.nombreRol,
+                    procedenciaId =
+                        usuario.procedenciaId,
+                    procedenciaNombre =
+                        usuario
+                            .Procedencia
+                            .nombreProcedencia,
+                    esInterno =
+                        usuario
+                            .Procedencia
+                            .nombreProcedencia
+                            .Equals(
+                                "Interno",
+                                StringComparison
+                                    .OrdinalIgnoreCase),
+                    urlImagenUsuario =
+                        usuario.urlImagenUsuario,
+                    permisos =
+                        permisos
+                };
+
+            return Ok(response);
         }
     }
 }
-
