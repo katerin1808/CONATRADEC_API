@@ -19,10 +19,6 @@ namespace CONATRADEC_API.Models
         public string nombreElementoQuimico { get; set; } =
             string.Empty;
 
-        /*
-         * Todo el sistema utiliza dos decimales para valores numéricos
-         * configurables. La precisión del modelo debe coincidir con SQL.
-         */
         [Column(TypeName = "decimal(10,2)")]
         public decimal pesoEquivalenteElementoQuimico { get; set; }
 
@@ -31,5 +27,13 @@ namespace CONATRADEC_API.Models
         public ICollection<FuenteNutrienteElementoQuimico>
             fuenteNutrienteElementoQuimico { get; set; } =
                 new List<FuenteNutrienteElementoQuimico>();
+
+        /// <summary>
+        /// Unidades permitidas y reglas de conversión configuradas para
+        /// este elemento químico.
+        /// </summary>
+        public ICollection<ElementoQuimicoUnidadMedida>
+            unidadesMedidaPermitidas { get; set; } =
+                new List<ElementoQuimicoUnidadMedida>();
     }
 }

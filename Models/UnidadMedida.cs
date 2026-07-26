@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace CONATRADEC_API.Models
@@ -9,21 +9,34 @@ namespace CONATRADEC_API.Models
         [Key]
         public int unidadMedidaId { get; set; }
 
-        [Required, MaxLength(50)]
-        public string nombreUnidadMedida { get; set; } = null!;
+        [Required]
+        [MaxLength(50)]
+        public string nombreUnidadMedida { get; set; } =
+            null!;
 
-        public bool activo { get; set; }
+        public bool activo { get; set; } = true;
 
-        // ==========================
-        //  Relaciones de navegación
-        // ==========================
+        public ICollection<AnalisisSueloElementoQuimico>
+            AnalisisSueloElementosQuimicos { get; set; } =
+                new List<AnalisisSueloElementoQuimico>();
 
-        // 1 unidad -> muchos análisisSueloElementoQuimico
-        public ICollection<AnalisisSueloElementoQuimico> AnalisisSueloElementosQuimicos { get; set; }
-            = new List<AnalisisSueloElementoQuimico>();
+        public ICollection<RangoNutrimental>
+            RangosNutrimentales { get; set; } =
+                new List<RangoNutrimental>();
 
-        // 1 unidad -> muchos rangoNutrimental
-        public ICollection<RangoNutrimental> RangosNutrimentales { get; set; }
-            = new List<RangoNutrimental>();
+        /// <summary>
+        /// Configuraciones que permiten usar esta unidad en elementos
+        /// químicos del análisis.
+        /// </summary>
+        public ICollection<ElementoQuimicoUnidadMedida>
+            ElementosQuimicosConfigurados { get; set; } =
+                new List<ElementoQuimicoUnidadMedida>();
+
+        /// <summary>
+        /// Configuraciones que permiten usar esta unidad en materia orgánica.
+        /// </summary>
+        public ICollection<MateriaOrganicaUnidadMedida>
+            MateriaOrganicaConfiguraciones { get; set; } =
+                new List<MateriaOrganicaUnidadMedida>();
     }
 }
