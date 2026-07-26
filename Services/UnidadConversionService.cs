@@ -466,8 +466,7 @@ namespace CONATRADEC_API.Services
             }
 
             ValidarListaConfiguraciones(
-                dto.unidades,
-                requierePredeterminada: true);
+                dto.unidades);
 
             await ValidarUnidadesExistentesAsync(
                 dto.unidades,
@@ -548,8 +547,7 @@ namespace CONATRADEC_API.Services
                     default)
         {
             ValidarListaConfiguraciones(
-                dto.unidades,
-                requierePredeterminada: true);
+                dto.unidades);
 
             await ValidarUnidadesExistentesAsync(
                 dto.unidades,
@@ -1252,8 +1250,7 @@ namespace CONATRADEC_API.Services
         }
 
         private static void ValidarListaConfiguraciones(
-            List<GuardarUnidadConversionDto>? unidades,
-            bool requierePredeterminada)
+            List<GuardarUnidadConversionDto>? unidades)
         {
             if (unidades == null ||
                 unidades.Count == 0)
@@ -1292,11 +1289,10 @@ namespace CONATRADEC_API.Services
                     x.visibleEnFormulario &&
                     x.unidadPredeterminada);
 
-            if (requierePredeterminada &&
-                predeterminadas != 1)
+            if (predeterminadas > 1)
             {
                 throw new InvalidOperationException(
-                    "Debe seleccionar exactamente una unidad predeterminada entre las unidades activas y visibles.");
+                    "Solo puede seleccionar una unidad predeterminada entre las unidades activas y visibles.");
             }
         }
 
