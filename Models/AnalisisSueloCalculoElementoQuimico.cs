@@ -1,9 +1,11 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace CONATRADEC_API.Models
 {
-    [Table("analisisSueloCalculoElementoQuimico", Schema = "dbo")]
+    [Table(
+        "analisisSueloCalculoElementoQuimico",
+        Schema = "dbo")]
     public class AnalisisSueloCalculoElementoQuimico
     {
         [Key]
@@ -30,11 +32,19 @@ namespace CONATRADEC_API.Models
         [MaxLength(500)]
         public string? observacion { get; set; }
 
+        /*
+         * Esta bandera no elimina el elemento del requerimiento anual.
+         * Solamente define si participa en Balance y Mixta.
+         */
+        public bool incluirCalculosComplementarios { get; set; } = true;
+
         public bool activo { get; set; } = true;
 
-        public AnalisisSueloCalculo AnalisisSueloCalculo { get; set; } = null!;
+        public AnalisisSueloCalculo AnalisisSueloCalculo { get; set; }
+            = null!;
 
-        public ElementoQuimico ElementoQuimico { get; set; } = null!;
+        public ElementoQuimico ElementoQuimico { get; set; }
+            = null!;
 
         public UnidadMedida? UnidadMedida { get; set; }
     }

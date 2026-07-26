@@ -1,4 +1,4 @@
-﻿using CONATRADEC_API.DTOs;
+using CONATRADEC_API.DTOs;
 using CONATRADEC_API.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -30,10 +30,12 @@ namespace CONATRADEC_API.Services
                     "La materia orgánica debe estar entre 0 y 20%.");
             }
 
-            var tipoCultivo = await _db.TipoCultivos
-                .FirstOrDefaultAsync(x =>
-                    x.tipoCultivoId == dto.tipoCultivoId &&
-                    x.activo);
+            TipoCultivo? tipoCultivo =
+                await _db.TipoCultivos
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(x =>
+                        x.tipoCultivoId == dto.tipoCultivoId &&
+                        x.activo);
 
             if (tipoCultivo == null)
             {
@@ -41,11 +43,13 @@ namespace CONATRADEC_API.Services
                     "El tipo de cultivo no existe o está inactivo.");
             }
 
-            var tipoAnalisis = await _db.TipoAnalisisSuelos
-                .FirstOrDefaultAsync(x =>
-                    x.tipoAnalisisSueloId ==
-                        dto.tipoAnalisisSueloId &&
-                    x.activo);
+            TipoAnalisisSuelo? tipoAnalisis =
+                await _db.TipoAnalisisSuelos
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(x =>
+                        x.tipoAnalisisSueloId ==
+                            dto.tipoAnalisisSueloId &&
+                        x.activo);
 
             if (tipoAnalisis == null)
             {
@@ -53,22 +57,10 @@ namespace CONATRADEC_API.Services
                     "El tipo de análisis de suelo no existe o está inactivo.");
             }
 
-            if (dto.materiaOrganica <= 0)
-            {
-                throw new Exception(
-                    "La materia orgánica debe ser mayor a cero.");
-            }
-
-            if (dto.unidadMedidaMateriaOrganicaId <= 0)
-            {
-                throw new Exception(
-                    "Debe seleccionar la unidad de medida de la materia orgánica.");
-            }
-
             string nombreTipoAnalisis =
                 tipoAnalisis.nombreTipoAnalisisSuelo
                     .Trim()
-                    .ToUpper();
+                    .ToUpperInvariant();
 
             if (nombreTipoAnalisis == "REQUERIMIENTO_ANUAL")
             {
@@ -92,67 +84,81 @@ namespace CONATRADEC_API.Services
                 TipoAnalisisSuelo tipoAnalisis,
                 decimal materiaOrganicaPorcentaje)
         {
-            var response = new AnalisisSueloCalculoResponseDto
-            {
-                terrenoId = dto.terrenoId,
-                tipoCultivoId = dto.tipoCultivoId,
-                tipoCultivo = tipoCultivo.nombreTipoCultivo,
-                tipoAnalisisSueloId = dto.tipoAnalisisSueloId,
-                tipoAnalisisSuelo =
-                    tipoAnalisis.nombreTipoAnalisisSuelo,
-                cantidadQuintalesOro =
-                    dto.cantidadQuintalesOro,
-                tamanoFinca = dto.tamanoFinca,
+            AnalisisSueloCalculoResponseDto response =
+                new()
+                {
+                    terrenoId = dto.terrenoId,
+                    tipoCultivoId = dto.tipoCultivoId,
+                    tipoCultivo =
+                        tipoCultivo.nombreTipoCultivo,
+                    tipoAnalisisSueloId =
+                        dto.tipoAnalisisSueloId,
+                    tipoAnalisisSuelo =
+                        tipoAnalisis
+                            .nombreTipoAnalisisSuelo,
+                    cantidadQuintalesOro =
+                        dto.cantidadQuintalesOro,
+                    tamanoFinca = dto.tamanoFinca,
+                    ph = dto.ph,
+                    acidezTotal = dto.acidezTotal,
+                    materiaOrganica =
+                        dto.materiaOrganica,
+                    unidadMedidaMateriaOrganicaId =
+                        dto
+                            .unidadMedidaMateriaOrganicaId,
+                    recomendacionGeneral =
+                        "Cálculo de requerimiento anual generado " +
+                        "con base en extracción por QQ oro y rangos " +
+                        "nutricionales del cultivo."
+                };
 
-                // IMPORTANTE:
-                // Estos valores deben viajar en el resultado del
-                // requerimiento anual para que GuardarTodo los persista.
-                ph = dto.ph,
-                acidezTotal = dto.acidezTotal,
+            List<int> elementosIds =
+                dto.elementosQuimicos
+                    .Select(x =>
+                        x.elementoQuimicosId)
+                    .Distinct()
+                    .ToList();
 
-                materiaOrganica = dto.materiaOrganica,
-                unidadMedidaMateriaOrganicaId =
-                    dto.unidadMedidaMateriaOrganicaId,
-                recomendacionGeneral =
-                    "Cálculo de requerimiento anual generado " +
-                    "con base en extracción por QQ oro y rangos " +
-                    "nutricionales del cultivo."
-            };
-
-            var elementosIds = dto.elementosQuimicos
-                .Select(x => x.elementoQuimicosId)
-                .Distinct()
-                .ToList();
-
-            var elementos = await _db.elementoQuimico
-                .Where(x =>
-                    elementosIds.Contains(
-                        x.elementoQuimicosId) &&
-                    x.activo)
-                .ToListAsync();
-
-            var parametrosExtraccion =
-                await _db.ParametroExtraccionNutrienteCafe
+            List<ElementoQuimico> elementos =
+                await _db.elementoQuimico
+                    .AsNoTracking()
                     .Where(x =>
-                        x.activo &&
                         elementosIds.Contains(
-                            x.elementoQuimicosId))
+                            x.elementoQuimicosId) &&
+                        x.activo)
                     .ToListAsync();
 
-            var rangosCultivo =
-                await _db.ParametroRangoNutrienteCultivo
-                    .Where(x =>
-                        x.activo &&
-                        x.tipoCultivoId ==
-                            dto.tipoCultivoId &&
-                        elementosIds.Contains(
-                            x.elementoQuimicosId))
-                    .ToListAsync();
+            List<ParametroExtraccionNutrienteCafe>
+                parametrosExtraccion =
+                    await _db
+                        .ParametroExtraccionNutrienteCafe
+                        .AsNoTracking()
+                        .Where(x =>
+                            x.activo &&
+                            elementosIds.Contains(
+                                x.elementoQuimicosId))
+                        .ToListAsync();
 
-            var unidadResultado = await _db.UnidadMedidas
-                .FirstOrDefaultAsync(x =>
-                    x.nombreUnidadMedida == "lb/Mz" &&
-                    x.activo);
+            List<ParametroRangoNutrienteCultivo>
+                rangosCultivo =
+                    await _db
+                        .ParametroRangoNutrienteCultivo
+                        .AsNoTracking()
+                        .Where(x =>
+                            x.activo &&
+                            x.tipoCultivoId ==
+                                dto.tipoCultivoId &&
+                            elementosIds.Contains(
+                                x.elementoQuimicosId))
+                        .ToListAsync();
+
+            UnidadMedida? unidadResultado =
+                await _db.UnidadMedidas
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(x =>
+                        x.activo &&
+                        x.nombreUnidadMedida
+                            .ToLower() == "lb/mz");
 
             if (unidadResultado == null)
             {
@@ -160,11 +166,14 @@ namespace CONATRADEC_API.Services
                     "No existe la unidad de medida lb/Mz configurada.");
             }
 
-            foreach (var entrada in dto.elementosQuimicos)
+            foreach (
+                AnalisisSueloElementoEntradaDto entrada
+                in dto.elementosQuimicos)
             {
-                var elemento = elementos.FirstOrDefault(x =>
-                    x.elementoQuimicosId ==
-                        entrada.elementoQuimicosId);
+                ElementoQuimico? elemento =
+                    elementos.FirstOrDefault(x =>
+                        x.elementoQuimicosId ==
+                            entrada.elementoQuimicosId);
 
                 if (elemento == null)
                 {
@@ -175,28 +184,38 @@ namespace CONATRADEC_API.Services
                     continue;
                 }
 
-                string? errorUnidad = ValidarUnidadElemento(
-                    elemento,
-                    entrada.unidadMedidaId);
+                string? errorUnidad =
+                    ValidarUnidadElemento(
+                        elemento,
+                        entrada.unidadMedidaId);
 
                 if (errorUnidad != null)
                     throw new Exception(errorUnidad);
 
-                var parametroExtraccion =
-                    parametrosExtraccion.FirstOrDefault(x =>
-                        x.elementoQuimicosId ==
-                            entrada.elementoQuimicosId);
+                ParametroExtraccionNutrienteCafe?
+                    parametroExtraccion =
+                        parametrosExtraccion
+                            .FirstOrDefault(x =>
+                                x.elementoQuimicosId ==
+                                    entrada
+                                        .elementoQuimicosId);
 
-                var rango = rangosCultivo.FirstOrDefault(x =>
-                    x.elementoQuimicosId ==
-                        entrada.elementoQuimicosId);
+                ParametroRangoNutrienteCultivo? rango =
+                    rangosCultivo
+                        .FirstOrDefault(x =>
+                            x.elementoQuimicosId ==
+                                entrada
+                                    .elementoQuimicosId);
 
                 decimal? extraccionPorQQOro =
                     parametroExtraccion?
                         .cantidadExtraidaPorQQOro;
 
-                decimal? extraccionPorProduccion = null;
-                decimal? requerimientoCalculado = null;
+                decimal? extraccionPorProduccion =
+                    null;
+
+                decimal? requerimientoCalculado =
+                    null;
 
                 decimal? cantidadConvertidaLbMz =
                     ConvertirEntradaALbMz(
@@ -208,15 +227,13 @@ namespace CONATRADEC_API.Services
                 decimal? rangoMinimoLbMz = null;
                 decimal? rangoMaximoLbMz = null;
 
-                string clasificacion =
-                    "SIN_CLASIFICACION";
-
                 if (extraccionPorQQOro.HasValue)
                 {
-                    extraccionPorProduccion = Math.Round(
-                        dto.cantidadQuintalesOro *
-                        extraccionPorQQOro.Value,
-                        4);
+                    extraccionPorProduccion =
+                        Math.Round(
+                            dto.cantidadQuintalesOro *
+                            extraccionPorQQOro.Value,
+                            4);
                 }
 
                 if (rango != null)
@@ -236,73 +253,73 @@ namespace CONATRADEC_API.Services
                     decimal baseNutricionalMz =
                         rangoMaximoLbMz ?? 0;
 
-                    requerimientoCalculado = Math.Round(
-                        baseNutricionalMz +
-                        extraccionPorProduccion.Value,
-                        4);
+                    requerimientoCalculado =
+                        Math.Round(
+                            baseNutricionalMz +
+                            extraccionPorProduccion
+                                .Value,
+                            4);
                 }
 
-                clasificacion = ClasificarElemento(
-                    cantidadConvertidaLbMz,
-                    rangoMinimoLbMz,
-                    rangoMaximoLbMz);
+                string clasificacion =
+                    ClasificarElemento(
+                        cantidadConvertidaLbMz,
+                        rangoMinimoLbMz,
+                        rangoMaximoLbMz);
 
                 string simboloLimpio =
-                    elemento.simboloElementoQuimico
+                    elemento
+                        .simboloElementoQuimico
                         .Trim();
+
+                bool incluirComplementarios =
+                    !string.Equals(
+                        clasificacion,
+                        "EXCESIVO",
+                        StringComparison
+                            .OrdinalIgnoreCase);
 
                 response.elementos.Add(
                     new ResultadoElementoCalculoDto
                     {
                         elementoQuimicosId =
-                            elemento.elementoQuimicosId,
-
+                            elemento
+                                .elementoQuimicosId,
                         simboloElementoQuimico =
                             simboloLimpio,
-
                         nombreElementoQuimico =
-                            elemento.nombreElementoQuimico
+                            elemento
+                                .nombreElementoQuimico
                                 .Trim(),
-
                         cantidadIngresada =
                             entrada.cantidadElemento,
-
                         cantidadConvertidaLbMz =
                             cantidadConvertidaLbMz,
-
                         extraccionPorQQOro =
                             extraccionPorQQOro,
-
                         extraccionPorProduccion =
                             extraccionPorProduccion,
-
                         rangoMinimo =
                             rango?.valorMinimo,
-
                         rangoMaximo =
                             rango?.valorMaximo,
-
                         rangoMinimoLbMz =
                             rangoMinimoLbMz,
-
                         rangoMaximoLbMz =
                             rangoMaximoLbMz,
-
                         requerimientoCalculado =
                             requerimientoCalculado,
-
                         unidadBase =
                             rango?.unidadBase,
-
                         unidadMedidaResultadoId =
-                            unidadResultado.unidadMedidaId,
-
+                            unidadResultado
+                                .unidadMedidaId,
                         unidadResultado =
                             "lb/Mz",
-
                         clasificacion =
                             clasificacion,
-
+                        incluirCalculosComplementarios =
+                            incluirComplementarios,
                         observacion =
                             CrearObservacionRequerimientoAnual(
                                 simboloLimpio,
@@ -331,7 +348,8 @@ namespace CONATRADEC_API.Services
             return response;
         }
 
-        private string InterpretarPhCafe(decimal ph)
+        private static string InterpretarPhCafe(
+            decimal ph)
         {
             if (ph < 4.5m)
             {
@@ -373,11 +391,11 @@ namespace CONATRADEC_API.Services
                 "técnica especializada antes de aplicar fertilización.";
         }
 
-        private decimal ConvertirKgHaALbMz(
+        private static decimal ConvertirKgHaALbMz(
             decimal valorKgHa)
         {
-            decimal factorKgALb = 2.2m;
-            decimal factorHaAMz = 0.7m;
+            const decimal factorKgALb = 2.2m;
+            const decimal factorHaAMz = 0.7m;
 
             return Math.Round(
                 valorKgHa *
@@ -386,16 +404,17 @@ namespace CONATRADEC_API.Services
                 4);
         }
 
-        private string CrearObservacionRequerimientoAnual(
-            string simbolo,
-            ParametroExtraccionNutrienteCafe?
-                parametroExtraccion,
-            ParametroRangoNutrienteCultivo? rango,
-            decimal? cantidadConvertidaLbMz,
-            decimal? rangoMinimoLbMz,
-            decimal? rangoMaximoLbMz,
-            decimal? requerimientoCalculado,
-            string? clasificacion)
+        private static string
+            CrearObservacionRequerimientoAnual(
+                string simbolo,
+                ParametroExtraccionNutrienteCafe?
+                    parametroExtraccion,
+                ParametroRangoNutrienteCultivo? rango,
+                decimal? cantidadConvertidaLbMz,
+                decimal? rangoMinimoLbMz,
+                decimal? rangoMaximoLbMz,
+                decimal? requerimientoCalculado,
+                string? clasificacion)
         {
             if (parametroExtraccion == null)
             {
@@ -415,8 +434,8 @@ namespace CONATRADEC_API.Services
             if (!cantidadConvertidaLbMz.HasValue)
             {
                 return
-                    "No fue posible convertir el valor ingresado " +
-                    $"de {simbolo} a lb/Mz.";
+                    $"No fue posible convertir el elemento " +
+                    $"{simbolo} a lb/Mz.";
             }
 
             if (!requerimientoCalculado.HasValue)
@@ -444,11 +463,13 @@ namespace CONATRADEC_API.Services
             ElementoQuimico elemento,
             decimal materiaOrganica)
         {
-            var unidad = _db.UnidadMedidas
-                .FirstOrDefault(x =>
-                    x.unidadMedidaId ==
-                        unidadMedidaId &&
-                    x.activo);
+            UnidadMedida? unidad =
+                _db.UnidadMedidas
+                    .AsNoTracking()
+                    .FirstOrDefault(x =>
+                        x.unidadMedidaId ==
+                            unidadMedidaId &&
+                        x.activo);
 
             if (unidad == null)
                 return null;
@@ -456,29 +477,19 @@ namespace CONATRADEC_API.Services
             string nombreUnidad =
                 unidad.nombreUnidadMedida
                     .Trim()
-                    .ToLower();
+                    .ToLowerInvariant();
 
             string simbolo =
-                elemento.simboloElementoQuimico
+                elemento
+                    .simboloElementoQuimico
                     .Trim()
-                    .ToUpper();
+                    .ToUpperInvariant();
 
-            // N según Excel:
-            // MO * N total = % N en materia orgánica
-            // masa suelo = 2,000,000 kg/Ha
-            // mineralización = 0.015
-            // kg/Ha -> lb/Ha -> lb/Mz
             if (simbolo == "N" &&
                 nombreUnidad == "%")
             {
-                decimal constanteMineralizacion =
+                const decimal mineralizacion =
                     0.015m;
-
-                if (materiaOrganica <= 0)
-                {
-                    throw new Exception(
-                        "La materia orgánica debe ser mayor a cero.");
-                }
 
                 if (cantidad <= 0 ||
                     cantidad > 100)
@@ -510,7 +521,7 @@ namespace CONATRADEC_API.Services
 
                 decimal nitrogenoDisponibleKgHa =
                     nitrogenoTotalKgHa *
-                    constanteMineralizacion;
+                    mineralizacion;
 
                 decimal nitrogenoDisponibleLbMz =
                     nitrogenoDisponibleKgHa *
@@ -522,8 +533,7 @@ namespace CONATRADEC_API.Services
                     4);
             }
 
-            // P: ppm -> kg/Ha -> lb/Ha -> lb/Mz
-            if (nombreUnidad == "ppm")
+            if (nombreUnidad is "ppm" or "mg/kg")
             {
                 return Math.Round(
                     cantidad *
@@ -533,10 +543,8 @@ namespace CONATRADEC_API.Services
                     4);
             }
 
-            // K, Ca, Mg:
-            // meq/100g -> ppm -> kg/Ha -> lb/Ha -> lb/Mz
-            if (nombreUnidad == "meq/100g" ||
-                nombreUnidad == "meq")
+            if (nombreUnidad is
+                "meq/100g" or "meq")
             {
                 decimal pesoEquivalente =
                     elemento
@@ -562,12 +570,9 @@ namespace CONATRADEC_API.Services
                     lbHa *
                     0.7m;
 
-                return Math.Round(
-                    lbMz,
-                    4);
+                return Math.Round(lbMz, 4);
             }
 
-            // Por si algún laboratorio ya entrega convertido.
             if (nombreUnidad == "kg/ha")
             {
                 return Math.Round(
@@ -595,7 +600,7 @@ namespace CONATRADEC_API.Services
             return null;
         }
 
-        private string ClasificarElemento(
+        private static string ClasificarElemento(
             decimal? cantidadConvertidaLbMz,
             decimal? rangoMinimoLbMz,
             decimal? rangoMaximoLbMz)
@@ -648,7 +653,7 @@ namespace CONATRADEC_API.Services
             return "EXCESIVO";
         }
 
-        private void ValidarEntrada(
+        private static void ValidarEntrada(
             AnalisisSueloCalculoRequestDto dto)
         {
             if (dto.terrenoId <= 0)
@@ -684,8 +689,13 @@ namespace CONATRADEC_API.Services
             if (dto.materiaOrganica <= 0)
             {
                 throw new Exception(
-                    "La materia orgánica debe ser mayor a cero " +
-                    "y debe ingresarse en porcentaje. Ejemplo: 2 para 2%.");
+                    "La materia orgánica debe ser mayor a cero.");
+            }
+
+            if (dto.unidadMedidaMateriaOrganicaId <= 0)
+            {
+                throw new Exception(
+                    "Debe seleccionar la unidad de medida de la materia orgánica.");
             }
 
             if (dto.ph < 0 ||
@@ -707,11 +717,13 @@ namespace CONATRADEC_API.Services
             decimal materiaOrganica,
             int unidadMedidaMateriaOrganicaId)
         {
-            var unidad = _db.UnidadMedidas
-                .FirstOrDefault(x =>
-                    x.unidadMedidaId ==
-                        unidadMedidaMateriaOrganicaId &&
-                    x.activo);
+            UnidadMedida? unidad =
+                _db.UnidadMedidas
+                    .AsNoTracking()
+                    .FirstOrDefault(x =>
+                        x.unidadMedidaId ==
+                            unidadMedidaMateriaOrganicaId &&
+                        x.activo);
 
             if (unidad == null)
             {
@@ -729,7 +741,7 @@ namespace CONATRADEC_API.Services
             string nombreUnidad =
                 unidad.nombreUnidadMedida
                     .Trim()
-                    .ToLower();
+                    .ToLowerInvariant();
 
             return nombreUnidad switch
             {
@@ -755,7 +767,7 @@ namespace CONATRADEC_API.Services
                     $"La unidad '{unidad.nombreUnidadMedida}' " +
                     "no es válida para materia orgánica. " +
                     "Unidades permitidas: %, g/100g, ppm, " +
-                    "mg/kg, kg/ha mo")
+                    "mg/kg, kg/ha mo.")
             };
         }
 
@@ -763,11 +775,13 @@ namespace CONATRADEC_API.Services
             ElementoQuimico elemento,
             int unidadMedidaId)
         {
-            var unidad = _db.UnidadMedidas
-                .FirstOrDefault(x =>
-                    x.unidadMedidaId ==
-                        unidadMedidaId &&
-                    x.activo);
+            UnidadMedida? unidad =
+                _db.UnidadMedidas
+                    .AsNoTracking()
+                    .FirstOrDefault(x =>
+                        x.unidadMedidaId ==
+                            unidadMedidaId &&
+                        x.activo);
 
             if (unidad == null)
             {
@@ -776,51 +790,37 @@ namespace CONATRADEC_API.Services
             }
 
             string simbolo =
-                elemento.simboloElementoQuimico
+                elemento
+                    .simboloElementoQuimico
                     .Trim()
-                    .ToUpper();
+                    .ToUpperInvariant();
 
             string nombreUnidad =
-                unidad.nombreUnidadMedida
+                unidad
+                    .nombreUnidadMedida
                     .Trim()
-                    .ToLower();
+                    .ToLowerInvariant();
 
             string[] unidadesPermitidas =
                 simbolo switch
                 {
                     "N" =>
-                        new[] { "%" },
+                        new[]
+                        {
+                            "%"
+                        },
 
                     "P" =>
                         new[]
                         {
                             "ppm",
+                            "mg/kg",
                             "kg/ha",
                             "lb/ha",
                             "lb/mz"
                         },
 
-                    "K" =>
-                        new[]
-                        {
-                            "meq/100g",
-                            "meq",
-                            "kg/ha",
-                            "lb/ha",
-                            "lb/mz"
-                        },
-
-                    "CA" =>
-                        new[]
-                        {
-                            "meq/100g",
-                            "meq",
-                            "kg/ha",
-                            "lb/ha",
-                            "lb/mz"
-                        },
-
-                    "MG" =>
+                    "K" or "CA" or "MG" =>
                         new[]
                         {
                             "meq/100g",
@@ -834,6 +834,7 @@ namespace CONATRADEC_API.Services
                         new[]
                         {
                             "ppm",
+                            "mg/kg",
                             "kg/ha",
                             "lb/ha",
                             "lb/mz"

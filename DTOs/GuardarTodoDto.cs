@@ -1,4 +1,4 @@
-﻿using static CONATRADEC_API.DTOs.FertilizacionMixtaDto;
+using static CONATRADEC_API.DTOs.FertilizacionMixtaDto;
 using static CONATRADEC_API.DTOs.FormulaNutricionalDto;
 
 namespace CONATRADEC_API.DTOs
@@ -11,14 +11,16 @@ namespace CONATRADEC_API.DTOs
         public AnalisisSueloCalculoResponseDto requerimientoAnual { get; set; }
             = new();
 
+        /*
+         * Los cálculos complementarios son opcionales.
+         * No deben inicializarse con new(), porque un objeto vacío
+         * hace que la API intente guardar un cálculo no seleccionado.
+         */
         public FormulaNutricionalGuardarDto? balanceNutricional { get; set; }
-            = new();
 
         public EnmiendaCalcareaGuardarDto? enmiendaCalcarea { get; set; }
-            = new();
 
         public FertilizacionMixtaRespuestaDto? fertilizacionMixta { get; set; }
-            = new();
     }
 
     public class FormulaNutricionalGuardarDto

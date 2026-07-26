@@ -30,7 +30,8 @@ builder.Services.Configure<ApiBehaviorOptions>(options =>
         var response = ApiErrorResponseFactory.Create(
             context.HttpContext,
             StatusCodes.Status400BadRequest,
-            message: "Revise los campos indicados e intente nuevamente.",
+            message:
+                "Revise los campos indicados e intente nuevamente.",
             errors: errors,
             code: "VALIDATION_ERROR");
 
@@ -42,10 +43,16 @@ builder.Services.AddScoped<AnalisisSueloCalculoService>();
 builder.Services.AddScoped<AnalisisReporteDatosService>();
 builder.Services.AddScoped<ImageService>();
 
+// Verifica de forma idempotente las mejoras de persistencia
+// utilizadas por el flujo completo del análisis de suelo.
+builder.Services.AddScoped<
+    AnalisisSueloDatabaseInitializer>();
+
 // Servicios del módulo de noticias.
 builder.Services.AddScoped<PermisoApiService>();
 builder.Services.AddScoped<NoticiasDatabaseInitializer>();
-builder.Services.AddScoped<BusquedaTextoCompletoNoticiasService>();
+builder.Services.AddScoped<
+    BusquedaTextoCompletoNoticiasService>();
 
 // Contexto e interceptores transversales de auditoría.
 builder.Services.AddScoped<AuditRequestContext>();
@@ -53,48 +60,61 @@ builder.Services.AddScoped<AuditSaveChangesInterceptor>();
 builder.Services.AddScoped<AuditTransactionInterceptor>();
 
 string connectionString =
-    builder.Configuration.GetConnectionString("DefaultConnection") ??
+    builder.Configuration
+        .GetConnectionString("DefaultConnection") ??
     throw new InvalidOperationException(
         "No se encontró la cadena de conexión DefaultConnection.");
 
-builder.Services.AddDbContext<DBContext>((serviceProvider, options) =>
-{
-    options
-        .UseSqlServer(connectionString)
-        .AddInterceptors(
-            serviceProvider.GetRequiredService<AuditSaveChangesInterceptor>(),
-            serviceProvider.GetRequiredService<AuditTransactionInterceptor>());
-
-    // No se habilita SensitiveDataLogging porque puede exponer valores
-    // confidenciales en consola o archivos de logs.
-    if (builder.Environment.IsDevelopment())
+builder.Services.AddDbContext<DBContext>(
+    (serviceProvider, options) =>
     {
-        options.LogTo(
-            Console.WriteLine,
-            LogLevel.Information);
-    }
-});
+        options
+            .UseSqlServer(connectionString)
+            .AddInterceptors(
+                serviceProvider
+                    .GetRequiredService<
+                        AuditSaveChangesInterceptor>(),
+                serviceProvider
+                    .GetRequiredService<
+                        AuditTransactionInterceptor>());
+
+        // No se habilita SensitiveDataLogging porque puede exponer
+        // valores confidenciales en consola o archivos de logs.
+        if (builder.Environment.IsDevelopment())
+        {
+            options.LogTo(
+                Console.WriteLine,
+                LogLevel.Information);
+        }
+    });
 
 // Contexto aislado del módulo. Usa los mismos interceptores para que las
 // publicaciones y sus cambios aparezcan en la bitácora general.
-builder.Services.AddDbContext<NoticiasDbContext>((serviceProvider, options) =>
-{
-    options
-        .UseSqlServer(connectionString)
-        .AddInterceptors(
-            serviceProvider.GetRequiredService<AuditSaveChangesInterceptor>(),
-            serviceProvider.GetRequiredService<AuditTransactionInterceptor>());
-});
+builder.Services.AddDbContext<NoticiasDbContext>(
+    (serviceProvider, options) =>
+    {
+        options
+            .UseSqlServer(connectionString)
+            .AddInterceptors(
+                serviceProvider
+                    .GetRequiredService<
+                        AuditSaveChangesInterceptor>(),
+                serviceProvider
+                    .GetRequiredService<
+                        AuditTransactionInterceptor>());
+    });
 
-builder.Services.AddDbContext<BitacoraDbContext>(options =>
-{
-    options.UseSqlServer(connectionString);
-});
+builder.Services.AddDbContext<BitacoraDbContext>(
+    options =>
+    {
+        options.UseSqlServer(connectionString);
+    });
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-QuestPDF.Settings.License = LicenseType.Community;
+QuestPDF.Settings.License =
+    LicenseType.Community;
 
 var app = builder.Build();
 
@@ -117,8 +137,10 @@ Directory.CreateDirectory(rutaRecursos);
 
 app.UseStaticFiles(new StaticFileOptions
 {
-    FileProvider = new PhysicalFileProvider(rutaRecursos),
-    RequestPath = "/resources/uploads/users/img"
+    FileProvider =
+        new PhysicalFileProvider(rutaRecursos),
+    RequestPath =
+        "/resources/uploads/users/img"
 });
 
 var rutaTerrenos = Path.Combine(
@@ -131,8 +153,10 @@ Directory.CreateDirectory(rutaTerrenos);
 
 app.UseStaticFiles(new StaticFileOptions
 {
-    FileProvider = new PhysicalFileProvider(rutaTerrenos),
-    RequestPath = "/resources/uploads/terrenos"
+    FileProvider =
+        new PhysicalFileProvider(rutaTerrenos),
+    RequestPath =
+        "/resources/uploads/terrenos"
 });
 
 var rutaAlbumBotanico = Path.Combine(
@@ -145,8 +169,11 @@ Directory.CreateDirectory(rutaAlbumBotanico);
 
 app.UseStaticFiles(new StaticFileOptions
 {
-    FileProvider = new PhysicalFileProvider(rutaAlbumBotanico),
-    RequestPath = "/resources/uploads/album-botanico"
+    FileProvider =
+        new PhysicalFileProvider(
+            rutaAlbumBotanico),
+    RequestPath =
+        "/resources/uploads/album-botanico"
 });
 
 var rutaCategoriasAlbum = Path.Combine(
@@ -159,8 +186,11 @@ Directory.CreateDirectory(rutaCategoriasAlbum);
 
 app.UseStaticFiles(new StaticFileOptions
 {
-    FileProvider = new PhysicalFileProvider(rutaCategoriasAlbum),
-    RequestPath = "/resources/uploads/categorias-album"
+    FileProvider =
+        new PhysicalFileProvider(
+            rutaCategoriasAlbum),
+    RequestPath =
+        "/resources/uploads/categorias-album"
 });
 
 // Portadas del centro de noticias.
@@ -174,8 +204,10 @@ Directory.CreateDirectory(rutaNoticias);
 
 app.UseStaticFiles(new StaticFileOptions
 {
-    FileProvider = new PhysicalFileProvider(rutaNoticias),
-    RequestPath = "/resources/uploads/noticias"
+    FileProvider =
+        new PhysicalFileProvider(rutaNoticias),
+    RequestPath =
+        "/resources/uploads/noticias"
 });
 
 // Se declara el enrutamiento antes de los middleware transversales.
@@ -187,25 +219,33 @@ app.UseMiddleware<ExceptionHandlingMiddleware>();
 
 // Estandariza también respuestas sin cuerpo generadas fuera de un controlador,
 // por ejemplo una ruta inexistente, un futuro 401 o un futuro 403.
-app.UseStatusCodePages(async statusCodeContext =>
-{
-    HttpResponse response = statusCodeContext.HttpContext.Response;
-
-    if (response.HasStarted ||
-        response.ContentLength is > 0 ||
-        !string.IsNullOrWhiteSpace(response.ContentType))
+app.UseStatusCodePages(
+    async statusCodeContext =>
     {
-        return;
-    }
+        HttpResponse response =
+            statusCodeContext
+                .HttpContext
+                .Response;
 
-    response.ContentType = "application/json; charset=utf-8";
+        if (response.HasStarted ||
+            response.ContentLength is > 0 ||
+            !string.IsNullOrWhiteSpace(
+                response.ContentType))
+        {
+            return;
+        }
 
-    var errorResponse = ApiErrorResponseFactory.Create(
-        statusCodeContext.HttpContext,
-        response.StatusCode);
+        response.ContentType =
+            "application/json; charset=utf-8";
 
-    await response.WriteAsJsonAsync(errorResponse);
-});
+        var errorResponse =
+            ApiErrorResponseFactory.Create(
+                statusCodeContext.HttpContext,
+                response.StatusCode);
+
+        await response.WriteAsJsonAsync(
+            errorResponse);
+    });
 
 // Debe ejecutarse antes de autorización para que también queden registrados
 // futuros 401 y 403 producidos por ASP.NET Core.
@@ -234,50 +274,68 @@ app.MapGet(
         int ancho = 720,
         int alto = 480,
         int calidad = 68,
-        CancellationToken cancellationToken = default) =>
+        CancellationToken cancellationToken =
+            default) =>
     {
         try
         {
             MiniaturaImagenResult? miniatura =
-                await imageService.ObtenerOCrearMiniaturaAsync(
-                    ruta,
-                    ancho,
-                    alto,
-                    calidad,
-                    cancellationToken);
+                await imageService
+                    .ObtenerOCrearMiniaturaAsync(
+                        ruta,
+                        ancho,
+                        alto,
+                        calidad,
+                        cancellationToken);
 
             if (miniatura == null)
                 return Results.NotFound();
 
-            string etag = $"\"{miniatura.ETag}\"";
+            string etag =
+                $"\"{miniatura.ETag}\"";
 
-            context.Response.Headers["ETag"] = etag;
-            context.Response.Headers["Cache-Control"] =
+            context.Response.Headers["ETag"] =
+                etag;
+
+            context.Response.Headers[
+                    "Cache-Control"] =
                 "public,max-age=2592000,immutable";
-            context.Response.Headers["Last-Modified"] =
-                miniatura.UltimaModificacion.ToString("R");
-            context.Response.Headers["X-Content-Type-Options"] =
+
+            context.Response.Headers[
+                    "Last-Modified"] =
+                miniatura
+                    .UltimaModificacion
+                    .ToString("R");
+
+            context.Response.Headers[
+                    "X-Content-Type-Options"] =
                 "nosniff";
 
             string ifNoneMatch =
-                context.Request.Headers["If-None-Match"]
+                context
+                    .Request
+                    .Headers["If-None-Match"]
                     .ToString();
 
-            bool noModificada = ifNoneMatch
-                .Split(
-                    ',',
-                    StringSplitOptions.RemoveEmptyEntries |
-                    StringSplitOptions.TrimEntries)
-                .Any(value =>
-                    string.Equals(
-                        value,
-                        etag,
-                        StringComparison.Ordinal));
+            bool noModificada =
+                ifNoneMatch
+                    .Split(
+                        ',',
+                        StringSplitOptions
+                            .RemoveEmptyEntries |
+                        StringSplitOptions
+                            .TrimEntries)
+                    .Any(value =>
+                        string.Equals(
+                            value,
+                            etag,
+                            StringComparison.Ordinal));
 
             if (noModificada)
             {
                 return Results.StatusCode(
-                    StatusCodes.Status304NotModified);
+                    StatusCodes
+                        .Status304NotModified);
             }
 
             return Results.File(
@@ -298,15 +356,34 @@ app.MapGet(
         }
     });
 
-// Crea de forma idempotente solamente la estructura del nuevo módulo,
-// sus categorías iniciales, permisos e índice de búsqueda. No requiere
-// ejecutar migraciones ni scripts de forma separada.
-await using (AsyncServiceScope scope = app.Services.CreateAsyncScope())
+/*
+ * Inicializadores idempotentes.
+ *
+ * El inicializador del análisis agrega la columna necesaria para conservar
+ * la decisión del usuario por elemento. Se ejecuta antes del módulo de
+ * noticias y no requiere migraciones o scripts manuales.
+ */
+await using (
+    AsyncServiceScope scope =
+        app.Services.CreateAsyncScope())
 {
-    NoticiasDatabaseInitializer initializer = scope.ServiceProvider
-        .GetRequiredService<NoticiasDatabaseInitializer>();
+    AnalisisSueloDatabaseInitializer
+        analisisInitializer =
+            scope.ServiceProvider
+                .GetRequiredService<
+                    AnalisisSueloDatabaseInitializer>();
 
-    await initializer.InicializarAsync();
+    await analisisInitializer
+        .InicializarAsync();
+
+    NoticiasDatabaseInitializer
+        noticiasInitializer =
+            scope.ServiceProvider
+                .GetRequiredService<
+                    NoticiasDatabaseInitializer>();
+
+    await noticiasInitializer
+        .InicializarAsync();
 }
 
 app.Run();

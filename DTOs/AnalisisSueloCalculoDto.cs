@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 
 namespace CONATRADEC_API.DTOs
 {
@@ -32,13 +32,16 @@ namespace CONATRADEC_API.DTOs
         public decimal acidezTotal { get; set; }
 
         [Required]
-        [MinLength(1, ErrorMessage = "Debe ingresar al menos un elemento químico.")]
-        public List<AnalisisSueloElementoEntradaDto> elementosQuimicos { get; set; } = new();
-
-    
+        [MinLength(
+            1,
+            ErrorMessage =
+                "Debe ingresar al menos un elemento químico.")]
+        public List<AnalisisSueloElementoEntradaDto>
+            elementosQuimicos { get; set; } = new();
     }
 
-    public class AnalisisSueloGuardarRequestDto : AnalisisSueloCalculoRequestDto
+    public class AnalisisSueloGuardarRequestDto :
+        AnalisisSueloCalculoRequestDto
     {
         [Required]
         public DateOnly fechaAnalisisSuelo { get; set; }
@@ -64,29 +67,32 @@ namespace CONATRADEC_API.DTOs
         public decimal cantidadElemento { get; set; }
     }
 
- 
     public class AnalisisSueloCalculoResponseDto
     {
         public int terrenoId { get; set; }
 
         public int tipoCultivoId { get; set; }
+
         public string tipoCultivo { get; set; } = null!;
 
         public int tipoAnalisisSueloId { get; set; }
+
         public string tipoAnalisisSuelo { get; set; } = null!;
 
         public decimal cantidadQuintalesOro { get; set; }
+
         public decimal tamanoFinca { get; set; }
 
         public decimal ph { get; set; }
+
         public decimal acidezTotal { get; set; }
 
         public decimal materiaOrganica { get; set; }
 
         public int unidadMedidaMateriaOrganicaId { get; set; }
 
-        public List<ResultadoElementoCalculoDto> elementos { get; set; } = new();
-
+        public List<ResultadoElementoCalculoDto> elementos { get; set; }
+            = new();
 
         public string recomendacionGeneral { get; set; } = null!;
 
@@ -123,14 +129,22 @@ namespace CONATRADEC_API.DTOs
 
         public int? unidadMedidaResultadoId { get; set; }
 
+        /*
+         * Aunque la entrada pueda venir en otra unidad, los resultados
+         * agronómicos finales se normalizan a lb/Mz.
+         */
         public string? unidadResultado { get; set; }
 
         public string? clasificacion { get; set; }
 
         public string observacion { get; set; } = null!;
-    }
 
- 
+        /*
+         * Controla únicamente Balance y Fertilización mixta.
+         * El elemento siempre permanece en el requerimiento anual.
+         */
+        public bool incluirCalculosComplementarios { get; set; } = true;
+    }
 
     public class AporteFuenteElementoDto
     {
@@ -142,7 +156,6 @@ namespace CONATRADEC_API.DTOs
 
         public decimal cantidadAportada { get; set; }
     }
-
 
     public class AporteOrganicoElementoDto
     {
