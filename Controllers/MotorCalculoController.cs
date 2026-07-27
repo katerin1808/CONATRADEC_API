@@ -76,7 +76,7 @@ namespace CONATRADEC_API.Controllers
             {
                 success = true,
                 message =
-                    "Paquete del motor de cálculo generado correctamente.",
+                    "Paquete completo del motor de cálculo generado correctamente.",
                 data = paquete
             });
         }
@@ -163,10 +163,8 @@ namespace CONATRADEC_API.Controllers
                     .FirstOrDefaultAsync(
                         item =>
                             item.activo &&
-                            item.nombreUnidadMedida
-                                .Trim()
-                                .ToLower() ==
-                            "lb/mz",
+                            item.nombreUnidadMedida.Trim().ToLower() ==
+                                "lb/mz",
                         cancellationToken);
 
             if (unidadResultado == null)
@@ -181,10 +179,8 @@ namespace CONATRADEC_API.Controllers
                     .FirstOrDefaultAsync(
                         item =>
                             item.activo &&
-                            item.nombreUnidadMedida
-                                .Trim()
-                                .ToLower() ==
-                            "kg/ha",
+                            item.nombreUnidadMedida.Trim().ToLower() ==
+                                "kg/ha",
                         cancellationToken);
 
             if (unidadKgHa == null)
@@ -352,6 +348,103 @@ namespace CONATRADEC_API.Controllers
                     })
                     .ToListAsync(cancellationToken);
 
+            List<int> fuentesEnmiendaIds =
+                await db.ParametroEnmiendaCalcarea
+                    .AsNoTracking()
+                    .Where(item => item.activo)
+                    .Select(item => item.fuenteNutrientesId)
+                    .Distinct()
+                    .ToListAsync(cancellationToken);
+
+            contenido.fuentesFertilizacionMixtaIds =
+                await db.fuenteFertilizacionMixta
+                    .AsNoTracking()
+                    .Where(item => item.activo)
+                    .Select(item => item.fuenteNutrientesId)
+                    .Distinct()
+                    .OrderBy(item => item)
+                    .ToListAsync(cancellationToken);
+
+            contenido.fuentesNutrientes =
+                await db.fuenteNutriente
+                    .AsNoTracking()
+                    .Where(item => item.activo)
+                    .OrderBy(item => item.nombreNutriente)
+                    .Select(item => new MotorFuenteNutrienteDto
+                    {
+                        fuenteNutrientesId =
+                            item.fuenteNutrientesId,
+                        nombreNutriente =
+                            item.nombreNutriente,
+                        descripcionNutriente =
+                            item.descripcionNutriente,
+                        precioNutriente =
+                            item.precioNutriente,
+                        habilitadaEnmiendaCalcarea =
+                            fuentesEnmiendaIds.Contains(
+                                item.fuenteNutrientesId),
+                        habilitadaFertilizacionMixta =
+                            contenido
+                                .fuentesFertilizacionMixtaIds
+                                .Contains(
+                                    item.fuenteNutrientesId),
+                        activo = item.activo
+                    })
+                    .ToListAsync(cancellationToken);
+
+            contenido.aportesFuentes =
+                await db.fuenteNutrienteElementoQuimico
+                    .AsNoTracking()
+                    .Where(item =>
+                        item.activo &&
+                        item.fuenteNutriente != null &&
+                        item.fuenteNutriente.activo &&
+                        item.elementoQuimico != null &&
+                        item.elementoQuimico.activo)
+                    .OrderBy(item => item.fuenteNutrientesId)
+                    .ThenBy(item => item.elementoQuimicosId)
+                    .Select(item => new MotorFuenteAporteDto
+                    {
+                        fuenteNutrienteElementoQuimicoId =
+                            item.fuenteNutrienteElementoQuimicoId,
+                        fuenteNutrientesId =
+                            item.fuenteNutrientesId,
+                        elementoQuimicosId =
+                            item.elementoQuimicosId,
+                        cantidadAporte =
+                            item.cantidadAporte,
+                        activo = item.activo
+                    })
+                    .ToListAsync(cancellationToken);
+
+            contenido.parametrosEnmiendaCalcarea =
+                await db.ParametroEnmiendaCalcarea
+                    .AsNoTracking()
+                    .Where(item =>
+                        item.activo &&
+                        item.FuenteNutriente.activo)
+                    .OrderBy(item => item.fuenteNutrientesId)
+                    .Select(item => new MotorParametroEnmiendaDto
+                    {
+                        parametroEnmiendaCalcareaId =
+                            item.parametroEnmiendaCalcareaId,
+                        fuenteNutrientesId =
+                            item.fuenteNutrientesId,
+                        saturacionBasesDeseada =
+                            item.saturacionBasesDeseada,
+                        prnt = item.prnt,
+                        factorTonHaALbHa =
+                            item.factorTonHaALbHa,
+                        factorHaAMz =
+                            item.factorHaAMz,
+                        factorTonHaAKgHa =
+                            item.factorTonHaAKgHa,
+                        descripcionParametro =
+                            item.descripcionParametro,
+                        activo = item.activo
+                    })
+                    .ToListAsync(cancellationToken);
+
             string contenidoJson =
                 JsonSerializer.Serialize(
                     contenido,
@@ -366,19 +459,22 @@ namespace CONATRADEC_API.Controllers
 
             return new MotorCalculoPaqueteDto
             {
-                versionEsquema = 1,
-                versionMotorBase = "1.0.0",
+                versionEsquema = 2,
+                versionMotorBase = "2.0.0",
                 versionPaquete =
-                    $"req-anual-{hash[..16]}",
+                    $"motor-completo-{hash[..16]}",
                 hashSha256 = hash,
                 fechaGeneracionUtc = DateTime.UtcNow,
                 versionMinimaAplicacion = "1.0.0",
                 modulos = new MotorCalculoModulosDto
                 {
                     requerimientoAnual = true,
-                    enmiendaCalcarea = false,
-                    balanceFormula = false,
-                    fertilizacionMixta = false
+                    enmiendaCalcarea = true,
+                    balanceFormula = true,
+                    fertilizacionMixta = true,
+                    guardadoLocal = true,
+                    sincronizacion = true,
+                    reportePdfLocal = true
                 },
                 contenido = contenido
             };

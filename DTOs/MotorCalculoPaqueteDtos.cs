@@ -1,23 +1,17 @@
-using System.Text.Json.Serialization;
-
 namespace CONATRADEC_API.DTOs
 {
     /// <summary>
-    /// Paquete versionado que permite ejecutar el cálculo de requerimiento
-    /// anual sin depender de la conexión al servidor.
-    ///
-    /// El código estable del motor permanece compilado en la aplicación. Este
-    /// paquete contiene las reglas y parametrizaciones administradas por la API.
+    /// Paquete técnico completo para ejecutar los cálculos del análisis
+    /// de suelo sin comunicación con la API.
     /// </summary>
     public sealed class MotorCalculoPaqueteDto
     {
-        public int versionEsquema { get; set; } = 1;
-        public string versionMotorBase { get; set; } = "1.0.0";
+        public int versionEsquema { get; set; } = 2;
+        public string versionMotorBase { get; set; } = "2.0.0";
         public string versionPaquete { get; set; } = string.Empty;
         public string hashSha256 { get; set; } = string.Empty;
         public DateTime fechaGeneracionUtc { get; set; }
         public string versionMinimaAplicacion { get; set; } = "1.0.0";
-
         public MotorCalculoModulosDto modulos { get; set; } = new();
         public MotorCalculoContenidoDto contenido { get; set; } = new();
     }
@@ -36,14 +30,12 @@ namespace CONATRADEC_API.DTOs
     public sealed class MotorCalculoModulosDto
     {
         public bool requerimientoAnual { get; set; } = true;
-
-        /*
-         * Estos módulos forman parte del diseño del paquete, pero se activarán
-         * cuando sus algoritmos actuales sean extraídos a la siguiente fase.
-         */
-        public bool enmiendaCalcarea { get; set; }
-        public bool balanceFormula { get; set; }
-        public bool fertilizacionMixta { get; set; }
+        public bool enmiendaCalcarea { get; set; } = true;
+        public bool balanceFormula { get; set; } = true;
+        public bool fertilizacionMixta { get; set; } = true;
+        public bool guardadoLocal { get; set; } = true;
+        public bool sincronizacion { get; set; } = true;
+        public bool reportePdfLocal { get; set; } = true;
     }
 
     public sealed class MotorCalculoContenidoDto
@@ -63,11 +55,23 @@ namespace CONATRADEC_API.DTOs
         public List<MotorConversionMateriaOrganicaDto>
             conversionesMateriaOrganica { get; set; } = new();
 
-        public List<MotorExtraccionDto> parametrosExtraccion { get; set; } =
-            new();
+        public List<MotorExtraccionDto>
+            parametrosExtraccion { get; set; } = new();
 
-        public List<MotorRangoCultivoDto> rangosCultivo { get; set; } =
-            new();
+        public List<MotorRangoCultivoDto>
+            rangosCultivo { get; set; } = new();
+
+        public List<MotorFuenteNutrienteDto>
+            fuentesNutrientes { get; set; } = new();
+
+        public List<MotorFuenteAporteDto>
+            aportesFuentes { get; set; } = new();
+
+        public List<MotorParametroEnmiendaDto>
+            parametrosEnmiendaCalcarea { get; set; } = new();
+
+        public List<int>
+            fuentesFertilizacionMixtaIds { get; set; } = new();
     }
 
     public sealed class MotorTipoCultivoDto
@@ -137,6 +141,39 @@ namespace CONATRADEC_API.DTOs
         public decimal valorMinimo { get; set; }
         public decimal valorMaximo { get; set; }
         public string unidadBase { get; set; } = string.Empty;
+        public bool activo { get; set; }
+    }
+
+    public sealed class MotorFuenteNutrienteDto
+    {
+        public int fuenteNutrientesId { get; set; }
+        public string nombreNutriente { get; set; } = string.Empty;
+        public string descripcionNutriente { get; set; } = string.Empty;
+        public decimal precioNutriente { get; set; }
+        public bool habilitadaEnmiendaCalcarea { get; set; }
+        public bool habilitadaFertilizacionMixta { get; set; }
+        public bool activo { get; set; }
+    }
+
+    public sealed class MotorFuenteAporteDto
+    {
+        public int fuenteNutrienteElementoQuimicoId { get; set; }
+        public int fuenteNutrientesId { get; set; }
+        public int elementoQuimicosId { get; set; }
+        public decimal cantidadAporte { get; set; }
+        public bool activo { get; set; }
+    }
+
+    public sealed class MotorParametroEnmiendaDto
+    {
+        public int parametroEnmiendaCalcareaId { get; set; }
+        public int fuenteNutrientesId { get; set; }
+        public decimal saturacionBasesDeseada { get; set; }
+        public decimal prnt { get; set; }
+        public decimal factorTonHaALbHa { get; set; }
+        public decimal factorHaAMz { get; set; }
+        public decimal factorTonHaAKgHa { get; set; }
+        public string descripcionParametro { get; set; } = string.Empty;
         public bool activo { get; set; }
     }
 }
