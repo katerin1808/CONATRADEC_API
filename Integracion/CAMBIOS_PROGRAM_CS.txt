@@ -1,0 +1,39 @@
+ARCHIVO: CONATRADEC_API/Program.cs
+
+1. DESPUÉS DE:
+builder.Services.AddScoped<
+    DispositivosConexionDatabaseInitializer>();
+
+AGREGAR:
+
+// Base de datos y estructura del módulo de alertas agrícolas.
+builder.Services.AddScoped<
+    AlertasAgricolasDatabaseInitializer>();
+
+2. DESPUÉS DE REGISTRAR DispositivosConexionDbContext, AGREGAR:
+
+builder.Services.AddDbContext<AlertasAgricolasDbContext>(
+    options =>
+    {
+        options.UseSqlServer(connectionString);
+    });
+
+3. DENTRO DEL AsyncServiceScope FINAL, ANTES DE CERRAR EL BLOQUE,
+AGREGAR:
+
+AlertasAgricolasDatabaseInitializer
+    alertasInitializer =
+        scope.ServiceProvider
+            .GetRequiredService<
+                AlertasAgricolasDatabaseInitializer>();
+
+await alertasInitializer
+    .InicializarAsync();
+
+IMPORTANTE:
+- AlertasAgricolasDbContext es requerido por
+  SeguimientoAlertasAgricolasController.
+- Sin este registro, ASP.NET Core devuelve HTTP 500 al intentar crear
+  el controlador.
+- El inicializador corregido incluye nombreAmigableInterfaz, que es
+  obligatorio en la tabla interfaz.

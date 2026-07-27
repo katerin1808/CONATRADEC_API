@@ -35,7 +35,8 @@ namespace CONATRADEC_API.Controllers
             }
 
             string nombre = NormalizarNombre(dto.nombreRol);
-            string descripcion = NormalizarDescripcion(dto.descripcionRol);
+            string descripcion =
+                NormalizarDescripcion(dto.descripcionRol);
 
             if (string.IsNullOrWhiteSpace(nombre))
             {
@@ -46,66 +47,50 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
-            bool existeActivo =
-                await context.Roles
-                    .AsNoTracking()
-                    .AnyAsync(
-                        item =>
-                            item.activo &&
-                            EF.Functions.Collate(
-                                item.nombreRol,
-                                "Modern_Spanish_CI_AI") == nombre,
-                        cancellationToken);
+            Rol? existente = await context.Roles
+                .FirstOrDefaultAsync(
+                    item =>
+                        EF.Functions.Collate(
+                            item.nombreRol,
+                            "Modern_Spanish_CI_AI") == nombre,
+                    cancellationToken);
 
-            if (existeActivo)
+            if (existente is not null)
             {
-                return Conflict(new
+                if (existente.activo)
                 {
-                    success = false,
-                    message = "Ya existe un rol activo con ese nombre."
-                });
-            }
-
-            Rol? inactivo =
-                await context.Roles
-                    .FirstOrDefaultAsync(
-                        item =>
-                            !item.activo &&
-                            EF.Functions.Collate(
-                                item.nombreRol,
-                                "Modern_Spanish_CI_AI") == nombre,
-                        cancellationToken);
-
-            try
-            {
-                if (inactivo != null)
-                {
-                    inactivo.nombreRol = nombre;
-                    inactivo.descripcionRol = descripcion;
-                    inactivo.activo = true;
-
-                    await context.SaveChangesAsync(cancellationToken);
-
-                    return Ok(new
+                    return Conflict(new
                     {
-                        success = true,
-                        message = "Rol reactivado correctamente.",
-                        data = new
-                        {
-                            inactivo.rolId,
-                            inactivo.nombreRol,
-                            inactivo.descripcionRol
-                        }
+                        success = false,
+                        message =
+                            "Ya existe un rol activo con ese nombre."
                     });
                 }
 
-                var nuevoRol = new Rol
+                return Conflict(new
                 {
-                    nombreRol = nombre,
-                    descripcionRol = descripcion,
-                    activo = true
-                };
+                    success = false,
+                    code = "ROL_INACTIVO_EXISTENTE",
+                    message =
+                        "Ya existe un rol inactivo con ese nombre. Puedes reactivarlo desde la lista de roles inactivos.",
+                    data = new
+                    {
+                        existente.rolId,
+                        existente.nombreRol,
+                        existente.descripcionRol
+                    }
+                });
+            }
 
+            var nuevoRol = new Rol
+            {
+                nombreRol = nombre,
+                descripcionRol = descripcion,
+                activo = true
+            };
+
+            try
+            {
                 context.Roles.Add(nuevoRol);
                 await context.SaveChangesAsync(cancellationToken);
 
@@ -120,7 +105,8 @@ namespace CONATRADEC_API.Controllers
                         {
                             nuevoRol.rolId,
                             nuevoRol.nombreRol,
-                            nuevoRol.descripcionRol
+                            nuevoRol.descripcionRol,
+                            nuevoRol.activo
                         }
                     });
             }
@@ -144,20 +130,112 @@ namespace CONATRADEC_API.Controllers
         public async Task<IActionResult> ListarRoles(
             CancellationToken cancellationToken)
         {
-            var roles =
-                await context.Roles
-                    .AsNoTracking()
-                    .Where(item => item.activo)
-                    .OrderBy(item => item.nombreRol)
-                    .Select(item => new
-                    {
-                        item.rolId,
-                        item.nombreRol,
-                        item.descripcionRol
-                    })
-                    .ToListAsync(cancellationToken);
+            var roles = await context.Roles
+                .AsNoTracking()
+                .Where(item => item.activo)
+                .OrderBy(item => item.nombreRol)
+                .Select(item => new
+                {
+                    item.rolId,
+                    item.nombreRol,
+                    item.descripcionRol,
+                    item.activo,
+                    esAdministrador =
+                        item.nombreRol.ToUpper().Contains("ADMIN")
+                })
+                .ToListAsync(cancellationToken);
 
             return Ok(roles);
+        }
+
+        [HttpGet("listarRolesInactivos")]
+        public async Task<IActionResult> ListarRolesInactivos(
+            CancellationToken cancellationToken)
+        {
+            var roles = await context.Roles
+                .AsNoTracking()
+                .Where(item => !item.activo)
+                .OrderBy(item => item.nombreRol)
+                .Select(item => new
+                {
+                    item.rolId,
+                    item.nombreRol,
+                    item.descripcionRol,
+                    item.activo,
+                    esAdministrador =
+                        item.nombreRol.ToUpper().Contains("ADMIN")
+                })
+                .ToListAsync(cancellationToken);
+
+            return Ok(roles);
+        }
+
+        [HttpPut("reactivarRol/{id:int}")]
+        public async Task<IActionResult> ReactivarRol(
+            int id,
+            CancellationToken cancellationToken)
+        {
+            Rol? rol = await context.Roles
+                .FirstOrDefaultAsync(
+                    item => item.rolId == id,
+                    cancellationToken);
+
+            if (rol == null)
+            {
+                return NotFound(new
+                {
+                    success = false,
+                    message = "No se encontró el rol."
+                });
+            }
+
+            if (rol.activo)
+            {
+                return Conflict(new
+                {
+                    success = false,
+                    message = "El rol ya se encuentra activo."
+                });
+            }
+
+            bool existeActivoMismoNombre =
+                await context.Roles
+                    .AsNoTracking()
+                    .AnyAsync(
+                        item =>
+                            item.rolId != rol.rolId &&
+                            item.activo &&
+                            EF.Functions.Collate(
+                                item.nombreRol,
+                                "Modern_Spanish_CI_AI") ==
+                            rol.nombreRol,
+                        cancellationToken);
+
+            if (existeActivoMismoNombre)
+            {
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        "No se puede reactivar porque ya existe otro rol activo con el mismo nombre."
+                });
+            }
+
+            rol.activo = true;
+            await context.SaveChangesAsync(cancellationToken);
+
+            return Ok(new
+            {
+                success = true,
+                message = "Rol reactivado correctamente.",
+                data = new
+                {
+                    rol.rolId,
+                    rol.nombreRol,
+                    rol.descripcionRol,
+                    rol.activo
+                }
+            });
         }
 
         [HttpGet("buscarRol/{id:int}")]
@@ -165,24 +243,29 @@ namespace CONATRADEC_API.Controllers
             int id,
             CancellationToken cancellationToken)
         {
-            var rol =
-                await context.Roles
-                    .AsNoTracking()
-                    .Where(item => item.rolId == id && item.activo)
-                    .Select(item => new
-                    {
-                        item.rolId,
-                        item.nombreRol,
-                        item.descripcionRol
-                    })
-                    .SingleOrDefaultAsync(cancellationToken);
+            var rol = await context.Roles
+                .AsNoTracking()
+                .Where(item =>
+                    item.rolId == id &&
+                    item.activo)
+                .Select(item => new
+                {
+                    item.rolId,
+                    item.nombreRol,
+                    item.descripcionRol,
+                    item.activo,
+                    esAdministrador =
+                        item.nombreRol.ToUpper().Contains("ADMIN")
+                })
+                .SingleOrDefaultAsync(cancellationToken);
 
             if (rol == null)
             {
                 return NotFound(new
                 {
                     success = false,
-                    message = "No se encontró un rol activo con ese identificador."
+                    message =
+                        "No se encontró un rol activo con ese identificador."
                 });
             }
 
@@ -204,42 +287,64 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
-            Rol? rol =
-                await context.Roles
-                    .FirstOrDefaultAsync(
-                        item => item.rolId == id && item.activo,
-                        cancellationToken);
+            Rol? rol = await context.Roles
+                .FirstOrDefaultAsync(
+                    item =>
+                        item.rolId == id &&
+                        item.activo,
+                    cancellationToken);
 
             if (rol == null)
             {
                 return NotFound(new
                 {
                     success = false,
-                    message = "No se encontró un rol activo con ese identificador."
+                    message =
+                        "No se encontró un rol activo con ese identificador."
+                });
+            }
+
+            if (EsAdministrador(rol.nombreRol))
+            {
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        "El rol administrador está protegido y no puede editarse."
                 });
             }
 
             string nombre = NormalizarNombre(dto.nombreRol);
-            string descripcion = NormalizarDescripcion(dto.descripcionRol);
+            string descripcion =
+                NormalizarDescripcion(dto.descripcionRol);
 
-            bool duplicado =
-                await context.Roles
-                    .AsNoTracking()
-                    .AnyAsync(
-                        item =>
-                            item.rolId != id &&
-                            item.activo &&
-                            EF.Functions.Collate(
-                                item.nombreRol,
-                                "Modern_Spanish_CI_AI") == nombre,
-                        cancellationToken);
+            if (string.IsNullOrWhiteSpace(nombre))
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "El nombre del rol es obligatorio."
+                });
+            }
+
+            bool duplicado = await context.Roles
+                .AsNoTracking()
+                .AnyAsync(
+                    item =>
+                        item.rolId != id &&
+                        item.activo &&
+                        EF.Functions.Collate(
+                            item.nombreRol,
+                            "Modern_Spanish_CI_AI") == nombre,
+                    cancellationToken);
 
             if (duplicado)
             {
                 return Conflict(new
                 {
                     success = false,
-                    message = "Ya existe otro rol activo con ese nombre."
+                    message =
+                        "Ya existe otro rol activo con ese nombre."
                 });
             }
 
@@ -258,7 +363,8 @@ namespace CONATRADEC_API.Controllers
                     {
                         rol.rolId,
                         rol.nombreRol,
-                        rol.descripcionRol
+                        rol.descripcionRol,
+                        rol.activo
                     }
                 });
             }
@@ -283,52 +389,58 @@ namespace CONATRADEC_API.Controllers
             int id,
             CancellationToken cancellationToken)
         {
-            Rol? rol =
-                await context.Roles
-                    .FirstOrDefaultAsync(
-                        item => item.rolId == id && item.activo,
-                        cancellationToken);
+            Rol? rol = await context.Roles
+                .FirstOrDefaultAsync(
+                    item =>
+                        item.rolId == id &&
+                        item.activo,
+                    cancellationToken);
 
             if (rol == null)
             {
                 return NotFound(new
                 {
                     success = false,
-                    message = "El rol no existe o ya está desactivado."
+                    message =
+                        "El rol no existe o ya está desactivado."
                 });
             }
 
-            var dependencias = new List<string>();
-
-            if (await context.Usuarios
-                    .AsNoTracking()
-                    .AnyAsync(
-                        item => item.rolId == id && item.activo,
-                        cancellationToken))
-            {
-                dependencias.Add("usuarios activos");
-            }
-
-            if (await context.RolInterfaz
-                    .AsNoTracking()
-                    .AnyAsync(
-                        item => item.rolId == id,
-                        cancellationToken))
-            {
-                dependencias.Add("permisos de interfaces");
-            }
-
-            if (dependencias.Count > 0)
+            if (EsAdministrador(rol.nombreRol))
             {
                 return Conflict(new
                 {
                     success = false,
                     message =
-                        "No se puede eliminar el rol porque está siendo utilizado.",
-                    usadoEn = dependencias
+                        "El rol administrador está protegido y no puede desactivarse."
                 });
             }
 
+            bool tieneUsuariosActivos =
+                await context.Usuarios
+                    .AsNoTracking()
+                    .AnyAsync(
+                        item =>
+                            item.rolId == id &&
+                            item.activo,
+                        cancellationToken);
+
+            if (tieneUsuariosActivos)
+            {
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        "No se puede desactivar el rol porque tiene usuarios activos asignados.",
+                    usadoEn = new[] { "usuarios activos" }
+                });
+            }
+
+            /*
+             * Los permisos históricos no impiden desactivar el rol.
+             * Se conservan para que vuelvan a estar disponibles si el rol
+             * se reactiva posteriormente.
+             */
             rol.activo = false;
             await context.SaveChangesAsync(cancellationToken);
 
@@ -338,6 +450,12 @@ namespace CONATRADEC_API.Controllers
                 message = "Rol desactivado correctamente."
             });
         }
+
+        private static bool EsAdministrador(string? nombreRol) =>
+            (nombreRol ?? string.Empty)
+                .Contains(
+                    "ADMIN",
+                    StringComparison.OrdinalIgnoreCase);
 
         private static string NormalizarNombre(string? valor) =>
             (valor ?? string.Empty)

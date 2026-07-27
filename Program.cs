@@ -14,15 +14,11 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers(options =>
 {
-    // Todas las respuestas 4xx/5xx de los controladores se convierten
-    // al mismo contrato ApiErrorResponse.
     options.Filters.Add<ApiErrorResponseFilter>();
 });
 
 builder.Services.Configure<ApiBehaviorOptions>(options =>
 {
-    // Estandariza también los errores automáticos generados por [ApiController],
-    // por ejemplo propiedades obligatorias o tipos de datos inválidos.
     options.InvalidModelStateResponseFactory = context =>
     {
         IDictionary<string, string[]> errors =
@@ -44,23 +40,29 @@ builder.Services.AddScoped<AnalisisSueloCalculoService>();
 builder.Services.AddScoped<AnalisisReporteDatosService>();
 builder.Services.AddScoped<ImageService>();
 
-// Verifica de forma idempotente las mejoras de persistencia
-// utilizadas por el flujo completo del análisis de suelo.
 builder.Services.AddScoped<
     AnalisisSueloDatabaseInitializer>();
 
-// Servicios del módulo de noticias.
 builder.Services.AddScoped<PermisoApiService>();
 builder.Services.AddScoped<NoticiasDatabaseInitializer>();
 builder.Services.AddScoped<
     BusquedaTextoCompletoNoticiasService>();
 
-// Registro y consulta de dispositivos Android/Windows conectados.
 builder.Services.AddScoped<DispositivoConexionService>();
 builder.Services.AddScoped<
     DispositivosConexionDatabaseInitializer>();
 
-// Contexto e interceptores transversales de auditoría.
+builder.Services.AddScoped<
+    UmbralesAlertasService>();
+
+/*
+ * Módulo de alertas agrícolas.
+ * Este registro es obligatorio para construir
+ * SeguimientoAlertasAgricolasController.
+ */
+builder.Services.AddScoped<
+    AlertasAgricolasDatabaseInitializer>();
+
 builder.Services.AddScoped<AuditRequestContext>();
 builder.Services.AddScoped<AuditSaveChangesInterceptor>();
 builder.Services.AddScoped<AuditTransactionInterceptor>();
@@ -84,8 +86,6 @@ builder.Services.AddDbContext<DBContext>(
                     .GetRequiredService<
                         AuditTransactionInterceptor>());
 
-        // No se habilita SensitiveDataLogging porque puede exponer
-        // valores confidenciales en consola o archivos de logs.
         if (builder.Environment.IsDevelopment())
         {
             options.LogTo(
@@ -94,8 +94,6 @@ builder.Services.AddDbContext<DBContext>(
         }
     });
 
-// Contexto aislado del módulo. Usa los mismos interceptores para que las
-// publicaciones y sus cambios aparezcan en la bitácora general.
 builder.Services.AddDbContext<NoticiasDbContext>(
     (serviceProvider, options) =>
     {
@@ -116,9 +114,17 @@ builder.Services.AddDbContext<BitacoraDbContext>(
         options.UseSqlServer(connectionString);
     });
 
-// Contexto separado para que los latidos no generen cambios auditados ni
-// interfieran con el DbContext principal de la aplicación.
 builder.Services.AddDbContext<DispositivosConexionDbContext>(
+    options =>
+    {
+        options.UseSqlServer(connectionString);
+    });
+
+/*
+ * Contexto independiente del módulo de alertas agrícolas.
+ * Utiliza la misma base de datos del sistema.
+ */
+builder.Services.AddDbContext<AlertasAgricolasDbContext>(
     options =>
     {
         options.UseSqlServer(connectionString);
@@ -207,7 +213,6 @@ app.UseStaticFiles(new StaticFileOptions
         "/resources/uploads/categorias-album"
 });
 
-// Portadas del centro de noticias.
 var rutaNoticias = Path.Combine(
     Directory.GetCurrentDirectory(),
     "resources",
@@ -224,15 +229,10 @@ app.UseStaticFiles(new StaticFileOptions
         "/resources/uploads/noticias"
 });
 
-// Se declara el enrutamiento antes de los middleware transversales.
 app.UseRouting();
 
-// Debe envolver los siguientes middleware y controladores para convertir
-// cualquier excepción no controlada en una respuesta JSON segura.
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
-// Estandariza también respuestas sin cuerpo generadas fuera de un controlador,
-// por ejemplo una ruta inexistente, un futuro 401 o un futuro 403.
 app.UseStatusCodePages(
     async statusCodeContext =>
     {
@@ -261,32 +261,14 @@ app.UseStatusCodePages(
             errorResponse);
     });
 
-// Debe ejecutarse antes de autorización para que también queden registrados
-// futuros 401 y 403 producidos por ASP.NET Core.
 app.UseMiddleware<BitacoraMiddleware>();
 
 app.UseAuthorization();
 
 app.MapControllers();
 
-/*
- * Los latidos de los dispositivos se publican como endpoints mínimos fuera
- * del prefijo /api. BitacoraMiddleware solo audita controladores o rutas /api,
- * por lo que estos reportes periódicos no llenan la bitácora. Las consultas
- * administrativas sí permanecen en /api/dispositivos-conectados.
- */
 app.MapDispositivosConexionEndpoints();
 
-/*
- * Miniaturas del álbum botánico y del centro de noticias.
- *
- * Esta ruta no usa el prefijo /api y es un endpoint mínimo, no una acción de
- * controlador. De esa forma BitacoraMiddleware no crea un registro por cada
- * imagen descargada, lo cual sería costoso y llenaría la bitácora.
- *
- * Las miniaturas se crean una sola vez en disco. Las siguientes solicitudes
- * reciben el archivo WebP cacheado con ETag y Cache-Control de 30 días.
- */
 app.MapGet(
     "/imagenes/miniatura",
     async Task<IResult> (
@@ -378,12 +360,6 @@ app.MapGet(
         }
     });
 
-/*
- * Inicializadores idempotentes.
- *
- * Cada inicializador comprueba su propia estructura. Se ejecutan al arrancar
- * la API y no requieren que el usuario aplique migraciones manualmente.
- */
 await using (
     AsyncServiceScope scope =
         app.Services.CreateAsyncScope())
@@ -413,6 +389,19 @@ await using (
                     NoticiasDatabaseInitializer>();
 
     await noticiasInitializer
+        .InicializarAsync();
+
+    /*
+     * Crea las tablas y configuraciones del módulo
+     * de alertas antes de aceptar solicitudes.
+     */
+    AlertasAgricolasDatabaseInitializer
+        alertasInitializer =
+            scope.ServiceProvider
+                .GetRequiredService<
+                    AlertasAgricolasDatabaseInitializer>();
+
+    await alertasInitializer
         .InicializarAsync();
 }
 

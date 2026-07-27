@@ -1,23 +1,31 @@
 using System.Collections.Generic;
+
 namespace CONATRADEC_API.DTOs
 {
     public class RolLiteDto
     {
         public int rolId { get; set; }
         public string nombreRol { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Indica que el rol es el rol administrativo protegido.
+        /// Sus permisos no pueden modificarse desde ninguna plataforma.
+        /// </summary>
+        public bool esAdministrador { get; set; }
     }
 
-    /// <summary>
-    /// Permisos de una página principal.
-    /// nombreInterfaz es el código interno usado para validar.
-    /// nombreAmigableInterfaz es el texto presentado al usuario.
-    /// </summary>
     public class InterfazPermisoDto
     {
         public int interfazId { get; set; }
 
+        /// <summary>
+        /// Código interno estable utilizado por la autorización.
+        /// </summary>
         public string nombreInterfaz { get; set; } = string.Empty;
 
+        /// <summary>
+        /// Texto visible para el usuario en la matriz.
+        /// </summary>
         public string nombreAmigableInterfaz { get; set; } =
             string.Empty;
 
@@ -46,12 +54,7 @@ namespace CONATRADEC_API.DTOs
     public class AgregarPermisoPorNombreRequest
     {
         public string nombreRol { get; set; } = string.Empty;
-
-        /// <summary>
-        /// Código interno de la interfaz.
-        /// </summary>
         public string nombreInterfaz { get; set; } = string.Empty;
-
         public bool leer { get; set; }
         public bool agregar { get; set; }
         public bool actualizar { get; set; }
