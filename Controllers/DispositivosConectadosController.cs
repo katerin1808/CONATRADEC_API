@@ -58,6 +58,17 @@ namespace CONATRADEC_API.Controllers
                     .AsNoTracking()
                     .CountAsync(x => x.Activo, cancellationToken);
 
+            int totalConUbicacion =
+                await dispositivosDb.DispositivosConexion
+                    .AsNoTracking()
+                    .CountAsync(
+                        x =>
+                            x.Activo &&
+                            x.Latitud.HasValue &&
+                            x.Longitud.HasValue &&
+                            x.FechaUbicacionUtc.HasValue,
+                        cancellationToken);
+
             int totalSesiones =
                 await dispositivosDb.DispositivosConexion
                     .AsNoTracking()
@@ -83,12 +94,27 @@ namespace CONATRADEC_API.Controllers
                         x => (DateTime?)x.UltimoLatidoUtc,
                         cancellationToken);
 
+            DateTime? ultimaUbicacion =
+                await dispositivosDb.DispositivosConexion
+                    .AsNoTracking()
+                    .Where(x =>
+                        x.Activo &&
+                        x.FechaUbicacionUtc.HasValue)
+                    .MaxAsync(
+                        x => x.FechaUbicacionUtc,
+                        cancellationToken);
+
             int android = conectados.Count(x =>
                 EsPlataforma(x.Plataforma, "Android"));
 
             int windows = conectados.Count(x =>
                 EsPlataforma(x.Plataforma, "Windows") ||
                 EsPlataforma(x.Plataforma, "WinUI"));
+
+            int conectadosConUbicacion = conectados.Count(x =>
+                x.Latitud.HasValue &&
+                x.Longitud.HasValue &&
+                x.FechaUbicacionUtc.HasValue);
 
             return Ok(new DispositivosConexionResumenDto
             {
@@ -102,12 +128,15 @@ namespace CONATRADEC_API.Controllers
                 OtrosConectados = Math.Max(
                     0,
                     conectados.Count - android - windows),
+                ConectadosConUbicacion = conectadosConUbicacion,
+                TotalDispositivosConUbicacion = totalConUbicacion,
                 TotalDispositivosRegistrados = totalRegistrados,
                 TotalSesionesRegistradas = totalSesiones,
                 DispositivosActivosUltimas24Horas = activos24Horas,
                 MinutosTolerancia = minutosActivo,
                 FechaConsultaUtc = ahoraUtc,
-                UltimoLatidoRecibidoUtc = ultimoLatido
+                UltimoLatidoRecibidoUtc = ultimoLatido,
+                UltimaUbicacionRecibidaUtc = ultimaUbicacion
             });
         }
 
@@ -117,6 +146,7 @@ namespace CONATRADEC_API.Controllers
                 [FromHeader(Name = "X-Usuario-Id")]
                     int? usuarioSesionId,
                 [FromQuery] bool? conectado,
+                [FromQuery] bool? conUbicacion,
                 [FromQuery] int? usuarioId,
                 [FromQuery] string? plataforma,
                 [FromQuery] string? versionApp,
@@ -156,6 +186,21 @@ namespace CONATRADEC_API.Controllers
                 query = query.Where(x =>
                     !x.ConectadoReportado ||
                     x.UltimoLatidoUtc < corteUtc);
+            }
+
+            if (conUbicacion == true)
+            {
+                query = query.Where(x =>
+                    x.Latitud.HasValue &&
+                    x.Longitud.HasValue &&
+                    x.FechaUbicacionUtc.HasValue);
+            }
+            else if (conUbicacion == false)
+            {
+                query = query.Where(x =>
+                    !x.Latitud.HasValue ||
+                    !x.Longitud.HasValue ||
+                    !x.FechaUbicacionUtc.HasValue);
             }
 
             if (usuarioId.HasValue)
@@ -213,6 +258,79 @@ namespace CONATRADEC_API.Controllers
                 MinutosTolerancia = minutosActivo,
                 FechaConsultaUtc = ahoraUtc
             });
+        }
+
+        /// <summary>
+        /// Devuelve únicamente los datos necesarios para dibujar el mapa del
+        /// portal. Por defecto incluye solo dispositivos conectados.
+        /// </summary>
+        [HttpGet("mapa")]
+        public async Task<ActionResult<List<DispositivoConexionMapaDto>>>
+            Mapa(
+                [FromHeader(Name = "X-Usuario-Id")]
+                    int? usuarioSesionId,
+                [FromQuery] bool soloConectados = true,
+                [FromQuery] int minutosActivo = 2,
+                [FromQuery] int limite = 1000,
+                CancellationToken cancellationToken = default)
+        {
+            ActionResult? acceso = await ValidarAccesoAsync(
+                usuarioSesionId,
+                cancellationToken);
+
+            if (acceso != null)
+                return acceso;
+
+            minutosActivo = Math.Clamp(minutosActivo, 1, 15);
+            limite = Math.Clamp(limite, 1, 2000);
+
+            DateTime corteUtc = DateTime.UtcNow.AddMinutes(-minutosActivo);
+
+            IQueryable<DispositivoConexion> query =
+                dispositivosDb.DispositivosConexion
+                    .AsNoTracking()
+                    .Where(x =>
+                        x.Activo &&
+                        x.Latitud.HasValue &&
+                        x.Longitud.HasValue &&
+                        x.FechaUbicacionUtc.HasValue);
+
+            if (soloConectados)
+            {
+                query = query.Where(x =>
+                    x.ConectadoReportado &&
+                    x.UltimoLatidoUtc >= corteUtc);
+            }
+
+            List<DispositivoConexion> entidades = await query
+                .OrderByDescending(x => x.UltimoLatidoUtc)
+                .Take(limite)
+                .ToListAsync(cancellationToken);
+
+            List<DispositivoConexionMapaDto> items = entidades
+                .Select(x => new DispositivoConexionMapaDto
+                {
+                    DispositivoConexionId = x.DispositivoConexionId,
+                    UsuarioId = x.UsuarioId,
+                    UsuarioNombre = x.UsuarioNombre,
+                    Plataforma = x.Plataforma,
+                    NombreDispositivo = x.NombreDispositivo,
+                    Modelo = x.Modelo,
+                    Latitud = x.Latitud!.Value,
+                    Longitud = x.Longitud!.Value,
+                    PrecisionMetros = x.PrecisionMetros,
+                    FechaUbicacionUtc = x.FechaUbicacionUtc!.Value,
+                    EstadoPermisoUbicacion =
+                        x.EstadoPermisoUbicacion,
+                    UbicacionSimulada = x.UbicacionSimulada,
+                    Conectado =
+                        x.ConectadoReportado &&
+                        x.UltimoLatidoUtc >= corteUtc,
+                    UltimoLatidoUtc = x.UltimoLatidoUtc
+                })
+                .ToList();
+
+            return Ok(items);
         }
 
         [HttpGet("{id:int}")]
@@ -333,6 +451,11 @@ namespace CONATRADEC_API.Controllers
                 0,
                 (ahoraUtc - x.UltimoLatidoUtc).TotalSeconds);
 
+            bool tieneUbicacion =
+                x.Latitud.HasValue &&
+                x.Longitud.HasValue &&
+                x.FechaUbicacionUtc.HasValue;
+
             return new DispositivoConexionListadoDto
             {
                 DispositivoConexionId = x.DispositivoConexionId,
@@ -355,6 +478,14 @@ namespace CONATRADEC_API.Controllers
                 TipoConexion = x.TipoConexion,
                 PaginaActual = x.PaginaActual,
                 DireccionIp = x.DireccionIp,
+                Latitud = x.Latitud,
+                Longitud = x.Longitud,
+                PrecisionMetros = x.PrecisionMetros,
+                FechaUbicacionUtc = x.FechaUbicacionUtc,
+                OrigenUbicacion = x.OrigenUbicacion,
+                EstadoPermisoUbicacion = x.EstadoPermisoUbicacion,
+                UbicacionSimulada = x.UbicacionSimulada,
+                TieneUbicacion = tieneUbicacion,
                 FechaRegistroUtc = x.FechaRegistroUtc,
                 FechaInicioSesionUtc = x.FechaInicioSesionUtc,
                 UltimoLatidoUtc = x.UltimoLatidoUtc,

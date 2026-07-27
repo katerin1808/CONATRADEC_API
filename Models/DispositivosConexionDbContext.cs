@@ -41,6 +41,28 @@ namespace CONATRADEC_API.Models
                     .HasDatabaseName(
                         "IX_dispositivoConexion_usuario_ultimoLatido");
 
+                entity.HasIndex(x => x.FechaUbicacionUtc)
+                    .HasDatabaseName(
+                        "IX_dispositivoConexion_fechaUbicacionUtc");
+
+                entity.Property(x => x.Latitud)
+                    .HasPrecision(9, 6);
+
+                entity.Property(x => x.Longitud)
+                    .HasPrecision(9, 6);
+
+                entity.Property(x => x.PrecisionMetros)
+                    .HasPrecision(10, 2);
+
+                entity.Property(x => x.FechaUbicacionUtc)
+                    .HasColumnType("datetime2(0)");
+
+                entity.Property(x => x.OrigenUbicacion)
+                    .HasDefaultValue(string.Empty);
+
+                entity.Property(x => x.EstadoPermisoUbicacion)
+                    .HasDefaultValue("NO_REPORTADO");
+
                 entity.Property(x => x.FechaRegistroUtc)
                     .HasColumnType("datetime2(0)");
 

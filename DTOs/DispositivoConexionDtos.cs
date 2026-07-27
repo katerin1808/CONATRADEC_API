@@ -48,6 +48,25 @@ namespace CONATRADEC_API.DTOs
 
         [MaxLength(500)]
         public string PaginaActual { get; set; } = string.Empty;
+
+        [Range(-90d, 90d)]
+        public double? Latitud { get; set; }
+
+        [Range(-180d, 180d)]
+        public double? Longitud { get; set; }
+
+        [Range(0d, 100000d)]
+        public double? PrecisionMetros { get; set; }
+
+        public DateTime? FechaUbicacionUtc { get; set; }
+
+        [MaxLength(30)]
+        public string OrigenUbicacion { get; set; } = string.Empty;
+
+        [MaxLength(30)]
+        public string EstadoPermisoUbicacion { get; set; } = string.Empty;
+
+        public bool? UbicacionSimulada { get; set; }
     }
 
     public sealed class DesconectarDispositivoConexionRequest
@@ -69,6 +88,7 @@ namespace CONATRADEC_API.DTOs
         public int DispositivoConexionId { get; set; }
         public DateTime UltimoLatidoUtc { get; set; }
         public DateTime ConsideradoConectadoHastaUtc { get; set; }
+        public bool UbicacionActualizada { get; set; }
     }
 
     public sealed class DispositivoConexionListadoDto
@@ -93,6 +113,14 @@ namespace CONATRADEC_API.DTOs
         public string TipoConexion { get; set; } = string.Empty;
         public string PaginaActual { get; set; } = string.Empty;
         public string DireccionIp { get; set; } = string.Empty;
+        public decimal? Latitud { get; set; }
+        public decimal? Longitud { get; set; }
+        public decimal? PrecisionMetros { get; set; }
+        public DateTime? FechaUbicacionUtc { get; set; }
+        public string OrigenUbicacion { get; set; } = string.Empty;
+        public string EstadoPermisoUbicacion { get; set; } = string.Empty;
+        public bool? UbicacionSimulada { get; set; }
+        public bool TieneUbicacion { get; set; }
         public DateTime FechaRegistroUtc { get; set; }
         public DateTime FechaInicioSesionUtc { get; set; }
         public DateTime UltimoLatidoUtc { get; set; }
@@ -100,6 +128,24 @@ namespace CONATRADEC_API.DTOs
         public bool Conectado { get; set; }
         public int SegundosDesdeUltimoLatido { get; set; }
         public int CantidadSesiones { get; set; }
+    }
+
+    public sealed class DispositivoConexionMapaDto
+    {
+        public int DispositivoConexionId { get; set; }
+        public int UsuarioId { get; set; }
+        public string UsuarioNombre { get; set; } = string.Empty;
+        public string Plataforma { get; set; } = string.Empty;
+        public string NombreDispositivo { get; set; } = string.Empty;
+        public string Modelo { get; set; } = string.Empty;
+        public decimal Latitud { get; set; }
+        public decimal Longitud { get; set; }
+        public decimal? PrecisionMetros { get; set; }
+        public DateTime FechaUbicacionUtc { get; set; }
+        public string EstadoPermisoUbicacion { get; set; } = string.Empty;
+        public bool? UbicacionSimulada { get; set; }
+        public bool Conectado { get; set; }
+        public DateTime UltimoLatidoUtc { get; set; }
     }
 
     public sealed class DispositivosConexionPaginadaDto
@@ -120,11 +166,14 @@ namespace CONATRADEC_API.DTOs
         public int AndroidConectados { get; set; }
         public int WindowsConectados { get; set; }
         public int OtrosConectados { get; set; }
+        public int ConectadosConUbicacion { get; set; }
+        public int TotalDispositivosConUbicacion { get; set; }
         public int TotalDispositivosRegistrados { get; set; }
         public int TotalSesionesRegistradas { get; set; }
         public int DispositivosActivosUltimas24Horas { get; set; }
         public int MinutosTolerancia { get; set; }
         public DateTime FechaConsultaUtc { get; set; }
         public DateTime? UltimoLatidoRecibidoUtc { get; set; }
+        public DateTime? UltimaUbicacionRecibidaUtc { get; set; }
     }
 }

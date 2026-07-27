@@ -6,6 +6,8 @@ namespace CONATRADEC_API.Models
     /// <summary>
     /// Conserva el último estado conocido de una instalación de la app MAUI.
     /// La conexión real se calcula usando UltimoLatidoUtc y una tolerancia.
+    /// La ubicación guardada es aproximada y corresponde al último dato
+    /// autorizado por el usuario mientras la aplicación estaba en uso.
     /// </summary>
     [Table("dispositivoConexion", Schema = "dbo")]
     public sealed class DispositivoConexion
@@ -72,6 +74,23 @@ namespace CONATRADEC_API.Models
 
         [MaxLength(500)]
         public string UserAgent { get; set; } = string.Empty;
+
+        public decimal? Latitud { get; set; }
+
+        public decimal? Longitud { get; set; }
+
+        public decimal? PrecisionMetros { get; set; }
+
+        public DateTime? FechaUbicacionUtc { get; set; }
+
+        [MaxLength(30)]
+        public string OrigenUbicacion { get; set; } = string.Empty;
+
+        [MaxLength(30)]
+        public string EstadoPermisoUbicacion { get; set; } =
+            "NO_REPORTADO";
+
+        public bool? UbicacionSimulada { get; set; }
 
         public DateTime FechaRegistroUtc { get; set; }
 

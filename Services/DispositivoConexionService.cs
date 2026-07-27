@@ -5,9 +5,10 @@ using Microsoft.EntityFrameworkCore;
 namespace CONATRADEC_API.Services
 {
     /// <summary>
-    /// Registra y actualiza el estado de conexión reportado por la app MAUI.
-    /// El reloj del servidor es la única fuente de verdad para determinar
-    /// cuándo fue recibido el último latido.
+    /// Registra y actualiza el estado reportado por la app MAUI.
+    /// El reloj del servidor determina el último latido. La fecha de ubicación
+    /// procede del dispositivo y únicamente se acepta si no reemplaza un dato
+    /// más reciente guardado previamente.
     /// </summary>
     public sealed class DispositivoConexionService
     {
@@ -36,6 +37,8 @@ namespace CONATRADEC_API.Services
             string sesionId = NormalizarGuid(
                 request.SesionId,
                 "El identificador de sesión no es válido.");
+
+            ValidarUbicacion(request);
 
             if (request.UsuarioId <= 0)
             {
@@ -133,6 +136,12 @@ namespace CONATRADEC_API.Services
             dispositivo.UserAgent = Limitar(
                 httpContext.Request.Headers["User-Agent"].ToString(),
                 500);
+
+            bool ubicacionActualizada = ActualizarUbicacion(
+                dispositivo,
+                request,
+                ahoraUtc);
+
             dispositivo.UltimoLatidoUtc = ahoraUtc;
             dispositivo.FechaDesconexionUtc = null;
             dispositivo.ConectadoReportado = true;
@@ -149,7 +158,8 @@ namespace CONATRADEC_API.Services
                 DispositivoConexionId = dispositivo.DispositivoConexionId,
                 UltimoLatidoUtc = ahoraUtc,
                 ConsideradoConectadoHastaUtc = ahoraUtc.AddMinutes(
-                    MinutosToleranciaPredeterminados)
+                    MinutosToleranciaPredeterminados),
+                UbicacionActualizada = ubicacionActualizada
             };
         }
 
@@ -191,6 +201,109 @@ namespace CONATRADEC_API.Services
 
             await dispositivosDb.SaveChangesAsync(cancellationToken);
             return true;
+        }
+
+        private static bool ActualizarUbicacion(
+            DispositivoConexion dispositivo,
+            ReportarDispositivoConexionRequest request,
+            DateTime ahoraUtc)
+        {
+            string estadoPermiso = Limitar(
+                request.EstadoPermisoUbicacion,
+                30);
+
+            if (!string.IsNullOrWhiteSpace(estadoPermiso))
+            {
+                dispositivo.EstadoPermisoUbicacion = estadoPermiso;
+            }
+
+            string origen = Limitar(request.OrigenUbicacion, 30);
+            if (!string.IsNullOrWhiteSpace(origen))
+                dispositivo.OrigenUbicacion = origen;
+
+            if (!request.Latitud.HasValue ||
+                !request.Longitud.HasValue)
+            {
+                return false;
+            }
+
+            DateTime fechaUbicacionUtc = request.FechaUbicacionUtc.HasValue
+                ? NormalizarFechaUtc(request.FechaUbicacionUtc.Value)
+                : ahoraUtc;
+
+            // Evita aceptar fechas futuras causadas por un reloj incorrecto.
+            if (fechaUbicacionUtc > ahoraUtc.AddMinutes(5))
+                fechaUbicacionUtc = ahoraUtc;
+
+            if (dispositivo.FechaUbicacionUtc.HasValue &&
+                fechaUbicacionUtc < dispositivo.FechaUbicacionUtc.Value)
+            {
+                return false;
+            }
+
+            dispositivo.Latitud = ConvertirCoordenada(
+                request.Latitud.Value,
+                6);
+            dispositivo.Longitud = ConvertirCoordenada(
+                request.Longitud.Value,
+                6);
+            dispositivo.PrecisionMetros = request.PrecisionMetros.HasValue
+                ? ConvertirCoordenada(
+                    Math.Max(0, request.PrecisionMetros.Value),
+                    2)
+                : null;
+            dispositivo.FechaUbicacionUtc = fechaUbicacionUtc;
+            dispositivo.UbicacionSimulada = request.UbicacionSimulada;
+
+            return true;
+        }
+
+        private static void ValidarUbicacion(
+            ReportarDispositivoConexionRequest request)
+        {
+            bool tieneLatitud = request.Latitud.HasValue;
+            bool tieneLongitud = request.Longitud.HasValue;
+
+            if (tieneLatitud != tieneLongitud)
+            {
+                throw new ArgumentException(
+                    "Latitud y longitud deben enviarse juntas.");
+            }
+
+            if (!tieneLatitud)
+                return;
+
+            if (request.Latitud!.Value is < -90 or > 90)
+            {
+                throw new ArgumentException(
+                    "La latitud reportada no es válida.");
+            }
+
+            if (request.Longitud!.Value is < -180 or > 180)
+            {
+                throw new ArgumentException(
+                    "La longitud reportada no es válida.");
+            }
+        }
+
+        private static DateTime NormalizarFechaUtc(DateTime fecha)
+        {
+            return fecha.Kind switch
+            {
+                DateTimeKind.Utc => fecha,
+                DateTimeKind.Local => fecha.ToUniversalTime(),
+                _ => DateTime.SpecifyKind(fecha, DateTimeKind.Utc)
+            };
+        }
+
+        private static decimal ConvertirCoordenada(
+            double valor,
+            int decimales)
+        {
+            return decimal.Round(
+                (decimal)valor,
+                decimales,
+                MidpointRounding.AwayFromZero);
         }
 
         private static string NormalizarGuid(

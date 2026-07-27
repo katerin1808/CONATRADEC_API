@@ -4,13 +4,20 @@ using Microsoft.EntityFrameworkCore;
 namespace CONATRADEC_API.Infrastructure
 {
     /// <summary>
-    /// Crea de forma idempotente la tabla, sus índices y la interfaz de
-    /// permisos. No requiere migración ni script SQL manual.
+    /// Crea o actualiza de forma idempotente la tabla, sus índices y la
+    /// interfaz de permisos. No requiere migración ni script SQL manual.
     /// </summary>
     public sealed class DispositivosConexionDatabaseInitializer
     {
         public const string CodigoInterfaz =
             "dispositivosConectadosPage";
+
+        private const string NombreAmigable =
+            "Dispositivos conectados";
+
+        // La columna descripcionInterfaz admite 80 caracteres.
+        private const string Descripcion =
+            "Consulta dispositivos Android y Windows conectados a la API.";
 
         private readonly DispositivosConexionDbContext dispositivosDb;
         private readonly DBContext db;
@@ -30,7 +37,13 @@ namespace CONATRADEC_API.Infrastructure
         public async Task InicializarAsync(
             CancellationToken cancellationToken = default)
         {
-            const string sql = """
+            /*
+             * SQL Server compila cada lote antes de ejecutarlo. Por eso,
+             * cuando una instalación existente todavía no tiene las
+             * columnas de ubicación, los índices deben crearse en una
+             * segunda ejecución posterior a los ALTER TABLE.
+             */
+            const string sqlEstructura = """
                 IF OBJECT_ID(N'[dbo].[dispositivoConexion]', N'U') IS NULL
                 BEGIN
                     CREATE TABLE [dbo].[dispositivoConexion]
@@ -86,6 +99,17 @@ namespace CONATRADEC_API.Infrastructure
                         [UserAgent] NVARCHAR(500) NOT NULL
                             CONSTRAINT [DF_dispositivoConexion_userAgent]
                             DEFAULT(N''),
+                        [Latitud] DECIMAL(9,6) NULL,
+                        [Longitud] DECIMAL(9,6) NULL,
+                        [PrecisionMetros] DECIMAL(10,2) NULL,
+                        [FechaUbicacionUtc] DATETIME2(0) NULL,
+                        [OrigenUbicacion] NVARCHAR(30) NOT NULL
+                            CONSTRAINT [DF_dispositivoConexion_origenUbicacion]
+                            DEFAULT(N''),
+                        [EstadoPermisoUbicacion] NVARCHAR(30) NOT NULL
+                            CONSTRAINT [DF_dispositivoConexion_permisoUbicacion]
+                            DEFAULT(N'NO_REPORTADO'),
+                        [UbicacionSimulada] BIT NULL,
                         [FechaRegistroUtc] DATETIME2(0) NOT NULL,
                         [FechaInicioSesionUtc] DATETIME2(0) NOT NULL,
                         [UltimoLatidoUtc] DATETIME2(0) NOT NULL,
@@ -107,6 +131,40 @@ namespace CONATRADEC_API.Infrastructure
                     );
                 END;
 
+                IF COL_LENGTH(N'dbo.dispositivoConexion', N'Latitud') IS NULL
+                    ALTER TABLE [dbo].[dispositivoConexion]
+                    ADD [Latitud] DECIMAL(9,6) NULL;
+
+                IF COL_LENGTH(N'dbo.dispositivoConexion', N'Longitud') IS NULL
+                    ALTER TABLE [dbo].[dispositivoConexion]
+                    ADD [Longitud] DECIMAL(9,6) NULL;
+
+                IF COL_LENGTH(N'dbo.dispositivoConexion', N'PrecisionMetros') IS NULL
+                    ALTER TABLE [dbo].[dispositivoConexion]
+                    ADD [PrecisionMetros] DECIMAL(10,2) NULL;
+
+                IF COL_LENGTH(N'dbo.dispositivoConexion', N'FechaUbicacionUtc') IS NULL
+                    ALTER TABLE [dbo].[dispositivoConexion]
+                    ADD [FechaUbicacionUtc] DATETIME2(0) NULL;
+
+                IF COL_LENGTH(N'dbo.dispositivoConexion', N'OrigenUbicacion') IS NULL
+                    ALTER TABLE [dbo].[dispositivoConexion]
+                    ADD [OrigenUbicacion] NVARCHAR(30) NOT NULL
+                        CONSTRAINT [DF_dispositivoConexion_origenUbicacion]
+                        DEFAULT(N'');
+
+                IF COL_LENGTH(N'dbo.dispositivoConexion', N'EstadoPermisoUbicacion') IS NULL
+                    ALTER TABLE [dbo].[dispositivoConexion]
+                    ADD [EstadoPermisoUbicacion] NVARCHAR(30) NOT NULL
+                        CONSTRAINT [DF_dispositivoConexion_permisoUbicacion]
+                        DEFAULT(N'NO_REPORTADO');
+
+                IF COL_LENGTH(N'dbo.dispositivoConexion', N'UbicacionSimulada') IS NULL
+                    ALTER TABLE [dbo].[dispositivoConexion]
+                    ADD [UbicacionSimulada] BIT NULL;
+                """;
+
+            const string sqlIndices = """
                 IF NOT EXISTS
                 (
                     SELECT 1
@@ -150,16 +208,36 @@ namespace CONATRADEC_API.Infrastructure
                     ON [dbo].[dispositivoConexion]
                        ([UsuarioId], [UltimoLatidoUtc]);
                 END;
+
+                IF NOT EXISTS
+                (
+                    SELECT 1
+                    FROM sys.indexes
+                    WHERE [name] =
+                        N'IX_dispositivoConexion_fechaUbicacionUtc'
+                      AND [object_id] =
+                          OBJECT_ID(N'[dbo].[dispositivoConexion]')
+                )
+                BEGIN
+                    CREATE INDEX
+                        [IX_dispositivoConexion_fechaUbicacionUtc]
+                    ON [dbo].[dispositivoConexion]([FechaUbicacionUtc])
+                    WHERE [FechaUbicacionUtc] IS NOT NULL;
+                END;
                 """;
 
             await dispositivosDb.Database.ExecuteSqlRawAsync(
-                sql,
+                sqlEstructura,
+                cancellationToken);
+
+            await dispositivosDb.Database.ExecuteSqlRawAsync(
+                sqlIndices,
                 cancellationToken);
 
             await CrearPermisoAdministrativoAsync(cancellationToken);
 
             logger.LogInformation(
-                "Módulo de dispositivos conectados inicializado correctamente.");
+                "Módulo de dispositivos y ubicación inicializado correctamente.");
         }
 
         private async Task CrearPermisoAdministrativoAsync(
@@ -170,32 +248,56 @@ namespace CONATRADEC_API.Infrastructure
                     x => x.nombreInterfaz == CodigoInterfaz,
                     cancellationToken);
 
+            bool guardar = false;
+
             if (interfaz == null)
             {
                 interfaz = new Interfaz
                 {
                     nombreInterfaz = CodigoInterfaz,
-                    nombreAmigableInterfaz =
-                        "Dispositivos conectados",
-                    descripcionInterfaz =
-                        "Consulta dispositivos Android y Windows conectados a la API.",
+                    nombreAmigableInterfaz = NombreAmigable,
+                    descripcionInterfaz = Descripcion,
                     activo = true
                 };
 
                 db.Interfaz.Add(interfaz);
-                await db.SaveChangesAsync(cancellationToken);
+                guardar = true;
             }
-            else if (!interfaz.activo)
+            else
             {
-                interfaz.activo = true;
-                await db.SaveChangesAsync(cancellationToken);
+                if (!string.Equals(
+                        interfaz.nombreAmigableInterfaz,
+                        NombreAmigable,
+                        StringComparison.Ordinal))
+                {
+                    interfaz.nombreAmigableInterfaz = NombreAmigable;
+                    guardar = true;
+                }
+
+                if (!string.Equals(
+                        interfaz.descripcionInterfaz,
+                        Descripcion,
+                        StringComparison.Ordinal))
+                {
+                    interfaz.descripcionInterfaz = Descripcion;
+                    guardar = true;
+                }
+
+                if (!interfaz.activo)
+                {
+                    interfaz.activo = true;
+                    guardar = true;
+                }
             }
+
+            if (guardar)
+                await db.SaveChangesAsync(cancellationToken);
 
             List<int> rolesAdministradores = await db.Roles
                 .AsNoTracking()
                 .Where(x =>
                     x.activo &&
-                    x.nombreRol.ToUpper() == "ADMINISTRADOR")
+                    EF.Functions.Like(x.nombreRol, "%ADMIN%"))
                 .Select(x => x.rolId)
                 .ToListAsync(cancellationToken);
 
