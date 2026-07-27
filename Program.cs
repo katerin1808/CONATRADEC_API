@@ -1,4 +1,5 @@
 using CONATRADEC_API.Auditing;
+using CONATRADEC_API.Endpoints;
 using CONATRADEC_API.Filters;
 using CONATRADEC_API.Infrastructure;
 using CONATRADEC_API.Middleware;
@@ -54,6 +55,11 @@ builder.Services.AddScoped<NoticiasDatabaseInitializer>();
 builder.Services.AddScoped<
     BusquedaTextoCompletoNoticiasService>();
 
+// Registro y consulta de dispositivos Android/Windows conectados.
+builder.Services.AddScoped<DispositivoConexionService>();
+builder.Services.AddScoped<
+    DispositivosConexionDatabaseInitializer>();
+
 // Contexto e interceptores transversales de auditoría.
 builder.Services.AddScoped<AuditRequestContext>();
 builder.Services.AddScoped<AuditSaveChangesInterceptor>();
@@ -105,6 +111,14 @@ builder.Services.AddDbContext<NoticiasDbContext>(
     });
 
 builder.Services.AddDbContext<BitacoraDbContext>(
+    options =>
+    {
+        options.UseSqlServer(connectionString);
+    });
+
+// Contexto separado para que los latidos no generen cambios auditados ni
+// interfieran con el DbContext principal de la aplicación.
+builder.Services.AddDbContext<DispositivosConexionDbContext>(
     options =>
     {
         options.UseSqlServer(connectionString);
@@ -256,6 +270,14 @@ app.UseAuthorization();
 app.MapControllers();
 
 /*
+ * Los latidos de los dispositivos se publican como endpoints mínimos fuera
+ * del prefijo /api. BitacoraMiddleware solo audita controladores o rutas /api,
+ * por lo que estos reportes periódicos no llenan la bitácora. Las consultas
+ * administrativas sí permanecen en /api/dispositivos-conectados.
+ */
+app.MapDispositivosConexionEndpoints();
+
+/*
  * Miniaturas del álbum botánico y del centro de noticias.
  *
  * Esta ruta no usa el prefijo /api y es un endpoint mínimo, no una acción de
@@ -359,14 +381,22 @@ app.MapGet(
 /*
  * Inicializadores idempotentes.
  *
- * El inicializador del análisis agrega la columna necesaria para conservar
- * la decisión del usuario por elemento. Se ejecuta antes del módulo de
- * noticias y no requiere migraciones o scripts manuales.
+ * Cada inicializador comprueba su propia estructura. Se ejecutan al arrancar
+ * la API y no requieren que el usuario aplique migraciones manualmente.
  */
 await using (
     AsyncServiceScope scope =
         app.Services.CreateAsyncScope())
 {
+    DispositivosConexionDatabaseInitializer
+        dispositivosInitializer =
+            scope.ServiceProvider
+                .GetRequiredService<
+                    DispositivosConexionDatabaseInitializer>();
+
+    await dispositivosInitializer
+        .InicializarAsync();
+
     AnalisisSueloDatabaseInitializer
         analisisInitializer =
             scope.ServiceProvider
