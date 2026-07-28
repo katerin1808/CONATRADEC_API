@@ -91,7 +91,7 @@ namespace CONATRADEC_API.Services
                         ? StatusCodes.Status403Forbidden
                         : StatusCodes.Status401Unauthorized,
                     usuarioActivo
-                        ? "Su rol no tiene acceso al módulo de noticias."
+                        ? "Su rol no tiene acceso a este módulo."
                         : "El usuario autenticado no existe o se encuentra inactivo.");
             }
 
@@ -114,7 +114,7 @@ namespace CONATRADEC_API.Services
                 ? ResultadoPermisoApi.Ok()
                 : ResultadoPermisoApi.Denegado(
                     StatusCodes.Status403Forbidden,
-                    "No tiene permiso para realizar esta operación en el módulo de noticias.");
+                    "No tiene permiso para realizar esta operación.");
         }
     }
 }

@@ -5,12 +5,31 @@ using CONATRADEC_API.Infrastructure;
 using CONATRADEC_API.Middleware;
 using CONATRADEC_API.Models;
 using CONATRADEC_API.Services;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Server.IIS;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using QuestPDF.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
+
+const long tamanoMaximoActualizacion = 1024L * 1024L * 1024L;
+
+builder.Services.Configure<FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = tamanoMaximoActualizacion;
+});
+
+builder.Services.Configure<IISServerOptions>(options =>
+{
+    options.MaxRequestBodySize = tamanoMaximoActualizacion;
+});
+
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = tamanoMaximoActualizacion;
+});
 
 builder.Services.AddControllers(options =>
 {
@@ -50,6 +69,9 @@ builder.Services.AddScoped<DispositivosConexionDatabaseInitializer>();
 builder.Services.AddScoped<UmbralesAlertasService>();
 
 builder.Services.AddScoped<AlertasAgricolasDatabaseInitializer>();
+
+// Módulo de publicación y descarga de versiones Android/Windows.
+builder.Services.AddScoped<ActualizacionesDatabaseInitializer>();
 
 builder.Services.AddScoped<AuditRequestContext>();
 builder.Services.AddScoped<AuditSaveChangesInterceptor>();
@@ -111,6 +133,12 @@ builder.Services.AddDbContext<DispositivosConexionDbContext>(
     });
 
 builder.Services.AddDbContext<AlertasAgricolasDbContext>(
+    options =>
+    {
+        options.UseSqlServer(connectionString);
+    });
+
+builder.Services.AddDbContext<ActualizacionesDbContext>(
     options =>
     {
         options.UseSqlServer(connectionString);
@@ -342,6 +370,12 @@ await using (
             .GetRequiredService<AlertasAgricolasDatabaseInitializer>();
 
     await alertasInitializer.InicializarAsync();
+
+    ActualizacionesDatabaseInitializer actualizacionesInitializer =
+        scope.ServiceProvider
+            .GetRequiredService<ActualizacionesDatabaseInitializer>();
+
+    await actualizacionesInitializer.InicializarAsync();
 }
 
 app.Run();
