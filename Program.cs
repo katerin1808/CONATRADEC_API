@@ -40,32 +40,24 @@ builder.Services.AddScoped<AnalisisSueloCalculoService>();
 builder.Services.AddScoped<AnalisisReporteDatosService>();
 builder.Services.AddScoped<ImageService>();
 
-builder.Services.AddScoped<
-    AnalisisSueloDatabaseInitializer>();
-
+builder.Services.AddScoped<AnalisisSueloDatabaseInitializer>();
 builder.Services.AddScoped<PermisoApiService>();
 builder.Services.AddScoped<NoticiasDatabaseInitializer>();
-builder.Services.AddScoped<
-    BusquedaTextoCompletoNoticiasService>();
+builder.Services.AddScoped<BusquedaTextoCompletoNoticiasService>();
 
 builder.Services.AddScoped<DispositivoConexionService>();
-builder.Services.AddScoped<
-    DispositivosConexionDatabaseInitializer>();
+builder.Services.AddScoped<DispositivosConexionDatabaseInitializer>();
+builder.Services.AddScoped<UmbralesAlertasService>();
 
-builder.Services.AddScoped<
-    UmbralesAlertasService>();
-
-/*
- * Módulo de alertas agrícolas.
- * Este registro es obligatorio para construir
- * SeguimientoAlertasAgricolasController.
- */
-builder.Services.AddScoped<
-    AlertasAgricolasDatabaseInitializer>();
+builder.Services.AddScoped<AlertasAgricolasDatabaseInitializer>();
 
 builder.Services.AddScoped<AuditRequestContext>();
 builder.Services.AddScoped<AuditSaveChangesInterceptor>();
 builder.Services.AddScoped<AuditTransactionInterceptor>();
+
+// Seguridad de usuarios y control de vigencia de sesiones.
+builder.Services.AddScoped<SessionVersionSaveChangesInterceptor>();
+builder.Services.AddScoped<SessionSecurityDatabaseInitializer>();
 
 string connectionString =
     builder.Configuration
@@ -80,11 +72,11 @@ builder.Services.AddDbContext<DBContext>(
             .UseSqlServer(connectionString)
             .AddInterceptors(
                 serviceProvider
-                    .GetRequiredService<
-                        AuditSaveChangesInterceptor>(),
+                    .GetRequiredService<AuditSaveChangesInterceptor>(),
                 serviceProvider
-                    .GetRequiredService<
-                        AuditTransactionInterceptor>());
+                    .GetRequiredService<AuditTransactionInterceptor>(),
+                serviceProvider
+                    .GetRequiredService<SessionVersionSaveChangesInterceptor>());
 
         if (builder.Environment.IsDevelopment())
         {
@@ -101,11 +93,9 @@ builder.Services.AddDbContext<NoticiasDbContext>(
             .UseSqlServer(connectionString)
             .AddInterceptors(
                 serviceProvider
-                    .GetRequiredService<
-                        AuditSaveChangesInterceptor>(),
+                    .GetRequiredService<AuditSaveChangesInterceptor>(),
                 serviceProvider
-                    .GetRequiredService<
-                        AuditTransactionInterceptor>());
+                    .GetRequiredService<AuditTransactionInterceptor>());
     });
 
 builder.Services.AddDbContext<BitacoraDbContext>(
@@ -120,10 +110,6 @@ builder.Services.AddDbContext<DispositivosConexionDbContext>(
         options.UseSqlServer(connectionString);
     });
 
-/*
- * Contexto independiente del módulo de alertas agrícolas.
- * Utiliza la misma base de datos del sistema.
- */
 builder.Services.AddDbContext<AlertasAgricolasDbContext>(
     options =>
     {
@@ -133,8 +119,7 @@ builder.Services.AddDbContext<AlertasAgricolasDbContext>(
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-QuestPDF.Settings.License =
-    LicenseType.Community;
+QuestPDF.Settings.License = LicenseType.Community;
 
 var app = builder.Build();
 
@@ -157,10 +142,8 @@ Directory.CreateDirectory(rutaRecursos);
 
 app.UseStaticFiles(new StaticFileOptions
 {
-    FileProvider =
-        new PhysicalFileProvider(rutaRecursos),
-    RequestPath =
-        "/resources/uploads/users/img"
+    FileProvider = new PhysicalFileProvider(rutaRecursos),
+    RequestPath = "/resources/uploads/users/img"
 });
 
 var rutaTerrenos = Path.Combine(
@@ -173,10 +156,8 @@ Directory.CreateDirectory(rutaTerrenos);
 
 app.UseStaticFiles(new StaticFileOptions
 {
-    FileProvider =
-        new PhysicalFileProvider(rutaTerrenos),
-    RequestPath =
-        "/resources/uploads/terrenos"
+    FileProvider = new PhysicalFileProvider(rutaTerrenos),
+    RequestPath = "/resources/uploads/terrenos"
 });
 
 var rutaAlbumBotanico = Path.Combine(
@@ -189,11 +170,8 @@ Directory.CreateDirectory(rutaAlbumBotanico);
 
 app.UseStaticFiles(new StaticFileOptions
 {
-    FileProvider =
-        new PhysicalFileProvider(
-            rutaAlbumBotanico),
-    RequestPath =
-        "/resources/uploads/album-botanico"
+    FileProvider = new PhysicalFileProvider(rutaAlbumBotanico),
+    RequestPath = "/resources/uploads/album-botanico"
 });
 
 var rutaCategoriasAlbum = Path.Combine(
@@ -206,11 +184,8 @@ Directory.CreateDirectory(rutaCategoriasAlbum);
 
 app.UseStaticFiles(new StaticFileOptions
 {
-    FileProvider =
-        new PhysicalFileProvider(
-            rutaCategoriasAlbum),
-    RequestPath =
-        "/resources/uploads/categorias-album"
+    FileProvider = new PhysicalFileProvider(rutaCategoriasAlbum),
+    RequestPath = "/resources/uploads/categorias-album"
 });
 
 var rutaNoticias = Path.Combine(
@@ -223,28 +198,25 @@ Directory.CreateDirectory(rutaNoticias);
 
 app.UseStaticFiles(new StaticFileOptions
 {
-    FileProvider =
-        new PhysicalFileProvider(rutaNoticias),
-    RequestPath =
-        "/resources/uploads/noticias"
+    FileProvider = new PhysicalFileProvider(rutaNoticias),
+    RequestPath = "/resources/uploads/noticias"
 });
 
 app.UseRouting();
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
+app.UseMiddleware<VersionSesionMiddleware>();
 
 app.UseStatusCodePages(
     async statusCodeContext =>
     {
-        HttpResponse response =
-            statusCodeContext
-                .HttpContext
-                .Response;
+        HttpResponse response = statusCodeContext
+            .HttpContext
+            .Response;
 
         if (response.HasStarted ||
             response.ContentLength is > 0 ||
-            !string.IsNullOrWhiteSpace(
-                response.ContentType))
+            !string.IsNullOrWhiteSpace(response.ContentType))
         {
             return;
         }
@@ -252,21 +224,17 @@ app.UseStatusCodePages(
         response.ContentType =
             "application/json; charset=utf-8";
 
-        var errorResponse =
-            ApiErrorResponseFactory.Create(
-                statusCodeContext.HttpContext,
-                response.StatusCode);
+        var errorResponse = ApiErrorResponseFactory.Create(
+            statusCodeContext.HttpContext,
+            response.StatusCode);
 
-        await response.WriteAsJsonAsync(
-            errorResponse);
+        await response.WriteAsJsonAsync(errorResponse);
     });
 
 app.UseMiddleware<BitacoraMiddleware>();
-
 app.UseAuthorization();
 
 app.MapControllers();
-
 app.MapDispositivosConexionEndpoints();
 
 app.MapGet(
@@ -278,68 +246,50 @@ app.MapGet(
         int ancho = 720,
         int alto = 480,
         int calidad = 68,
-        CancellationToken cancellationToken =
-            default) =>
+        CancellationToken cancellationToken = default) =>
     {
         try
         {
             MiniaturaImagenResult? miniatura =
-                await imageService
-                    .ObtenerOCrearMiniaturaAsync(
-                        ruta,
-                        ancho,
-                        alto,
-                        calidad,
-                        cancellationToken);
+                await imageService.ObtenerOCrearMiniaturaAsync(
+                    ruta,
+                    ancho,
+                    alto,
+                    calidad,
+                    cancellationToken);
 
             if (miniatura == null)
                 return Results.NotFound();
 
-            string etag =
-                $"\"{miniatura.ETag}\"";
+            string etag = $"\"{miniatura.ETag}\"";
 
-            context.Response.Headers["ETag"] =
-                etag;
-
-            context.Response.Headers[
-                    "Cache-Control"] =
+            context.Response.Headers["ETag"] = etag;
+            context.Response.Headers["Cache-Control"] =
                 "public,max-age=2592000,immutable";
-
-            context.Response.Headers[
-                    "Last-Modified"] =
-                miniatura
-                    .UltimaModificacion
-                    .ToString("R");
-
-            context.Response.Headers[
-                    "X-Content-Type-Options"] =
+            context.Response.Headers["Last-Modified"] =
+                miniatura.UltimaModificacion.ToString("R");
+            context.Response.Headers["X-Content-Type-Options"] =
                 "nosniff";
 
-            string ifNoneMatch =
-                context
-                    .Request
-                    .Headers["If-None-Match"]
-                    .ToString();
+            string ifNoneMatch = context
+                .Request
+                .Headers["If-None-Match"]
+                .ToString();
 
-            bool noModificada =
-                ifNoneMatch
-                    .Split(
-                        ',',
-                        StringSplitOptions
-                            .RemoveEmptyEntries |
-                        StringSplitOptions
-                            .TrimEntries)
-                    .Any(value =>
-                        string.Equals(
-                            value,
-                            etag,
-                            StringComparison.Ordinal));
+            bool noModificada = ifNoneMatch
+                .Split(
+                    ',',
+                    StringSplitOptions.RemoveEmptyEntries |
+                    StringSplitOptions.TrimEntries)
+                .Any(value => string.Equals(
+                    value,
+                    etag,
+                    StringComparison.Ordinal));
 
             if (noModificada)
             {
                 return Results.StatusCode(
-                    StatusCodes
-                        .Status304NotModified);
+                    StatusCodes.Status304NotModified);
             }
 
             return Results.File(
@@ -361,48 +311,37 @@ app.MapGet(
     });
 
 await using (
-    AsyncServiceScope scope =
-        app.Services.CreateAsyncScope())
+    AsyncServiceScope scope = app.Services.CreateAsyncScope())
 {
-    DispositivosConexionDatabaseInitializer
-        dispositivosInitializer =
-            scope.ServiceProvider
-                .GetRequiredService<
-                    DispositivosConexionDatabaseInitializer>();
+    SessionSecurityDatabaseInitializer sessionInitializer =
+        scope.ServiceProvider
+            .GetRequiredService<SessionSecurityDatabaseInitializer>();
 
-    await dispositivosInitializer
-        .InicializarAsync();
+    await sessionInitializer.InicializarAsync();
 
-    AnalisisSueloDatabaseInitializer
-        analisisInitializer =
-            scope.ServiceProvider
-                .GetRequiredService<
-                    AnalisisSueloDatabaseInitializer>();
+    DispositivosConexionDatabaseInitializer dispositivosInitializer =
+        scope.ServiceProvider
+            .GetRequiredService<DispositivosConexionDatabaseInitializer>();
 
-    await analisisInitializer
-        .InicializarAsync();
+    await dispositivosInitializer.InicializarAsync();
 
-    NoticiasDatabaseInitializer
-        noticiasInitializer =
-            scope.ServiceProvider
-                .GetRequiredService<
-                    NoticiasDatabaseInitializer>();
+    AnalisisSueloDatabaseInitializer analisisInitializer =
+        scope.ServiceProvider
+            .GetRequiredService<AnalisisSueloDatabaseInitializer>();
 
-    await noticiasInitializer
-        .InicializarAsync();
+    await analisisInitializer.InicializarAsync();
 
-    /*
-     * Crea las tablas y configuraciones del módulo
-     * de alertas antes de aceptar solicitudes.
-     */
-    AlertasAgricolasDatabaseInitializer
-        alertasInitializer =
-            scope.ServiceProvider
-                .GetRequiredService<
-                    AlertasAgricolasDatabaseInitializer>();
+    NoticiasDatabaseInitializer noticiasInitializer =
+        scope.ServiceProvider
+            .GetRequiredService<NoticiasDatabaseInitializer>();
 
-    await alertasInitializer
-        .InicializarAsync();
+    await noticiasInitializer.InicializarAsync();
+
+    AlertasAgricolasDatabaseInitializer alertasInitializer =
+        scope.ServiceProvider
+            .GetRequiredService<AlertasAgricolasDatabaseInitializer>();
+
+    await alertasInitializer.InicializarAsync();
 }
 
 app.Run();

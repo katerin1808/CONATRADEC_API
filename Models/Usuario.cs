@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace CONATRADEC_API.Models
@@ -28,14 +28,18 @@ namespace CONATRADEC_API.Models
         [MaxLength(25)]
         public string? telefonoUsuario { get; set; }
 
-        // Mapearemos a DATE en DbContext (DateOnly)
         public DateOnly? fechaNacimientoUsuario { get; set; }
 
         public bool activo { get; set; } = true;
 
-
         [MaxLength(500)]
-        public string? urlImagenUsuario { get; set; } //= string.Empty;
+        public string? urlImagenUsuario { get; set; }
+
+        /// <summary>
+        /// Se incrementa al cambiar el rol o los permisos asociados al rol.
+        /// Los clientes comparan este valor para invalidar sesiones antiguas.
+        /// </summary>
+        public int versionSesion { get; set; } = 1;
 
         // ===== Relaciones (FK) =====
         public int rolId { get; set; }
@@ -46,10 +50,6 @@ namespace CONATRADEC_API.Models
 
         public int? municipioId { get; set; }
         public Municipio? Municipio { get; set; }
-
-      
-
-
 
         /// <summary>
         /// DTO usado para iniciar sesión (login).

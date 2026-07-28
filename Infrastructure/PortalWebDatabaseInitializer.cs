@@ -75,7 +75,7 @@ public sealed class PortalWebDatabaseInitializer
             .AsNoTracking()
             .Where(x =>
                 x.activo &&
-                EF.Functions.Like(x.nombreRol.ToUpper(), "%ADMIN%"))
+                x.nombreRol.Trim().ToUpper() == "ADMINISTRADOR")
             .Select(x => x.rolId)
             .ToListAsync(cancellationToken);
 

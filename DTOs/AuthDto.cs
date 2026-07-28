@@ -1,4 +1,4 @@
-﻿namespace CONATRADEC_API.DTOs
+namespace CONATRADEC_API.DTOs
 {
     public class AuthDtos
     {
@@ -13,20 +13,20 @@
             public string correoUsuario { get; set; } = default!;
             public bool activo { get; set; }
 
-            // Datos del rol asignado
             public int rolId { get; set; }
             public string rolNombre { get; set; } = default!;
 
-            // Datos de procedencia (Interno / Externo)
             public int procedenciaId { get; set; }
             public string procedenciaNombre { get; set; } = default!;
             public bool esInterno { get; set; }
 
-            // Opcional: Token (si luego implementas JWT)
             public string? token { get; set; }
-
             public string urlImagenUsuario { get; set; } = string.Empty;
 
+            /// <summary>
+            /// Versión que identifica la vigencia de la sesión.
+            /// </summary>
+            public int versionSesion { get; set; }
 
             public List<PermisoInterfazDto> permisos { get; set; } = new();
         }
@@ -36,11 +36,8 @@
             public int interfazId { get; set; }
             public string nombreInterfaz { get; set; } = default!;
             public bool? leer { get; set; }
-
             public bool? agregar { get; set; }
-
             public bool? actualizar { get; set; }
-
             public bool? eliminar { get; set; }
         }
     }

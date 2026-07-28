@@ -9,6 +9,9 @@ namespace CONATRADEC_API.Controllers
     [Route("api/[controller]")]
     public sealed class RolController : ControllerBase
     {
+        private const string NOMBRE_ROL_ADMINISTRADOR =
+            "Administrador";
+
         private readonly DBContext context;
         private readonly ILogger<RolController> logger;
 
@@ -141,7 +144,8 @@ namespace CONATRADEC_API.Controllers
                     item.descripcionRol,
                     item.activo,
                     esAdministrador =
-                        item.nombreRol.ToUpper().Contains("ADMIN")
+                        item.nombreRol.Trim().ToUpper() ==
+                        "ADMINISTRADOR"
                 })
                 .ToListAsync(cancellationToken);
 
@@ -163,7 +167,8 @@ namespace CONATRADEC_API.Controllers
                     item.descripcionRol,
                     item.activo,
                     esAdministrador =
-                        item.nombreRol.ToUpper().Contains("ADMIN")
+                        item.nombreRol.Trim().ToUpper() ==
+                        "ADMINISTRADOR"
                 })
                 .ToListAsync(cancellationToken);
 
@@ -255,7 +260,8 @@ namespace CONATRADEC_API.Controllers
                     item.descripcionRol,
                     item.activo,
                     esAdministrador =
-                        item.nombreRol.ToUpper().Contains("ADMIN")
+                        item.nombreRol.Trim().ToUpper() ==
+                        "ADMINISTRADOR"
                 })
                 .SingleOrDefaultAsync(cancellationToken);
 
@@ -310,7 +316,7 @@ namespace CONATRADEC_API.Controllers
                 {
                     success = false,
                     message =
-                        "El rol administrador está protegido y no puede editarse."
+                        "El rol Administrador está protegido y no puede editarse."
                 });
             }
 
@@ -412,7 +418,7 @@ namespace CONATRADEC_API.Controllers
                 {
                     success = false,
                     message =
-                        "El rol administrador está protegido y no puede desactivarse."
+                        "El rol Administrador está protegido y no puede desactivarse."
                 });
             }
 
@@ -436,11 +442,6 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
-            /*
-             * Los permisos históricos no impiden desactivar el rol.
-             * Se conservan para que vuelvan a estar disponibles si el rol
-             * se reactiva posteriormente.
-             */
             rol.activo = false;
             await context.SaveChangesAsync(cancellationToken);
 
@@ -452,10 +453,10 @@ namespace CONATRADEC_API.Controllers
         }
 
         private static bool EsAdministrador(string? nombreRol) =>
-            (nombreRol ?? string.Empty)
-                .Contains(
-                    "ADMIN",
-                    StringComparison.OrdinalIgnoreCase);
+            string.Equals(
+                nombreRol?.Trim(),
+                NOMBRE_ROL_ADMINISTRADOR,
+                StringComparison.OrdinalIgnoreCase);
 
         private static string NormalizarNombre(string? valor) =>
             (valor ?? string.Empty)

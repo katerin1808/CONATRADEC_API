@@ -1,4 +1,4 @@
-﻿using CONATRADEC_API.Infrastructure;
+using CONATRADEC_API.Infrastructure;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
@@ -31,8 +31,7 @@ namespace CONATRADEC_API.Middleware
             catch (OperationCanceledException)
                 when (context.RequestAborted.IsCancellationRequested)
             {
-                // El cliente canceló la solicitud. No se intenta escribir
-                // una respuesta nueva sobre una conexión ya cerrada.
+                // El cliente canceló la solicitud.
             }
             catch (Exception exception)
             {
@@ -79,6 +78,14 @@ namespace CONATRADEC_API.Middleware
             string Code)
             ResolveException(Exception exception)
         {
+            if (exception is UsuarioAdministradorProtegidoException)
+            {
+                return (
+                    StatusCodes.Status409Conflict,
+                    exception.Message,
+                    "PROTECTED_ADMIN_USER");
+            }
+
             if (exception is JsonException or BadHttpRequestException)
             {
                 return (

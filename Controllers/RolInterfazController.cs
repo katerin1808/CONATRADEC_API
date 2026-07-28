@@ -9,6 +9,9 @@ namespace CONATRADEC_API.Controllers
     [Route("api/rol-permisos")]
     public sealed class RolPermisosController : ControllerBase
     {
+        private const string NOMBRE_ROL_ADMINISTRADOR =
+            "Administrador";
+
         private readonly DBContext db;
 
         public RolPermisosController(DBContext db)
@@ -103,7 +106,7 @@ namespace CONATRADEC_API.Controllers
                 {
                     success = false,
                     message =
-                        "Los permisos del rol administrador están protegidos y no pueden modificarse."
+                        "Los permisos del rol Administrador están protegidos y no pueden modificarse."
                 });
             }
 
@@ -243,7 +246,7 @@ namespace CONATRADEC_API.Controllers
                 {
                     success = false,
                     message =
-                        "Los permisos del rol administrador están protegidos."
+                        "Los permisos del rol Administrador están protegidos."
                 });
             }
 
@@ -358,9 +361,8 @@ namespace CONATRADEC_API.Controllers
                     rol.nombreRol,
 
                     esAdministrador =
-                        rol.nombreRol
-                            .ToUpper()
-                            .Contains("ADMIN"),
+                        rol.nombreRol.Trim().ToUpper() ==
+                        "ADMINISTRADOR",
 
                     interfaz.interfazId,
                     interfaz.nombreInterfaz,
@@ -456,9 +458,9 @@ namespace CONATRADEC_API.Controllers
 
         private static bool EsAdministrador(
             string? nombreRol) =>
-            (nombreRol ?? string.Empty)
-                .Contains(
-                    "ADMIN",
-                    StringComparison.OrdinalIgnoreCase);
+            string.Equals(
+                nombreRol?.Trim(),
+                NOMBRE_ROL_ADMINISTRADOR,
+                StringComparison.OrdinalIgnoreCase);
     }
 }
