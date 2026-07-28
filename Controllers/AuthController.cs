@@ -78,9 +78,32 @@ namespace CONATRADEC_API.Controllers
             if (!VerifyHash(req.clave, usuario.claveHashUsuario))
                 return Unauthorized("Usuario o contraseña inválidos.");
 
+            /*
+             * Este aprovisionador puede crear una interfaz o una relación de
+             * permisos. Cuando eso sucede, el interceptor aumenta en la base de
+             * datos la versionSesion de los usuarios afectados.
+             *
+             * Como el usuario fue cargado antes, su entidad rastreada puede
+             * conservar temporalmente la versión anterior. Si se devuelve esa
+             * versión desactualizada, el siguiente request del cliente queda
+             * invalidado aunque el usuario apenas haya iniciado sesión.
+             */
             await OfflinePermissionProvisioner.AsegurarAsync(
                 db,
                 cancellationToken);
+
+            // Recupera la versión definitiva que quedó guardada en la BD.
+            await db.Entry(usuario).ReloadAsync(cancellationToken);
+
+            /*
+             * Protección adicional para instalaciones antiguas o registros que
+             * todavía tengan una versión nula/cero por datos heredados.
+             */
+            if (usuario.versionSesion < 1)
+            {
+                usuario.versionSesion = 1;
+                await db.SaveChangesAsync(cancellationToken);
+            }
 
             List<PermisoInterfazDto> permisos = await db.RolInterfaz
                 .AsNoTracking()
@@ -118,7 +141,7 @@ namespace CONATRADEC_API.Controllers
                     "Interno",
                     StringComparison.OrdinalIgnoreCase),
                 urlImagenUsuario = usuario.urlImagenUsuario,
-                versionSesion = Math.Max(1, usuario.versionSesion),
+                versionSesion = usuario.versionSesion,
                 permisos = permisos
             };
 
