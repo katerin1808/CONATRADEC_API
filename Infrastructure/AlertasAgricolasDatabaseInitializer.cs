@@ -301,6 +301,246 @@ BEGIN
     WHERE [nombreInterfaz] =
         N'alertasAgricolasPage';
 END;
+
+/*
+ * Permisos específicos del portal web.
+ * Se conservan separados para permitir que un rol pueda:
+ * - consultar alertas;
+ * - gestionar seguimientos;
+ * - administrar umbrales.
+ */
+MERGE [dbo].[interfaz] AS destino
+USING
+(
+    VALUES
+      (
+        N'CentroAlertasWeb',
+        N'Centro de alertas',
+        N'Consulta de alertas agrícolas detectadas en el portal.'
+      ),
+      (
+        N'SeguimientoAlertasWeb',
+        N'Seguimiento de alertas',
+        N'Creación, asignación, actualización e historial de seguimientos.'
+      ),
+      (
+        N'ConfiguracionAlertasWeb',
+        N'Configuración de umbrales',
+        N'Consulta y modificación de los umbrales agrícolas.'
+      )
+) AS origen
+(
+    [NombreInterfaz],
+    [NombreAmigable],
+    [Descripcion]
+)
+ON destino.[nombreInterfaz] =
+    origen.[NombreInterfaz]
+
+WHEN MATCHED THEN
+    UPDATE SET
+        destino.[nombreAmigableInterfaz] =
+            origen.[NombreAmigable],
+        destino.[descripcionInterfaz] =
+            origen.[Descripcion],
+        destino.[activo] = 1
+
+WHEN NOT MATCHED THEN
+    INSERT
+    (
+        [nombreInterfaz],
+        [nombreAmigableInterfaz],
+        [descripcionInterfaz],
+        [activo]
+    )
+    VALUES
+    (
+        origen.[NombreInterfaz],
+        origen.[NombreAmigable],
+        origen.[Descripcion],
+        1
+    );
+
+/*
+ * Migra los permisos históricos de CentroAlertasWeb
+ * hacia las nuevas interfaces sin quitar ningún permiso.
+ */
+DECLARE @CentroAlertasId INT =
+(
+    SELECT TOP (1) [interfazId]
+    FROM [dbo].[interfaz]
+    WHERE [nombreInterfaz] = N'CentroAlertasWeb'
+);
+
+DECLARE @SeguimientoAlertasId INT =
+(
+    SELECT TOP (1) [interfazId]
+    FROM [dbo].[interfaz]
+    WHERE [nombreInterfaz] = N'SeguimientoAlertasWeb'
+);
+
+DECLARE @ConfiguracionAlertasId INT =
+(
+    SELECT TOP (1) [interfazId]
+    FROM [dbo].[interfaz]
+    WHERE [nombreInterfaz] = N'ConfiguracionAlertasWeb'
+);
+
+IF @CentroAlertasId IS NOT NULL
+BEGIN
+    MERGE [dbo].[rolInterfaz] AS destino
+    USING
+    (
+        SELECT
+            origenRol.[rolId],
+            @SeguimientoAlertasId AS [interfazId],
+            origenRol.[leer],
+            origenRol.[agregar],
+            origenRol.[actualizar],
+            origenRol.[eliminar]
+        FROM [dbo].[rolInterfaz] origenRol
+        WHERE origenRol.[interfazId] =
+            @CentroAlertasId
+    ) AS origen
+    ON destino.[rolId] = origen.[rolId]
+       AND destino.[interfazId] = origen.[interfazId]
+    WHEN MATCHED THEN
+        UPDATE SET
+            destino.[leer] =
+                CASE WHEN origen.[leer] = 1
+                     THEN 1 ELSE destino.[leer] END,
+            destino.[agregar] =
+                CASE WHEN origen.[agregar] = 1
+                     THEN 1 ELSE destino.[agregar] END,
+            destino.[actualizar] =
+                CASE WHEN origen.[actualizar] = 1
+                     THEN 1 ELSE destino.[actualizar] END,
+            destino.[eliminar] =
+                CASE WHEN origen.[eliminar] = 1
+                     THEN 1 ELSE destino.[eliminar] END
+    WHEN NOT MATCHED AND origen.[interfazId] IS NOT NULL THEN
+        INSERT
+        (
+            [rolId],
+            [interfazId],
+            [leer],
+            [agregar],
+            [actualizar],
+            [eliminar]
+        )
+        VALUES
+        (
+            origen.[rolId],
+            origen.[interfazId],
+            origen.[leer],
+            origen.[agregar],
+            origen.[actualizar],
+            origen.[eliminar]
+        );
+
+    MERGE [dbo].[rolInterfaz] AS destino
+    USING
+    (
+        SELECT
+            origenRol.[rolId],
+            @ConfiguracionAlertasId AS [interfazId],
+            origenRol.[leer],
+            CAST(0 AS BIT) AS [agregar],
+            origenRol.[actualizar],
+            CAST(0 AS BIT) AS [eliminar]
+        FROM [dbo].[rolInterfaz] origenRol
+        WHERE origenRol.[interfazId] =
+            @CentroAlertasId
+    ) AS origen
+    ON destino.[rolId] = origen.[rolId]
+       AND destino.[interfazId] = origen.[interfazId]
+    WHEN MATCHED THEN
+        UPDATE SET
+            destino.[leer] =
+                CASE WHEN origen.[leer] = 1
+                     THEN 1 ELSE destino.[leer] END,
+            destino.[actualizar] =
+                CASE WHEN origen.[actualizar] = 1
+                     THEN 1 ELSE destino.[actualizar] END
+    WHEN NOT MATCHED AND origen.[interfazId] IS NOT NULL THEN
+        INSERT
+        (
+            [rolId],
+            [interfazId],
+            [leer],
+            [agregar],
+            [actualizar],
+            [eliminar]
+        )
+        VALUES
+        (
+            origen.[rolId],
+            origen.[interfazId],
+            origen.[leer],
+            0,
+            origen.[actualizar],
+            0
+        );
+END;
+
+/*
+ * El administrador conserva control total y sus permisos
+ * continúan protegidos por la matriz.
+ */
+INSERT INTO [dbo].[rolInterfaz]
+(
+    [rolId],
+    [interfazId],
+    [leer],
+    [agregar],
+    [actualizar],
+    [eliminar]
+)
+SELECT
+    rol.[rolId],
+    interfaz.[interfazId],
+    1,
+    1,
+    1,
+    1
+FROM [dbo].[rol] rol
+CROSS JOIN [dbo].[interfaz] interfaz
+WHERE UPPER(rol.[nombreRol]) LIKE N'%ADMIN%'
+  AND interfaz.[nombreInterfaz] IN
+  (
+      N'CentroAlertasWeb',
+      N'SeguimientoAlertasWeb',
+      N'ConfiguracionAlertasWeb'
+  )
+  AND NOT EXISTS
+  (
+      SELECT 1
+      FROM [dbo].[rolInterfaz] existente
+      WHERE existente.[rolId] = rol.[rolId]
+        AND existente.[interfazId] =
+            interfaz.[interfazId]
+  );
+
+UPDATE relacion
+SET
+    relacion.[leer] = 1,
+    relacion.[agregar] = 1,
+    relacion.[actualizar] = 1,
+    relacion.[eliminar] = 1
+FROM [dbo].[rolInterfaz] relacion
+INNER JOIN [dbo].[rol] rol
+    ON rol.[rolId] = relacion.[rolId]
+INNER JOIN [dbo].[interfaz] interfaz
+    ON interfaz.[interfazId] =
+        relacion.[interfazId]
+WHERE UPPER(rol.[nombreRol]) LIKE N'%ADMIN%'
+  AND interfaz.[nombreInterfaz] IN
+  (
+      N'CentroAlertasWeb',
+      N'SeguimientoAlertasWeb',
+      N'ConfiguracionAlertasWeb'
+  );
+
 """;
 
             await db.Database.ExecuteSqlRawAsync(

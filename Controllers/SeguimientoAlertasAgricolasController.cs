@@ -1,5 +1,6 @@
 using CONATRADEC_API.DTOs;
 using CONATRADEC_API.Models;
+using CONATRADEC_API.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -20,13 +21,16 @@ namespace CONATRADEC_API.Controllers
 
         private readonly AlertasAgricolasDbContext alertasDb;
         private readonly DBContext db;
+        private readonly PermisoApiService permisos;
 
         public SeguimientoAlertasAgricolasController(
             AlertasAgricolasDbContext alertasDb,
-            DBContext db)
+            DBContext db,
+            PermisoApiService permisos)
         {
             this.alertasDb = alertasDb;
             this.db = db;
+            this.permisos = permisos;
         }
 
         [HttpGet]
@@ -187,6 +191,24 @@ namespace CONATRADEC_API.Controllers
                 CrearSeguimientoAlertaRequest request,
                 CancellationToken cancellationToken = default)
         {
+            ResultadoPermisoApi permiso =
+                await permisos.ValidarAsync(
+                    request.usuarioAccionId,
+                    "SeguimientoAlertasWeb",
+                    TipoPermisoApi.Agregar,
+                    cancellationToken);
+
+            if (!permiso.Permitido)
+            {
+                return StatusCode(
+                    permiso.CodigoEstado,
+                    new
+                    {
+                        success = false,
+                        message = permiso.Mensaje
+                    });
+            }
+
             string tipo =
                 request.tipoAlerta.Trim();
 
@@ -328,6 +350,24 @@ namespace CONATRADEC_API.Controllers
                 ActualizarSeguimientoAlertaRequest request,
                 CancellationToken cancellationToken = default)
         {
+            ResultadoPermisoApi permiso =
+                await permisos.ValidarAsync(
+                    request.usuarioAccionId,
+                    "SeguimientoAlertasWeb",
+                    TipoPermisoApi.Actualizar,
+                    cancellationToken);
+
+            if (!permiso.Permitido)
+            {
+                return StatusCode(
+                    permiso.CodigoEstado,
+                    new
+                    {
+                        success = false,
+                        message = permiso.Mensaje
+                    });
+            }
+
             string estado =
                 request.estado
                     .Trim()
@@ -561,6 +601,24 @@ namespace CONATRADEC_API.Controllers
                 ActualizarUmbralAlertaRequest request,
                 CancellationToken cancellationToken = default)
         {
+            ResultadoPermisoApi permiso =
+                await permisos.ValidarAsync(
+                    request.usuarioAccionId,
+                    "ConfiguracionAlertasWeb",
+                    TipoPermisoApi.Actualizar,
+                    cancellationToken);
+
+            if (!permiso.Permitido)
+            {
+                return StatusCode(
+                    permiso.CodigoEstado,
+                    new
+                    {
+                        success = false,
+                        message = permiso.Mensaje
+                    });
+            }
+
             ConfiguracionAlertaAgricola? entidad =
                 await alertasDb.Configuraciones
                     .FirstOrDefaultAsync(
