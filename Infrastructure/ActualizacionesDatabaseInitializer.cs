@@ -4,19 +4,29 @@ using Microsoft.EntityFrameworkCore;
 namespace CONATRADEC_API.Infrastructure
 {
     /// <summary>
-    /// Inicializa la tabla de versiones y el permiso del portal sin requerir
-    /// migraciones ni archivos SQL externos.
+    /// Inicializa la tabla de versiones y los permisos del portal y de la app
+    /// sin requerir migraciones ni archivos SQL externos.
     /// </summary>
     public sealed class ActualizacionesDatabaseInitializer
     {
+        // Se conserva este nombre porque el controlador administrativo lo usa.
         public const string CodigoInterfaz =
             "GestionActualizacionesWeb";
 
-        private const string NombreAmigable =
+        public const string CodigoInterfazAplicacion =
+            "ActualizacionAplicacionPage";
+
+        private const string NombreAmigablePortal =
             "Gestión de actualizaciones";
 
-        private const string Descripcion =
+        private const string DescripcionPortal =
             "Publica versiones Android y Windows desde el portal web.";
+
+        private const string NombreAmigableAplicacion =
+            "Actualizaciones de la aplicación";
+
+        private const string DescripcionAplicacion =
+            "Permite buscar, descargar e instalar nuevas versiones desde la aplicación.";
 
         private readonly ActualizacionesDbContext actualizacionesDb;
         private readonly DBContext db;
@@ -116,18 +126,34 @@ namespace CONATRADEC_API.Infrastructure
                 sqlIndices,
                 cancellationToken);
 
-            await CrearPermisoAdministrativoAsync(cancellationToken);
+            await CrearPermisoAdministrativoAsync(
+                CodigoInterfaz,
+                NombreAmigablePortal,
+                DescripcionPortal,
+                permitirAdministracionCompleta: true,
+                cancellationToken);
+
+            await CrearPermisoAdministrativoAsync(
+                CodigoInterfazAplicacion,
+                NombreAmigableAplicacion,
+                DescripcionAplicacion,
+                permitirAdministracionCompleta: false,
+                cancellationToken);
 
             logger.LogInformation(
-                "Módulo de actualizaciones inicializado correctamente.");
+                "Módulo de actualizaciones y permisos inicializado correctamente.");
         }
 
         private async Task CrearPermisoAdministrativoAsync(
+            string codigoInterfaz,
+            string nombreAmigable,
+            string descripcion,
+            bool permitirAdministracionCompleta,
             CancellationToken cancellationToken)
         {
             Interfaz? interfaz = await db.Interfaz
                 .FirstOrDefaultAsync(
-                    x => x.nombreInterfaz == CodigoInterfaz,
+                    x => x.nombreInterfaz == codigoInterfaz,
                     cancellationToken);
 
             bool guardar = false;
@@ -136,9 +162,9 @@ namespace CONATRADEC_API.Infrastructure
             {
                 interfaz = new Interfaz
                 {
-                    nombreInterfaz = CodigoInterfaz,
-                    nombreAmigableInterfaz = NombreAmigable,
-                    descripcionInterfaz = Descripcion,
+                    nombreInterfaz = codigoInterfaz,
+                    nombreAmigableInterfaz = nombreAmigable,
+                    descripcionInterfaz = descripcion,
                     activo = true
                 };
 
@@ -149,19 +175,19 @@ namespace CONATRADEC_API.Infrastructure
             {
                 if (!string.Equals(
                         interfaz.nombreAmigableInterfaz,
-                        NombreAmigable,
+                        nombreAmigable,
                         StringComparison.Ordinal))
                 {
-                    interfaz.nombreAmigableInterfaz = NombreAmigable;
+                    interfaz.nombreAmigableInterfaz = nombreAmigable;
                     guardar = true;
                 }
 
                 if (!string.Equals(
                         interfaz.descripcionInterfaz,
-                        Descripcion,
+                        descripcion,
                         StringComparison.Ordinal))
                 {
-                    interfaz.descripcionInterfaz = Descripcion;
+                    interfaz.descripcionInterfaz = descripcion;
                     guardar = true;
                 }
 
@@ -194,23 +220,19 @@ namespace CONATRADEC_API.Infrastructure
 
                 if (relacion == null)
                 {
-                    db.RolInterfaz.Add(new RolInterfaz
+                    relacion = new RolInterfaz
                     {
                         rolId = rolId,
-                        interfazId = interfaz.interfazId,
-                        leer = true,
-                        agregar = true,
-                        actualizar = true,
-                        eliminar = true
-                    });
+                        interfazId = interfaz.interfazId
+                    };
+
+                    db.RolInterfaz.Add(relacion);
                 }
-                else
-                {
-                    relacion.leer = true;
-                    relacion.agregar = true;
-                    relacion.actualizar = true;
-                    relacion.eliminar = true;
-                }
+
+                relacion.leer = true;
+                relacion.agregar = permitirAdministracionCompleta;
+                relacion.actualizar = permitirAdministracionCompleta;
+                relacion.eliminar = permitirAdministracionCompleta;
             }
 
             await db.SaveChangesAsync(cancellationToken);
