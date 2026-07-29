@@ -5,12 +5,9 @@ using Microsoft.EntityFrameworkCore;
 namespace CONATRADEC_API.Middleware
 {
     /// <summary>
-    /// Valida la versión de sesión enviada por MAUI y por el portal web.
-    ///
-    /// Si una sesión antigua envía X-Usuario-Id, pero todavía no posee
-    /// X-Version-Sesion, también se invalida. Esto obliga a iniciar sesión
-    /// nuevamente después de instalar esta mejora y evita conservar permisos
-    /// cargados antes del cambio.
+    /// Valida la versión de sesión y protege la descarga física de instaladores.
+    /// La ruta /api/actualizaciones/descargar/{id} solamente continúa cuando
+    /// recibe un permiso temporal válido emitido después de consumir una llave.
     /// </summary>
     public sealed class VersionSesionMiddleware
     {
@@ -19,27 +16,40 @@ namespace CONATRADEC_API.Middleware
         public const string HeaderSesionInvalidada = "X-Sesion-Invalidada";
 
         private readonly RequestDelegate next;
+        private readonly ILogger<VersionSesionMiddleware> logger;
 
-        public VersionSesionMiddleware(RequestDelegate next)
+        public VersionSesionMiddleware(
+            RequestDelegate next,
+            ILogger<VersionSesionMiddleware> logger)
         {
             this.next = next;
+            this.logger = logger;
         }
 
         public async Task InvokeAsync(
             HttpContext context,
-            DBContext db)
+            DBContext db,
+            ActualizacionesDbContext actualizacionesDb,
+            IWebHostEnvironment environment)
         {
+            if (EsRutaArchivoActualizacion(
+                    context.Request.Path,
+                    out int actualizacionId))
+            {
+                await ProcesarDescargaProtegidaAsync(
+                    context,
+                    actualizacionesDb,
+                    environment,
+                    actualizacionId);
+                return;
+            }
+
             if (DebeOmitir(context.Request.Path))
             {
                 await next(context);
                 return;
             }
 
-            /*
-             * Las solicitudes realmente anónimas no llevan X-Usuario-Id y
-             * pueden continuar. Cuando el encabezado sí existe, la versión
-             * pasa a ser obligatoria.
-             */
             if (!TryGetUsuarioId(context, out int usuarioId))
             {
                 await next(context);
@@ -63,12 +73,6 @@ namespace CONATRADEC_API.Middleware
                 return;
             }
 
-            /*
-             * Cuando el usuario modifica su propio rol, la solicitud comenzó
-             * con una sesión válida, pero deja de ser válida durante el PUT.
-             * Antes de enviar la respuesta se agrega un encabezado que obliga
-             * al cliente actual a cerrar sesión inmediatamente.
-             */
             if (DebeValidarAlFinal(context.Request))
             {
                 context.Response.OnStarting(async () =>
@@ -91,13 +95,164 @@ namespace CONATRADEC_API.Middleware
                     }
                     catch
                     {
-                        // No se reemplaza una respuesta válida por un fallo
-                        // secundario de comprobación.
+                        // Una comprobación secundaria no reemplaza la respuesta.
                     }
                 });
             }
 
             await next(context);
+        }
+
+        private async Task ProcesarDescargaProtegidaAsync(
+            HttpContext context,
+            ActualizacionesDbContext actualizacionesDb,
+            IWebHostEnvironment environment,
+            int actualizacionId)
+        {
+            string permiso = context.Request.Query["permiso"]
+                .ToString();
+
+            if (string.IsNullOrWhiteSpace(permiso))
+            {
+                context.Request.Cookies.TryGetValue(
+                    ActualizacionDescargaTokenService.ObtenerNombreCookie(
+                        actualizacionId),
+                    out permiso);
+            }
+
+            bool valido = ActualizacionDescargaTokenService.TryValidar(
+                environment,
+                permiso,
+                actualizacionId,
+                out PermisoDescargaPayload payload);
+
+            if (!valido)
+            {
+                await ResponderDescargaNoAutorizadaAsync(context);
+                return;
+            }
+
+            context.Items[
+                ActualizacionDescargaTokenService.ItemOperacionId] =
+                payload.OperacionId;
+
+            context.Items[
+                ActualizacionDescargaTokenService.ItemLlaveId] =
+                payload.ActualizacionLlaveDescargaId;
+
+            await RegistrarInicioDescargaAsync(
+                actualizacionesDb,
+                payload,
+                context.RequestAborted);
+
+            context.Response.Headers["Referrer-Policy"] = "no-referrer";
+            context.Response.Headers["X-Robots-Tag"] =
+                "noindex, nofollow, noarchive";
+
+            await next(context);
+        }
+
+        private async Task RegistrarInicioDescargaAsync(
+            ActualizacionesDbContext actualizacionesDb,
+            PermisoDescargaPayload payload,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                bool yaRegistrada = await actualizacionesDb
+                    .AuditoriaDescargas
+                    .AsNoTracking()
+                    .AnyAsync(
+                        x =>
+                            x.OperacionId == payload.OperacionId &&
+                            x.Resultado == "DESCARGA_INICIADA",
+                        cancellationToken);
+
+                if (yaRegistrada)
+                    return;
+
+                ActualizacionDescargaAuditoria? autorizacion =
+                    await actualizacionesDb.AuditoriaDescargas
+                        .AsNoTracking()
+                        .Where(x =>
+                            x.OperacionId == payload.OperacionId &&
+                            (x.Resultado == "AUTORIZADA" ||
+                             x.Resultado == "AUTORIZADA_APLICACION"))
+                        .OrderByDescending(x => x.FechaUtc)
+                        .FirstOrDefaultAsync(cancellationToken);
+
+                if (autorizacion == null)
+                    return;
+
+                actualizacionesDb.AuditoriaDescargas.Add(
+                    new ActualizacionDescargaAuditoria
+                    {
+                        ActualizacionLlaveDescargaId =
+                            autorizacion.ActualizacionLlaveDescargaId,
+                        ActualizacionAplicacionId =
+                            autorizacion.ActualizacionAplicacionId,
+                        OperacionId = autorizacion.OperacionId,
+                        Resultado = "DESCARGA_INICIADA",
+                        Detalle =
+                            "El navegador solicitó el archivo autorizado.",
+                        Plataforma = autorizacion.Plataforma,
+                        Canal = autorizacion.Canal,
+                        VersionNombre = autorizacion.VersionNombre,
+                        VersionCodigo = autorizacion.VersionCodigo,
+                        NombreArchivo = autorizacion.NombreArchivo,
+                        IpCliente = autorizacion.IpCliente,
+                        EncabezadoForwardedFor =
+                            autorizacion.EncabezadoForwardedFor,
+                        AgenteUsuario = autorizacion.AgenteUsuario,
+                        Navegador = autorizacion.Navegador,
+                        SistemaOperativo =
+                            autorizacion.SistemaOperativo,
+                        TipoDispositivo = autorizacion.TipoDispositivo,
+                        IdentificadorDispositivoWeb =
+                            autorizacion.IdentificadorDispositivoWeb,
+                        Destinatario = autorizacion.Destinatario,
+                        UsuarioGeneradorId =
+                            autorizacion.UsuarioGeneradorId,
+                        FechaUtc = DateTime.UtcNow
+                    });
+
+                await actualizacionesDb.SaveChangesAsync(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(
+                    ex,
+                    "No fue posible registrar el inicio de la descarga {OperacionId}.",
+                    payload.OperacionId);
+            }
+        }
+
+        private static bool EsRutaArchivoActualizacion(
+            PathString path,
+            out int actualizacionId)
+        {
+            actualizacionId = 0;
+
+            const string prefijo =
+                "/api/actualizaciones/descargar/";
+
+            string valor = path.Value ?? string.Empty;
+
+            if (!valor.StartsWith(
+                    prefijo,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            string segmento = valor[prefijo.Length..]
+                .Trim('/');
+
+            return int.TryParse(segmento, out actualizacionId) &&
+                   actualizacionId > 0;
         }
 
         private static bool TryGetUsuarioId(
@@ -157,6 +312,27 @@ namespace CONATRADEC_API.Middleware
             path.StartsWithSegments("/swagger") ||
             path.StartsWithSegments("/resources") ||
             path.StartsWithSegments("/imagenes");
+
+        private static async Task ResponderDescargaNoAutorizadaAsync(
+            HttpContext context)
+        {
+            context.Response.StatusCode =
+                StatusCodes.Status401Unauthorized;
+
+            context.Response.ContentType =
+                "application/json; charset=utf-8";
+
+            context.Response.Headers["Cache-Control"] = "no-store";
+
+            var response = ApiErrorResponseFactory.Create(
+                context,
+                StatusCodes.Status401Unauthorized,
+                message:
+                    "La descarga requiere una llave válida o un permiso temporal vigente.",
+                code: "DOWNLOAD_PERMISSION_REQUIRED");
+
+            await context.Response.WriteAsJsonAsync(response);
+        }
 
         private static async Task ResponderSesionInvalidadaAsync(
             HttpContext context)
