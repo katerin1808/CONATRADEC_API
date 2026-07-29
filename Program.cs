@@ -67,6 +67,37 @@ builder.Services.AddScoped<BusquedaTextoCompletoNoticiasService>();
 builder.Services.AddScoped<DispositivoConexionService>();
 builder.Services.AddScoped<DispositivosConexionDatabaseInitializer>();
 builder.Services.AddScoped<UmbralesAlertasService>();
+builder.Services.AddScoped<CapasSueloMapaService>();
+
+// Centro Geoespacial: capas climáticas con caché y proveedor configurable.
+builder.Services.AddMemoryCache(options =>
+{
+    options.SizeLimit = 256;
+});
+
+builder.Services.Configure<ClimaMapaOptions>(
+    builder.Configuration.GetSection(ClimaMapaOptions.Seccion));
+
+builder.Services.AddHttpClient<ClimaMapaService>(
+    (serviceProvider, client) =>
+    {
+        ClimaMapaOptions options = serviceProvider
+            .GetRequiredService<Microsoft.Extensions.Options.IOptions<ClimaMapaOptions>>()
+            .Value;
+
+        string baseUrl = string.IsNullOrWhiteSpace(options.BaseUrl)
+            ? "https://api.open-meteo.com/"
+            : options.BaseUrl.Trim();
+
+        client.BaseAddress = new Uri(
+            baseUrl.EndsWith('/') ? baseUrl : $"{baseUrl}/");
+
+        client.Timeout = TimeSpan.FromSeconds(
+            Math.Clamp(options.SegundosTimeout, 5, 60));
+
+        client.DefaultRequestHeaders.UserAgent.ParseAdd(
+            "CONATRADEC-CentroGeoespacial/1.0");
+    });
 
 builder.Services.AddScoped<AlertasAgricolasDatabaseInitializer>();
 
