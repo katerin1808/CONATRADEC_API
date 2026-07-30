@@ -61,6 +61,7 @@ builder.Services.AddScoped<ImageService>();
 
 builder.Services.AddScoped<AnalisisSueloDatabaseInitializer>();
 builder.Services.AddScoped<PortalWebDatabaseInitializer>();
+builder.Services.AddScoped<ControlAnalisisDatabaseInitializer>();
 builder.Services.AddScoped<PermisoApiService>();
 builder.Services.AddScoped<NoticiasDatabaseInitializer>();
 builder.Services.AddScoped<BusquedaTextoCompletoNoticiasService>();
@@ -384,6 +385,12 @@ await using (
             .GetRequiredService<PortalWebDatabaseInitializer>();
 
     await portalInitializer.InicializarAsync();
+
+    ControlAnalisisDatabaseInitializer controlAnalisisInitializer =
+        scope.ServiceProvider
+            .GetRequiredService<ControlAnalisisDatabaseInitializer>();
+
+    await controlAnalisisInitializer.InicializarAsync();
 
     DispositivosConexionDatabaseInitializer dispositivosInitializer =
         scope.ServiceProvider

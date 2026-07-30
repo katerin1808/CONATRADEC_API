@@ -45,8 +45,8 @@ public sealed class PortalWebDatabaseInitializer
                 "Permite consultar y administrar las alertas agrícolas."),
             new Definicion(
                 AuditoriaAnalisisWeb,
-                "Auditoría de análisis de suelo",
-                "Permite consultar filtros, inconsistencias e historial de los análisis de suelo.")
+                "Control de análisis de suelo",
+                "Permite ver, editar, eliminar y recuperar análisis de suelo.")
         };
 
         foreach (Definicion permiso in permisos)
