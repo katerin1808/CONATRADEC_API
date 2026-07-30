@@ -9,6 +9,7 @@ public sealed class PortalWebDatabaseInitializer
     public const string RolesWeb = "AdministrarRolesWeb";
     public const string MatrizWeb = "AdministrarMatrizPermisosWeb";
     public const string AlertasWeb = "CentroAlertasWeb";
+    public const string AuditoriaAnalisisWeb = "auditoriaAnalisisPage";
 
     private readonly DBContext db;
     private readonly ILogger<PortalWebDatabaseInitializer> logger;
@@ -41,7 +42,11 @@ public sealed class PortalWebDatabaseInitializer
             new Definicion(
                 AlertasWeb,
                 "Centro de alertas agrícolas",
-                "Permite consultar y administrar las alertas agrícolas.")
+                "Permite consultar y administrar las alertas agrícolas."),
+            new Definicion(
+                AuditoriaAnalisisWeb,
+                "Auditoría de análisis de suelo",
+                "Permite consultar filtros, inconsistencias e historial de los análisis de suelo.")
         };
 
         foreach (Definicion permiso in permisos)
