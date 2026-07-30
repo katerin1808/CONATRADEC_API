@@ -4,6 +4,7 @@ using CONATRADEC_API.Filters;
 using CONATRADEC_API.Infrastructure;
 using CONATRADEC_API.Middleware;
 using CONATRADEC_API.Models;
+using CONATRADEC_API.Security;
 using CONATRADEC_API.Services;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
@@ -35,6 +36,10 @@ builder.Services.AddControllers(options =>
 {
     options.Filters.Add<ApiErrorResponseFilter>();
 });
+
+// JWT, expiración absoluta y control de inactividad de las sesiones.
+builder.Services.AddConatradecJwt(
+    builder.Configuration);
 
 builder.Services.Configure<ApiBehaviorOptions>(options =>
 {
@@ -266,6 +271,8 @@ app.UseStaticFiles(new StaticFileOptions
 app.UseRouting();
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
+app.UseAuthentication();
+app.UseMiddleware<JwtSessionMiddleware>();
 app.UseMiddleware<VersionSesionMiddleware>();
 
 app.UseStatusCodePages(

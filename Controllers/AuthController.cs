@@ -1,4 +1,4 @@
-﻿using CONATRADEC_API.DTOs;
+using CONATRADEC_API.DTOs;
 using CONATRADEC_API.Models;
 using CONATRADEC_API.Security;
 using CONATRADEC_API.Services;
@@ -18,10 +18,14 @@ namespace CONATRADEC_API.Controllers
     public sealed class AuthController : Controller
     {
         private readonly DBContext db;
+        private readonly JwtTokenService jwtTokenService;
 
-        public AuthController(DBContext db)
+        public AuthController(
+            DBContext db,
+            JwtTokenService jwtTokenService)
         {
             this.db = db;
+            this.jwtTokenService = jwtTokenService;
         }
 
         private static bool VerifyHash(
@@ -126,6 +130,9 @@ namespace CONATRADEC_API.Controllers
                 .OrderBy(item => item.nombreInterfaz)
                 .ToListAsync(cancellationToken);
 
+            TokenSesionEmitido token =
+                jwtTokenService.Crear(usuario);
+
             var response = new UsuarioLoginResponseDto
             {
                 UsuarioId = usuario.UsuarioId,
@@ -140,6 +147,9 @@ namespace CONATRADEC_API.Controllers
                 esInterno = usuario.Procedencia.nombreProcedencia.Equals(
                     "Interno",
                     StringComparison.OrdinalIgnoreCase),
+                token = token.AccessToken,
+                expiraTokenUtc = token.ExpiraUtc,
+                minutosInactividad = token.MinutosInactividad,
                 urlImagenUsuario = usuario.urlImagenUsuario,
                 versionSesion = usuario.versionSesion,
                 permisos = permisos

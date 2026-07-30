@@ -20,7 +20,21 @@ namespace CONATRADEC_API.DTOs
             public string procedenciaNombre { get; set; } = default!;
             public bool esInterno { get; set; }
 
+            /// <summary>
+            /// Token firmado que debe enviarse como Authorization Bearer.
+            /// </summary>
             public string? token { get; set; }
+
+            /// <summary>
+            /// Fecha UTC de expiración absoluta del token.
+            /// </summary>
+            public DateTime expiraTokenUtc { get; set; }
+
+            /// <summary>
+            /// Tiempo máximo permitido sin interacción real del usuario.
+            /// </summary>
+            public int minutosInactividad { get; set; }
+
             public string urlImagenUsuario { get; set; } = string.Empty;
 
             /// <summary>

@@ -165,8 +165,15 @@ namespace CONATRADEC_API.Services
 
         public async Task<bool> DesconectarAsync(
             DesconectarDispositivoConexionRequest request,
+            int usuarioId,
             CancellationToken cancellationToken)
         {
+            if (usuarioId <= 0)
+            {
+                throw new UnauthorizedAccessException(
+                    "El usuario autenticado no es válido.");
+            }
+
             string instalacionId = NormalizarGuid(
                 request.InstalacionId,
                 "El identificador de instalación no es válido.");
@@ -178,7 +185,9 @@ namespace CONATRADEC_API.Services
             DispositivoConexion? dispositivo =
                 await dispositivosDb.DispositivosConexion
                     .FirstOrDefaultAsync(
-                        x => x.InstalacionId == instalacionId,
+                        x =>
+                            x.InstalacionId == instalacionId &&
+                            x.UsuarioId == usuarioId,
                         cancellationToken);
 
             if (dispositivo == null)

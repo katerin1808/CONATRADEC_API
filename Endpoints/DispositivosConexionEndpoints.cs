@@ -1,12 +1,13 @@
 using CONATRADEC_API.DTOs;
 using CONATRADEC_API.Services;
+using System.Security.Claims;
 
 namespace CONATRADEC_API.Endpoints
 {
     /// <summary>
     /// Endpoints livianos consumidos por la app MAUI.
     /// Se publican fuera de /api para que los latidos repetitivos no llenen
-    /// la bitácora transversal. Las consultas del portal sí usan /api.
+    /// la bitácora transversal, pero continúan protegidos por JWT.
     /// </summary>
     public static class DispositivosConexionEndpoints
     {
@@ -15,7 +16,8 @@ namespace CONATRADEC_API.Endpoints
         {
             RouteGroupBuilder group = endpoints
                 .MapGroup("/conectividad/dispositivos")
-                .WithTags("Conectividad de dispositivos");
+                .WithTags("Conectividad de dispositivos")
+                .RequireAuthorization();
 
             group.MapPost(
                 "/reportar",
@@ -31,7 +33,8 @@ namespace CONATRADEC_API.Endpoints
                 DesconectarAsync)
                 .WithName("DesconectarDispositivo")
                 .Produces(StatusCodes.Status200OK)
-                .Produces(StatusCodes.Status400BadRequest);
+                .Produces(StatusCodes.Status400BadRequest)
+                .Produces(StatusCodes.Status401Unauthorized);
 
             return endpoints;
         }
@@ -44,6 +47,13 @@ namespace CONATRADEC_API.Endpoints
         {
             try
             {
+                int usuarioId =
+                    ObtenerUsuarioIdAutenticado(
+                        httpContext);
+
+                // Nunca se confía en el UsuarioId enviado en el JSON.
+                request.UsuarioId = usuarioId;
+
                 ReportarDispositivoConexionResponse response =
                     await service.ReportarAsync(
                         request,
@@ -68,20 +78,28 @@ namespace CONATRADEC_API.Endpoints
                         success = false,
                         message = ex.Message
                     },
-                    statusCode: StatusCodes.Status401Unauthorized);
+                    statusCode:
+                        StatusCodes.Status401Unauthorized);
             }
         }
 
         private static async Task<IResult> DesconectarAsync(
             DesconectarDispositivoConexionRequest request,
+            HttpContext httpContext,
             DispositivoConexionService service,
             CancellationToken cancellationToken)
         {
             try
             {
-                bool actualizado = await service.DesconectarAsync(
-                    request,
-                    cancellationToken);
+                int usuarioId =
+                    ObtenerUsuarioIdAutenticado(
+                        httpContext);
+
+                bool actualizado =
+                    await service.DesconectarAsync(
+                        request,
+                        usuarioId,
+                        cancellationToken);
 
                 return Results.Ok(new
                 {
@@ -100,6 +118,36 @@ namespace CONATRADEC_API.Endpoints
                     message = ex.Message
                 });
             }
+            catch (UnauthorizedAccessException ex)
+            {
+                return Results.Json(
+                    new
+                    {
+                        success = false,
+                        message = ex.Message
+                    },
+                    statusCode:
+                        StatusCodes.Status401Unauthorized);
+            }
+        }
+
+        private static int ObtenerUsuarioIdAutenticado(
+            HttpContext httpContext)
+        {
+            string? value =
+                httpContext.User
+                    .FindFirstValue("uid");
+
+            if (!int.TryParse(
+                    value,
+                    out int usuarioId) ||
+                usuarioId <= 0)
+            {
+                throw new UnauthorizedAccessException(
+                    "El token no contiene un usuario válido.");
+            }
+
+            return usuarioId;
         }
     }
 }
