@@ -1,7 +1,12 @@
+using System.Linq;
+
 namespace CONATRADEC_API.Reportes
 {
     public sealed class AnalisisReporte
     {
+        private List<AnalisisReporteRequerimiento>
+            requerimientos = new();
+
         public int AnalisisSueloCalculoId { get; set; }
         public string Identificador { get; set; } = string.Empty;
         public DateOnly FechaAnalisis { get; set; }
@@ -21,7 +26,21 @@ namespace CONATRADEC_API.Reportes
         public string RecomendacionGeneral { get; set; } = string.Empty;
         public List<string> Observaciones { get; set; } = new();
         public List<AnalisisReporteValorLaboratorio> ValoresLaboratorio { get; set; } = new();
-        public List<AnalisisReporteRequerimiento> Requerimientos { get; set; } = new();
+
+        /// <summary>
+        /// Mantiene el mismo orden de prioridad mostrado por la aplicación:
+        /// primero el elemento con mayor requerimiento anual en lb/Mz.
+        /// </summary>
+        public List<AnalisisReporteRequerimiento> Requerimientos
+        {
+            get => requerimientos;
+            set => requerimientos =
+                (value ?? new List<AnalisisReporteRequerimiento>())
+                    .OrderByDescending(x => x.RequerimientoLbMz ?? 0)
+                    .ThenBy(x => x.Elemento)
+                    .ToList();
+        }
+
         public AnalisisReporteBalance? Balance { get; set; }
         public AnalisisReporteEnmienda? Enmienda { get; set; }
         public AnalisisReporteFertilizacionMixta? FertilizacionMixta { get; set; }

@@ -4,6 +4,15 @@ using QuestPDF.Infrastructure;
 
 namespace CONATRADEC_API.Reportes
 {
+    /// <summary>
+    /// Genera el PDF online del análisis de suelo.
+    ///
+    /// Reglas importantes:
+    /// - el requerimiento anual se presenta de mayor a menor necesidad;
+    /// - la unidad final de la enmienda es lb/Mz;
+    /// - la estructura de Enmienda y Fertilización mixta es la referencia
+    ///   utilizada también por el generador local de la aplicación.
+    /// </summary>
     public static class AnalisisReportePdf
     {
         private const string Verde = "#3B655B";
@@ -29,10 +38,16 @@ namespace CONATRADEC_API.Reportes
 
                     pagina.Header()
                         .PaddingBottom(12)
-                        .Element(contenedor => ComponerEncabezado(contenedor, reporte));
+                        .Element(contenedor =>
+                            ComponerEncabezado(
+                                contenedor,
+                                reporte));
 
                     pagina.Content()
-                        .Column(columna => ComponerContenido(columna, reporte));
+                        .Column(columna =>
+                            ComponerContenido(
+                                columna,
+                                reporte));
 
                     pagina.Footer()
                         .PaddingTop(8)
@@ -42,8 +57,10 @@ namespace CONATRADEC_API.Reportes
                         .Text(texto =>
                         {
                             texto.DefaultTextStyle(x =>
-                                x.FontSize(8).FontColor(GrisTexto));
-                            texto.Span("CONATRACAFÉ SOIL · Página ");
+                                x.FontSize(8)
+                                    .FontColor(GrisTexto));
+                            texto.Span(
+                                "CONATRACAFÉ SOIL · Página ");
                             texto.CurrentPageNumber();
                             texto.Span(" de ");
                             texto.TotalPages();
@@ -72,7 +89,8 @@ namespace CONATRADEC_API.Reportes
 
                             columna.Item()
                                 .PaddingTop(2)
-                                .Text("Reporte integral de análisis de suelo")
+                                .Text(
+                                    "Reporte integral de análisis de suelo")
                                 .FontSize(10)
                                 .FontColor(Colors.White);
                         });
@@ -83,7 +101,10 @@ namespace CONATRADEC_API.Reportes
                         {
                             columna.Item()
                                 .AlignRight()
-                                .Text(ValorO(reporte.Identificador, "Análisis de suelo"))
+                                .Text(
+                                    ValorO(
+                                        reporte.Identificador,
+                                        "Análisis de suelo"))
                                 .Bold()
                                 .FontSize(11)
                                 .FontColor(Colors.White);
@@ -91,7 +112,9 @@ namespace CONATRADEC_API.Reportes
                             columna.Item()
                                 .PaddingTop(3)
                                 .AlignRight()
-                                .Text($"Generado: {DateTime.Now:dd/MM/yyyy HH:mm}")
+                                .Text(
+                                    $"Generado: " +
+                                    $"{DateTime.Now:dd/MM/yyyy HH:mm}")
                                 .FontSize(8)
                                 .FontColor(Colors.White);
                         });
@@ -115,14 +138,20 @@ namespace CONATRADEC_API.Reportes
                 ComponerEnmienda(columna, reporte.Enmienda);
 
             if (reporte.FertilizacionMixta != null)
-                ComponerFertilizacionMixta(columna, reporte.FertilizacionMixta);
+            {
+                ComponerFertilizacionMixta(
+                    columna,
+                    reporte.FertilizacionMixta);
+            }
         }
 
         private static void ComponerDatosGenerales(
             ColumnDescriptor columna,
             AnalisisReporte reporte)
         {
-            columna.Item().Element(TituloSeccion).Text("Datos generales");
+            columna.Item()
+                .Element(TituloSeccion)
+                .Text("Datos generales");
 
             columna.Item().Table(tabla =>
             {
@@ -134,20 +163,47 @@ namespace CONATRADEC_API.Reportes
                     columnas.RelativeColumn();
                 });
 
-                AgregarPar(tabla, "Cliente", reporte.Cliente, "Terreno", reporte.Terreno);
+                AgregarPar(
+                    tabla,
+                    "Cliente",
+                    reporte.Cliente,
+                    "Terreno",
+                    reporte.Terreno);
+
                 AgregarPar(
                     tabla,
                     "Fecha del análisis",
                     reporte.FechaAnalisis.ToString("dd/MM/yyyy"),
                     "Laboratorio",
                     reporte.Laboratorio);
-                AgregarPar(tabla, "Cultivo", reporte.TipoCultivo, "Tipo de análisis", reporte.TipoAnalisis);
-                AgregarPar(tabla, "Producción", $"{reporte.ProduccionQqOro:N2} qq oro", "Tamaño", $"{reporte.TamanoFincaMz:N2} mz");
-                AgregarPar(tabla, "pH", $"{reporte.Ph:N2}", "Acidez total", TextoNumero(reporte.AcidezTotal));
+
+                AgregarPar(
+                    tabla,
+                    "Cultivo",
+                    reporte.TipoCultivo,
+                    "Tipo de análisis",
+                    reporte.TipoAnalisis);
+
+                AgregarPar(
+                    tabla,
+                    "Producción",
+                    $"{reporte.ProduccionQqOro:N2} qq oro",
+                    "Tamaño",
+                    $"{reporte.TamanoFincaMz:N2} mz");
+
+                AgregarPar(
+                    tabla,
+                    "pH",
+                    $"{reporte.Ph:N2}",
+                    "Acidez total",
+                    TextoNumero(reporte.AcidezTotal));
+
                 AgregarPar(
                     tabla,
                     "Materia orgánica",
-                    TextoNumero(reporte.MateriaOrganica, reporte.UnidadMateriaOrganica),
+                    TextoNumero(
+                        reporte.MateriaOrganica,
+                        reporte.UnidadMateriaOrganica),
                     "Responsable",
                     reporte.Responsable);
             });
@@ -157,7 +213,9 @@ namespace CONATRADEC_API.Reportes
             ColumnDescriptor columna,
             AnalisisReporte reporte)
         {
-            columna.Item().Element(TituloSeccion).Text("Valores originales del laboratorio");
+            columna.Item()
+                .Element(TituloSeccion)
+                .Text("Valores originales del laboratorio");
 
             columna.Item().Table(tabla =>
             {
@@ -175,7 +233,9 @@ namespace CONATRADEC_API.Reportes
                     Encabezado(encabezado, "Unidad");
                 });
 
-                foreach (AnalisisReporteValorLaboratorio item in reporte.ValoresLaboratorio)
+                foreach (
+                    AnalisisReporteValorLaboratorio item
+                    in reporte.ValoresLaboratorio)
                 {
                     Celda(tabla, item.Elemento);
                     CeldaNumero(tabla, item.Cantidad, "N4");
@@ -188,7 +248,9 @@ namespace CONATRADEC_API.Reportes
             ColumnDescriptor columna,
             AnalisisReporte reporte)
         {
-            columna.Item().Element(TituloSeccion).Text("Requerimiento anual");
+            columna.Item()
+                .Element(TituloSeccion)
+                .Text("Requerimiento anual");
 
             columna.Item().Table(tabla =>
             {
@@ -210,21 +272,32 @@ namespace CONATRADEC_API.Reportes
                     Encabezado(encabezado, "Observación");
                 });
 
-                foreach (AnalisisReporteRequerimiento item in reporte.Requerimientos)
+                foreach (
+                    AnalisisReporteRequerimiento item
+                    in reporte.Requerimientos
+                        .OrderByDescending(x =>
+                            x.RequerimientoLbMz ?? 0)
+                        .ThenBy(x => x.Elemento))
                 {
                     Celda(tabla, item.Elemento);
-                    CeldaNumero(tabla, item.CantidadIngresada, "N4");
+                    CeldaNumero(
+                        tabla,
+                        item.CantidadIngresada,
+                        "N4");
+
                     Celda(
                         tabla,
                         item.RequerimientoLbMz.HasValue
-                            ? $"{item.RequerimientoLbMz:N2} {item.UnidadResultado}"
+                            ? $"{item.RequerimientoLbMz:N2} lb/Mz"
                             : "-");
+
                     Celda(tabla, item.Clasificacion);
                     Celda(tabla, item.Observacion);
                 }
             });
 
-            if (!string.IsNullOrWhiteSpace(reporte.RecomendacionGeneral))
+            if (!string.IsNullOrWhiteSpace(
+                    reporte.RecomendacionGeneral))
             {
                 columna.Item()
                     .Background(VerdeSuave)
@@ -247,7 +320,10 @@ namespace CONATRADEC_API.Reportes
                 columna.Item().Text(texto =>
                 {
                     texto.Span("Observaciones: ").Bold();
-                    texto.Span(string.Join(" · ", reporte.Observaciones));
+                    texto.Span(
+                        string.Join(
+                            " · ",
+                            reporte.Observaciones));
                 });
             }
         }
@@ -256,7 +332,9 @@ namespace CONATRADEC_API.Reportes
             ColumnDescriptor columna,
             AnalisisReporteBalance balance)
         {
-            columna.Item().Element(TituloSeccion).Text("Balance de fórmula");
+            columna.Item()
+                .Element(TituloSeccion)
+                .Text("Balance de fórmula");
 
             columna.Item()
                 .Background(GrisFondo)
@@ -264,7 +342,10 @@ namespace CONATRADEC_API.Reportes
                 .Column(contenido =>
                 {
                     contenido.Item()
-                        .Text(ValorO(balance.NombreFormula, "Fórmula nutricional"))
+                        .Text(
+                            ValorO(
+                                balance.NombreFormula,
+                                "Fórmula nutricional"))
                         .Bold()
                         .FontSize(12)
                         .FontColor(Verde);
@@ -277,12 +358,15 @@ namespace CONATRADEC_API.Reportes
                             .Border(1)
                             .BorderColor(Cafe)
                             .Padding(6)
-                            .Text("Fórmula comercial: " + string.Join(
-                                " · ",
-                                balance.FormulaComercial
-                                    .OrderBy(x => OrdenElemento(x.Key))
-                                    .Select(x =>
-                                    $"{x.Key} {x.Value:N2}")))
+                            .Text(
+                                "Fórmula comercial: " +
+                                string.Join(
+                                    " · ",
+                                    balance.FormulaComercial
+                                        .OrderBy(x =>
+                                            OrdenElemento(x.Key))
+                                        .Select(x =>
+                                            $"{x.Key} {x.Value:N2}")))
                             .Bold()
                             .FontColor(Cafe);
                     }
@@ -290,17 +374,30 @@ namespace CONATRADEC_API.Reportes
                     contenido.Item()
                         .PaddingTop(5)
                         .Text(
-                            $"Mezcla exacta: {balance.MezclaTotalQq:N3} qq  ·  " +
-                            $"Aplicaciones: {balance.TotalAplicaciones}  ·  " +
-                            $"Dosis/planta/aplicación: {balance.DosisPlantaPorAplicacionOz:N2} oz");
+                            $"Mezcla exacta: " +
+                            $"{balance.MezclaTotalQq:N3} qq  ·  " +
+                            $"Aplicaciones: " +
+                            $"{balance.TotalAplicaciones}  ·  " +
+                            $"Dosis/planta/aplicación: " +
+                            $"{balance.DosisPlantaPorAplicacionOz:N2} oz");
 
                     contenido.Item()
                         .PaddingTop(3)
                         .Text(texto =>
                         {
-                            texto.Span("Costo real de compra: ").Bold().FontColor(Cafe);
-                            texto.Span($"C$ {balance.CostoRealCompra:N2}").Bold().FontColor(Cafe);
-                            texto.Span($"  ·  Precio exacto de referencia: C$ {balance.PrecioExactoReferencia:N2}");
+                            texto.Span(
+                                    "Costo real de compra: ")
+                                .Bold()
+                                .FontColor(Cafe);
+
+                            texto.Span(
+                                    $"C$ {balance.CostoRealCompra:N2}")
+                                .Bold()
+                                .FontColor(Cafe);
+
+                            texto.Span(
+                                $"  ·  Precio exacto de referencia: " +
+                                $"C$ {balance.PrecioExactoReferencia:N2}");
                         });
                 });
 
@@ -323,22 +420,50 @@ namespace CONATRADEC_API.Reportes
 
                 tabla.Header(encabezado =>
                 {
-                    Encabezado(encabezado, "Fuente / elemento");
-                    Encabezado(encabezado, "Requerimiento (lb)");
-                    Encabezado(encabezado, "Libras anuales");
-                    Encabezado(encabezado, "Lb/aplicación");
-                    Encabezado(encabezado, "Onzas anuales");
-                    Encabezado(encabezado, "Oz/aplicación");
+                    Encabezado(
+                        encabezado,
+                        "Fuente / elemento");
+                    Encabezado(
+                        encabezado,
+                        "Requerimiento (lb)");
+                    Encabezado(
+                        encabezado,
+                        "Libras anuales");
+                    Encabezado(
+                        encabezado,
+                        "Lb/aplicación");
+                    Encabezado(
+                        encabezado,
+                        "Onzas anuales");
+                    Encabezado(
+                        encabezado,
+                        "Oz/aplicación");
                 });
 
-                foreach (AnalisisReporteBalanceDetalle item in balance.Detalles)
+                foreach (
+                    AnalisisReporteBalanceDetalle item
+                    in balance.Detalles)
                 {
-                    Celda(tabla, $"{item.Fuente}\n{item.Elemento}");
-                    CeldaNumero(tabla, item.RequerimientoLibras, "N2");
+                    Celda(
+                        tabla,
+                        $"{item.Fuente}\n{item.Elemento}");
+                    CeldaNumero(
+                        tabla,
+                        item.RequerimientoLibras,
+                        "N2");
                     CeldaNumero(tabla, item.Libras, "N2");
-                    CeldaNumero(tabla, item.LibrasPorAplicacion, "N2");
-                    CeldaNumero(tabla, item.OnzasAnuales, "N2");
-                    CeldaNumero(tabla, item.OnzasPorAplicacion, "N2");
+                    CeldaNumero(
+                        tabla,
+                        item.LibrasPorAplicacion,
+                        "N2");
+                    CeldaNumero(
+                        tabla,
+                        item.OnzasAnuales,
+                        "N2");
+                    CeldaNumero(
+                        tabla,
+                        item.OnzasPorAplicacion,
+                        "N2");
                 }
             });
 
@@ -347,6 +472,7 @@ namespace CONATRADEC_API.Reportes
                 .Column(seccion =>
                 {
                     seccion.Spacing(4);
+
                     seccion.Item()
                         .Text("Detalle de compra")
                         .Bold()
@@ -366,27 +492,56 @@ namespace CONATRADEC_API.Reportes
 
                         tabla.Header(encabezado =>
                         {
-                            Encabezado(encabezado, "Fuente / elemento");
-                            Encabezado(encabezado, "QQ exactos");
-                            Encabezado(encabezado, "QQ compra");
-                            Encabezado(encabezado, "Precio/QQ");
-                            Encabezado(encabezado, "Subtotal exacto");
-                            Encabezado(encabezado, "Costo compra");
+                            Encabezado(
+                                encabezado,
+                                "Fuente / elemento");
+                            Encabezado(
+                                encabezado,
+                                "QQ exactos");
+                            Encabezado(
+                                encabezado,
+                                "QQ compra");
+                            Encabezado(
+                                encabezado,
+                                "Precio/QQ");
+                            Encabezado(
+                                encabezado,
+                                "Subtotal exacto");
+                            Encabezado(
+                                encabezado,
+                                "Costo compra");
                         });
 
-                        foreach (AnalisisReporteBalanceDetalle item in balance.Detalles)
+                        foreach (
+                            AnalisisReporteBalanceDetalle item
+                            in balance.Detalles)
                         {
-                            Celda(tabla, $"{item.Fuente}\n{item.Elemento}");
-                            CeldaNumero(tabla, item.QuintalesExactos, "N3");
-                            CeldaNumero(tabla, item.QuintalesComprar, "N0");
-                            CeldaMoneda(tabla, item.PrecioPorQuintal);
-                            CeldaMoneda(tabla, item.SubtotalExacto);
-                            CeldaMoneda(tabla, item.CostoCompra);
+                            Celda(
+                                tabla,
+                                $"{item.Fuente}\n{item.Elemento}");
+                            CeldaNumero(
+                                tabla,
+                                item.QuintalesExactos,
+                                "N3");
+                            CeldaNumero(
+                                tabla,
+                                item.QuintalesComprar,
+                                "N0");
+                            CeldaMoneda(
+                                tabla,
+                                item.PrecioPorQuintal);
+                            CeldaMoneda(
+                                tabla,
+                                item.SubtotalExacto);
+                            CeldaMoneda(
+                                tabla,
+                                item.CostoCompra);
                         }
                     });
                 });
 
-            if (balance.Detalles.Any(x => x.Aportes.Count > 0))
+            if (balance.Detalles.Any(x =>
+                    x.Aportes.Count > 0))
             {
                 columna.Item()
                     .Text("Aportes nutricionales por fuente")
@@ -411,12 +566,22 @@ namespace CONATRADEC_API.Reportes
                         Encabezado(encabezado, "Aportes");
                     });
 
-                    foreach (AnalisisReporteBalanceDetalle item in balance.Detalles)
+                    foreach (
+                        AnalisisReporteBalanceDetalle item
+                        in balance.Detalles)
                     {
                         Celda(tabla, item.Fuente);
-                        CeldaNumero(tabla, item.Libras, "N2");
-                        CeldaNumero(tabla, item.QuintalesExactos, "N3");
-                        Celda(tabla, TextoAportes(item.Aportes));
+                        CeldaNumero(
+                            tabla,
+                            item.Libras,
+                            "N2");
+                        CeldaNumero(
+                            tabla,
+                            item.QuintalesExactos,
+                            "N3");
+                        Celda(
+                            tabla,
+                            TextoAportes(item.Aportes));
                     }
                 });
             }
@@ -426,18 +591,25 @@ namespace CONATRADEC_API.Reportes
             ColumnDescriptor columna,
             AnalisisReporteEnmienda enmienda)
         {
-            columna.Item().Element(TituloSeccion).Text("Enmienda calcárea");
+            columna.Item()
+                .Element(TituloSeccion)
+                .Text("Enmienda calcárea");
 
             columna.Item()
                 .Background(GrisFondo)
                 .Padding(10)
                 .Text(texto =>
                 {
-                    texto.Span(ValorO(enmienda.Fuente, "Fuente no especificada"))
+                    texto.Span(
+                            ValorO(
+                                enmienda.Fuente,
+                                "Fuente no especificada"))
                         .Bold()
                         .FontColor(Cafe);
+
                     texto.Span(
-                        $"  ·  {enmienda.TotalAplicaciones} aplicaciones  ·  " +
+                        $"  ·  {enmienda.TotalAplicaciones} " +
+                        $"aplicaciones  ·  " +
                         $"{enmienda.TotalPlantas:N0} plantas");
                 });
 
@@ -451,13 +623,54 @@ namespace CONATRADEC_API.Reportes
                     columnas.RelativeColumn();
                 });
 
-                AgregarPar(tabla, "pH", $"{enmienda.Ph:N2}", "Acidez total", $"{enmienda.AcidezTotal:N2}");
-                AgregarPar(tabla, "Calcio", $"{enmienda.Calcio:N2}", "Magnesio", $"{enmienda.Magnesio:N2}");
-                AgregarPar(tabla, "Potasio", $"{enmienda.Potasio:N2}", "CICE", $"{enmienda.Cice:N2}");
-                AgregarPar(tabla, "Saturación actual", $"{enmienda.SaturacionActual:N2}%", "Saturación deseada", $"{enmienda.SaturacionDeseada:N2}%");
-                AgregarPar(tabla, "PRNT", $"{enmienda.Prnt:N2}%", "Necesidad", $"{enmienda.NecesidadEncaladoTonHa:N2} ton/ha");
-                AgregarPar(tabla, "Equivalente", $"{enmienda.NecesidadEncaladoLbMz:N2} lb/mz", "Dosis anual", $"{enmienda.DosisPlantaAnualOz:N2} oz/planta");
-                AgregarPar(tabla, "Por aplicación", $"{enmienda.DosisPlantaPorAplicacionOz:N2} oz/planta", "Análisis", enmienda.NombreAnalisis);
+                AgregarPar(
+                    tabla,
+                    "pH",
+                    $"{enmienda.Ph:N2}",
+                    "Acidez total",
+                    $"{enmienda.AcidezTotal:N2}");
+
+                AgregarPar(
+                    tabla,
+                    "Calcio",
+                    $"{enmienda.Calcio:N2}",
+                    "Magnesio",
+                    $"{enmienda.Magnesio:N2}");
+
+                AgregarPar(
+                    tabla,
+                    "Potasio",
+                    $"{enmienda.Potasio:N2}",
+                    "CICE",
+                    $"{enmienda.Cice:N2}");
+
+                AgregarPar(
+                    tabla,
+                    "Saturación actual",
+                    $"{enmienda.SaturacionActual:N2}%",
+                    "Saturación deseada",
+                    $"{enmienda.SaturacionDeseada:N2}%");
+
+                AgregarPar(
+                    tabla,
+                    "PRNT",
+                    $"{enmienda.Prnt:N2}%",
+                    "Necesidad",
+                    $"{enmienda.NecesidadEncaladoLbMz:N2} lb/Mz");
+
+                AgregarPar(
+                    tabla,
+                    "Dosis anual",
+                    $"{enmienda.DosisPlantaAnualOz:N2} oz/planta",
+                    "Por aplicación",
+                    $"{enmienda.DosisPlantaPorAplicacionOz:N2} oz/planta");
+
+                AgregarPar(
+                    tabla,
+                    "Análisis",
+                    enmienda.NombreAnalisis,
+                    "Unidad final",
+                    "lb/Mz");
             });
 
             columna.Item()
@@ -467,8 +680,12 @@ namespace CONATRADEC_API.Reportes
                 .Padding(8)
                 .Text(texto =>
                 {
-                    texto.Span("Interpretación: ").Bold().FontColor(Verde);
-                    texto.Span(InterpretarEnmienda(enmienda));
+                    texto.Span("Interpretación: ")
+                        .Bold()
+                        .FontColor(Verde);
+
+                    texto.Span(
+                        InterpretarEnmienda(enmienda));
                 });
         }
 
@@ -476,10 +693,17 @@ namespace CONATRADEC_API.Reportes
             ColumnDescriptor columna,
             AnalisisReporteFertilizacionMixta mixta)
         {
-            columna.Item().Element(TituloSeccion).Text("Fertilización mixta");
+            columna.Item()
+                .Element(TituloSeccion)
+                .Text("Fertilización mixta");
 
-            if (!string.IsNullOrWhiteSpace(mixta.Observacion))
-                columna.Item().Text(mixta.Observacion).FontColor(GrisTexto);
+            if (!string.IsNullOrWhiteSpace(
+                    mixta.Observacion))
+            {
+                columna.Item()
+                    .Text(mixta.Observacion)
+                    .FontColor(GrisTexto);
+            }
 
             columna.Item().Table(tabla =>
             {
@@ -493,24 +717,63 @@ namespace CONATRADEC_API.Reportes
 
                 tabla.Header(encabezado =>
                 {
-                    Encabezado(encabezado, "Fuente utilizada");
-                    Encabezado(encabezado, "Cantidad (qq)");
-                    Encabezado(encabezado, "Precio/QQ");
-                    Encabezado(encabezado, "Costo");
+                    Encabezado(
+                        encabezado,
+                        "Fuente utilizada");
+                    Encabezado(
+                        encabezado,
+                        "Cantidad (qq)");
+                    Encabezado(
+                        encabezado,
+                        "Precio/QQ");
+                    Encabezado(
+                        encabezado,
+                        "Costo");
                 });
 
-                foreach (AnalisisReporteMixtaFuente item in mixta.Fuentes)
+                foreach (
+                    AnalisisReporteMixtaFuente item
+                    in mixta.Fuentes)
                 {
-                    tabla.Cell().Element(CeldaMixta).Text(item.Fuente);
-                    tabla.Cell().Element(CeldaMixta).AlignRight().Text($"{item.CantidadQq:N2}");
-                    tabla.Cell().Element(CeldaMixta).AlignRight().Text($"C$ {item.PrecioPorQq:N2}");
-                    tabla.Cell().Element(CeldaMixta).AlignRight().Text($"C$ {item.Costo:N2}");
+                    tabla.Cell()
+                        .Element(CeldaMixta)
+                        .Text(item.Fuente);
+
+                    tabla.Cell()
+                        .Element(CeldaMixta)
+                        .AlignRight()
+                        .Text($"{item.CantidadQq:N2}");
+
+                    tabla.Cell()
+                        .Element(CeldaMixta)
+                        .AlignRight()
+                        .Text($"C$ {item.PrecioPorQq:N2}");
+
+                    tabla.Cell()
+                        .Element(CeldaMixta)
+                        .AlignRight()
+                        .Text($"C$ {item.Costo:N2}");
                 }
 
-                tabla.Cell().Element(CeldaEtiqueta).Text("Total");
-                tabla.Cell().Element(CeldaValor).AlignRight().Text($"{mixta.Fuentes.Sum(x => x.CantidadQq):N2}");
-                tabla.Cell().Element(CeldaValor).Text(string.Empty);
-                tabla.Cell().Element(CeldaValor).AlignRight().Text($"C$ {mixta.Fuentes.Sum(x => x.Costo):N2}");
+                tabla.Cell()
+                    .Element(CeldaEtiqueta)
+                    .Text("Total");
+
+                tabla.Cell()
+                    .Element(CeldaValor)
+                    .AlignRight()
+                    .Text(
+                        $"{mixta.Fuentes.Sum(x => x.CantidadQq):N2}");
+
+                tabla.Cell()
+                    .Element(CeldaValor)
+                    .Text(string.Empty);
+
+                tabla.Cell()
+                    .Element(CeldaValor)
+                    .AlignRight()
+                    .Text(
+                        $"C$ {mixta.Fuentes.Sum(x => x.Costo):N2}");
             });
 
             columna.Item().Table(tabla =>
@@ -535,33 +798,64 @@ namespace CONATRADEC_API.Reportes
                     Encabezado(encabezado, "Sobrante");
                 });
 
-                foreach (AnalisisReporteMixtaDetalle item in mixta.Detalles)
+                foreach (
+                    AnalisisReporteMixtaDetalle item
+                    in mixta.Detalles)
                 {
                     Celda(tabla, item.Elemento);
-                    CeldaNumero(tabla, item.RequerimientoOriginal, "N2");
-                    CeldaNumero(tabla, item.AporteOrganico, "N2");
-                    CeldaNumero(tabla, item.Diferencia, "N2");
-                    CeldaNumero(tabla, item.Deficit, "N2");
-                    CeldaNumero(tabla, item.Sobrante, "N2");
+                    CeldaNumero(
+                        tabla,
+                        item.RequerimientoOriginal,
+                        "N2");
+                    CeldaNumero(
+                        tabla,
+                        item.AporteOrganico,
+                        "N2");
+                    CeldaNumero(
+                        tabla,
+                        item.Diferencia,
+                        "N2");
+                    CeldaNumero(
+                        tabla,
+                        item.Deficit,
+                        "N2");
+                    CeldaNumero(
+                        tabla,
+                        item.Sobrante,
+                        "N2");
                 }
             });
 
             if (mixta.AportesPorFuente.Count > 0)
-                ComponerAportesMixta(columna, mixta.AportesPorFuente);
+            {
+                ComponerAportesMixta(
+                    columna,
+                    mixta.AportesPorFuente);
+            }
 
             if (mixta.BalanceAjustado != null)
-                ComponerBalanceAjustado(columna, mixta.BalanceAjustado);
+            {
+                ComponerBalanceAjustado(
+                    columna,
+                    mixta.BalanceAjustado);
+            }
 
             if (mixta.ResumenEconomico != null)
-                ComponerResumenEconomico(columna, mixta.ResumenEconomico);
+            {
+                ComponerResumenEconomico(
+                    columna,
+                    mixta.ResumenEconomico);
+            }
         }
 
         private static void ComponerAportesMixta(
             ColumnDescriptor columna,
-            IReadOnlyCollection<AnalisisReporteMixtaAporteFuente> aportes)
+            IReadOnlyCollection<
+                AnalisisReporteMixtaAporteFuente> aportes)
         {
             columna.Item()
-                .Text("Aportes de fertilización mixta por fuente")
+                .Text(
+                    "Aportes de fertilización mixta por fuente")
                 .Bold()
                 .FontColor(GrisTexto);
 
@@ -585,13 +879,24 @@ namespace CONATRADEC_API.Reportes
                     Encabezado(encabezado, "Aporte total");
                 });
 
-                foreach (AnalisisReporteMixtaAporteFuente item in aportes)
+                foreach (
+                    AnalisisReporteMixtaAporteFuente item
+                    in aportes)
                 {
                     Celda(tabla, item.Fuente);
                     Celda(tabla, item.Elemento);
-                    CeldaNumero(tabla, item.CantidadQq, "N2");
-                    CeldaNumero(tabla, item.AportePorQq, "N2");
-                    CeldaNumero(tabla, item.AporteTotal, "N2");
+                    CeldaNumero(
+                        tabla,
+                        item.CantidadQq,
+                        "N2");
+                    CeldaNumero(
+                        tabla,
+                        item.AportePorQq,
+                        "N2");
+                    CeldaNumero(
+                        tabla,
+                        item.AporteTotal,
+                        "N2");
                 }
             });
         }
@@ -600,7 +905,9 @@ namespace CONATRADEC_API.Reportes
             ColumnDescriptor columna,
             AnalisisReporteBalanceAjustado balance)
         {
-            columna.Item().Element(TituloSeccion).Text("Balance comercial ajustado");
+            columna.Item()
+                .Element(TituloSeccion)
+                .Text("Balance comercial ajustado");
 
             columna.Item()
                 .Background(GrisFondo)
@@ -608,7 +915,10 @@ namespace CONATRADEC_API.Reportes
                 .Column(contenido =>
                 {
                     contenido.Item()
-                        .Text(ValorO(balance.NombreFormula, "Balance ajustado"))
+                        .Text(
+                            ValorO(
+                                balance.NombreFormula,
+                                "Balance ajustado"))
                         .Bold()
                         .FontSize(12)
                         .FontColor(Verde);
@@ -621,11 +931,15 @@ namespace CONATRADEC_API.Reportes
                             .Border(1)
                             .BorderColor(Cafe)
                             .Padding(6)
-                            .Text("Fórmula comercial ajustada: " + string.Join(
-                                " · ",
-                                balance.FormulaComercial
-                                    .OrderBy(x => OrdenElemento(x.Key))
-                                    .Select(x => $"{x.Key} {x.Value:N2}")))
+                            .Text(
+                                "Fórmula comercial ajustada: " +
+                                string.Join(
+                                    " · ",
+                                    balance.FormulaComercial
+                                        .OrderBy(x =>
+                                            OrdenElemento(x.Key))
+                                        .Select(x =>
+                                            $"{x.Key} {x.Value:N2}")))
                             .Bold()
                             .FontColor(Cafe);
                     }
@@ -633,17 +947,29 @@ namespace CONATRADEC_API.Reportes
                     contenido.Item()
                         .PaddingTop(5)
                         .Text(
-                            $"Mezcla exacta: {balance.MezclaTotalQq:N3} qq  ·  " +
+                            $"Mezcla exacta: " +
+                            $"{balance.MezclaTotalQq:N3} qq  ·  " +
                             $"Total: {balance.TotalLibras:N2} lb  ·  " +
-                            $"Dosis/planta/aplicación: {balance.DosisPlantaPorAplicacionOz:N2} oz");
+                            $"Dosis/planta/aplicación: " +
+                            $"{balance.DosisPlantaPorAplicacionOz:N2} oz");
 
                     contenido.Item()
                         .PaddingTop(3)
                         .Text(texto =>
                         {
-                            texto.Span("Costo comercial ajustado: ").Bold().FontColor(Cafe);
-                            texto.Span($"C$ {balance.CostoRealCompra:N2}").Bold().FontColor(Cafe);
-                            texto.Span($"  ·  Costo por aplicación: C$ {balance.PrecioPorAplicacion:N2}");
+                            texto.Span(
+                                    "Costo comercial ajustado: ")
+                                .Bold()
+                                .FontColor(Cafe);
+
+                            texto.Span(
+                                    $"C$ {balance.CostoRealCompra:N2}")
+                                .Bold()
+                                .FontColor(Cafe);
+
+                            texto.Span(
+                                $"  ·  Costo por aplicación: " +
+                                $"C$ {balance.PrecioPorAplicacion:N2}");
                         });
                 });
 
@@ -664,18 +990,39 @@ namespace CONATRADEC_API.Reportes
 
                 tabla.Header(encabezado =>
                 {
-                    Encabezado(encabezado, "Fuente / elemento");
-                    Encabezado(encabezado, "Requerimiento original");
-                    Encabezado(encabezado, "Aporte orgánico");
-                    Encabezado(encabezado, "Requerimiento ajustado");
+                    Encabezado(
+                        encabezado,
+                        "Fuente / elemento");
+                    Encabezado(
+                        encabezado,
+                        "Requerimiento original");
+                    Encabezado(
+                        encabezado,
+                        "Aporte orgánico");
+                    Encabezado(
+                        encabezado,
+                        "Requerimiento ajustado");
                 });
 
-                foreach (AnalisisReporteCompraAjustada item in balance.Detalles)
+                foreach (
+                    AnalisisReporteCompraAjustada item
+                    in balance.Detalles)
                 {
-                    Celda(tabla, $"{item.Fuente}\n{item.Elemento}");
-                    CeldaNumero(tabla, item.RequerimientoOriginalLb, "N2");
-                    CeldaNumero(tabla, item.AporteOrganicoLb, "N2");
-                    CeldaNumero(tabla, item.RequerimientoAjustadoLb, "N2");
+                    Celda(
+                        tabla,
+                        $"{item.Fuente}\n{item.Elemento}");
+                    CeldaNumero(
+                        tabla,
+                        item.RequerimientoOriginalLb,
+                        "N2");
+                    CeldaNumero(
+                        tabla,
+                        item.AporteOrganicoLb,
+                        "N2");
+                    CeldaNumero(
+                        tabla,
+                        item.RequerimientoAjustadoLb,
+                        "N2");
                 }
             });
 
@@ -684,6 +1031,7 @@ namespace CONATRADEC_API.Reportes
                 .Column(seccion =>
                 {
                     seccion.Spacing(4);
+
                     seccion.Item()
                         .Text("Compra comercial ajustada")
                         .Bold()
@@ -713,15 +1061,33 @@ namespace CONATRADEC_API.Reportes
                             Encabezado(encabezado, "Costo compra");
                         });
 
-                        foreach (AnalisisReporteCompraAjustada item in balance.Detalles)
+                        foreach (
+                            AnalisisReporteCompraAjustada item
+                            in balance.Detalles)
                         {
                             Celda(tabla, item.Fuente);
-                            CeldaNumero(tabla, item.QuintalesOriginales, "N3");
-                            CeldaNumero(tabla, item.QuintalesAjustados, "N3");
-                            CeldaNumero(tabla, item.ReduccionQuintales, "N3");
-                            CeldaNumero(tabla, item.QuintalesComprar, "N0");
-                            CeldaMoneda(tabla, item.PrecioPorQq);
-                            CeldaMoneda(tabla, item.CostoCompra);
+                            CeldaNumero(
+                                tabla,
+                                item.QuintalesOriginales,
+                                "N3");
+                            CeldaNumero(
+                                tabla,
+                                item.QuintalesAjustados,
+                                "N3");
+                            CeldaNumero(
+                                tabla,
+                                item.ReduccionQuintales,
+                                "N3");
+                            CeldaNumero(
+                                tabla,
+                                item.QuintalesComprar,
+                                "N0");
+                            CeldaMoneda(
+                                tabla,
+                                item.PrecioPorQq);
+                            CeldaMoneda(
+                                tabla,
+                                item.CostoCompra);
                         }
                     });
                 });
@@ -731,10 +1097,15 @@ namespace CONATRADEC_API.Reportes
             ColumnDescriptor columna,
             AnalisisReporteResumenEconomico resumen)
         {
-            columna.Item().Element(TituloSeccion).Text("Resumen económico");
+            columna.Item()
+                .Element(TituloSeccion)
+                .Text("Resumen económico");
 
             columna.Item()
-                .Background(resumen.EsAhorro ? VerdeSuave : "#FDECEC")
+                .Background(
+                    resumen.EsAhorro
+                        ? VerdeSuave
+                        : "#FDECEC")
                 .Padding(10)
                 .Table(tabla =>
                 {
@@ -752,15 +1123,19 @@ namespace CONATRADEC_API.Reportes
                         $"C$ {resumen.CostoComercialOriginal:N2}",
                         "Costo fertilización mixta",
                         $"C$ {resumen.CostoFertilizacionMixta:N2}");
+
                     AgregarPar(
                         tabla,
                         "Costo comercial ajustado",
                         $"C$ {resumen.CostoComercialAjustado:N2}",
                         "Costo total final",
                         $"C$ {resumen.CostoTotalFinal:N2}");
+
                     AgregarPar(
                         tabla,
-                        resumen.EsAhorro ? "Ahorro" : "Incremento",
+                        resumen.EsAhorro
+                            ? "Ahorro"
+                            : "Incremento",
                         $"C$ {Math.Abs(resumen.DiferenciaEconomica):N2}",
                         "Comparación",
                         resumen.EsAhorro
@@ -769,44 +1144,56 @@ namespace CONATRADEC_API.Reportes
                 });
         }
 
-        private static IContainer TituloSeccion(IContainer contenedor) =>
+        private static IContainer TituloSeccion(
+            IContainer contenedor) =>
             contenedor
                 .BorderBottom(2)
                 .BorderColor(Verde)
                 .PaddingBottom(4)
                 .DefaultTextStyle(x =>
-                    x.Bold().FontSize(12).FontColor(Verde));
+                    x.Bold()
+                        .FontSize(12)
+                        .FontColor(Verde));
 
-        private static IContainer CeldaEncabezado(IContainer contenedor) =>
+        private static IContainer CeldaEncabezado(
+            IContainer contenedor) =>
             contenedor
                 .Background(Verde)
                 .PaddingVertical(5)
                 .PaddingHorizontal(5)
                 .DefaultTextStyle(x =>
-                    x.Bold().FontSize(8).FontColor(Colors.White));
+                    x.Bold()
+                        .FontSize(8)
+                        .FontColor(Colors.White));
 
-        private static IContainer CeldaTabla(IContainer contenedor) =>
+        private static IContainer CeldaTabla(
+            IContainer contenedor) =>
             contenedor
                 .BorderBottom(0.5f)
                 .BorderColor(GrisBorde)
                 .PaddingVertical(4)
                 .PaddingHorizontal(5);
 
-        private static IContainer CeldaEtiqueta(IContainer contenedor) =>
+        private static IContainer CeldaEtiqueta(
+            IContainer contenedor) =>
             contenedor
                 .Background(GrisFondo)
                 .BorderBottom(0.5f)
                 .BorderColor(GrisBorde)
                 .Padding(5)
-                .DefaultTextStyle(x => x.Bold().FontColor(GrisTexto));
+                .DefaultTextStyle(x =>
+                    x.Bold()
+                        .FontColor(GrisTexto));
 
-        private static IContainer CeldaValor(IContainer contenedor) =>
+        private static IContainer CeldaValor(
+            IContainer contenedor) =>
             contenedor
                 .BorderBottom(0.5f)
                 .BorderColor(GrisBorde)
                 .Padding(5);
 
-        private static IContainer CeldaMixta(IContainer contenedor) =>
+        private static IContainer CeldaMixta(
+            IContainer contenedor) =>
             contenedor
                 .Background(AmarilloSuave)
                 .BorderBottom(1)
@@ -820,32 +1207,57 @@ namespace CONATRADEC_API.Reportes
             string etiqueta2,
             string valor2)
         {
-            tabla.Cell().Element(CeldaEtiqueta).Text(etiqueta1);
-            tabla.Cell().Element(CeldaValor).Text(ValorO(valor1, "-"));
-            tabla.Cell().Element(CeldaEtiqueta).Text(etiqueta2);
-            tabla.Cell().Element(CeldaValor).Text(ValorO(valor2, "-"));
+            tabla.Cell()
+                .Element(CeldaEtiqueta)
+                .Text(etiqueta1);
+
+            tabla.Cell()
+                .Element(CeldaValor)
+                .Text(ValorO(valor1, "-"));
+
+            tabla.Cell()
+                .Element(CeldaEtiqueta)
+                .Text(etiqueta2);
+
+            tabla.Cell()
+                .Element(CeldaValor)
+                .Text(ValorO(valor2, "-"));
         }
 
         private static void Encabezado(
             TableCellDescriptor encabezado,
             string texto) =>
-            encabezado.Cell().Element(CeldaEncabezado).Text(texto);
+            encabezado.Cell()
+                .Element(CeldaEncabezado)
+                .Text(texto);
 
-        private static void Celda(TableDescriptor tabla, string texto) =>
-            tabla.Cell().Element(CeldaTabla).Text(ValorO(texto, "-"));
+        private static void Celda(
+            TableDescriptor tabla,
+            string texto) =>
+            tabla.Cell()
+                .Element(CeldaTabla)
+                .Text(ValorO(texto, "-"));
 
         private static void CeldaNumero(
             TableDescriptor tabla,
             decimal numero,
             string formato) =>
-            tabla.Cell().Element(CeldaTabla).AlignRight().Text(numero.ToString(formato));
+            tabla.Cell()
+                .Element(CeldaTabla)
+                .AlignRight()
+                .Text(numero.ToString(formato));
 
         private static void CeldaMoneda(
             TableDescriptor tabla,
             decimal numero) =>
-            tabla.Cell().Element(CeldaTabla).AlignRight().Text($"C$ {numero:N2}");
+            tabla.Cell()
+                .Element(CeldaTabla)
+                .AlignRight()
+                .Text($"C$ {numero:N2}");
 
-        private static string TextoNumero(decimal? valor, string? unidad = null)
+        private static string TextoNumero(
+            decimal? valor,
+            string? unidad = null)
         {
             if (!valor.HasValue)
                 return "No disponible";
@@ -855,17 +1267,22 @@ namespace CONATRADEC_API.Reportes
                 : $"{valor.Value:N2} {unidad.Trim()}";
         }
 
-        private static string ValorO(string? valor, string alternativo) =>
-            string.IsNullOrWhiteSpace(valor) ? alternativo : valor.Trim();
+        private static string ValorO(
+            string? valor,
+            string alternativo) =>
+            string.IsNullOrWhiteSpace(valor)
+                ? alternativo
+                : valor.Trim();
 
         private static string InterpretarEnmienda(
             AnalisisReporteEnmienda enmienda)
         {
-            if (enmienda.NecesidadEncaladoTonHa > 0)
+            if (enmienda.NecesidadEncaladoLbMz > 0)
             {
                 return
                     $"El cálculo determinó una necesidad de " +
-                    $"{enmienda.NecesidadEncaladoTonHa:N2} ton/ha de enmienda.";
+                    $"{enmienda.NecesidadEncaladoLbMz:N2} " +
+                    "lb/Mz de enmienda.";
             }
 
             if (enmienda.SaturacionActual >=
@@ -873,14 +1290,15 @@ namespace CONATRADEC_API.Reportes
             {
                 return
                     $"El cálculo sí fue realizado. La saturación actual " +
-                    $"({enmienda.SaturacionActual:N2}%) alcanza o supera la " +
-                    $"deseada ({enmienda.SaturacionDeseada:N2}%); por eso la " +
-                    "necesidad y la dosis resultan en cero.";
+                    $"({enmienda.SaturacionActual:N2}%) alcanza o supera " +
+                    $"la deseada ({enmienda.SaturacionDeseada:N2}%); " +
+                    "por eso la necesidad y la dosis resultan en cero.";
             }
 
             return
-                "El cálculo fue realizado y no determinó una dosis positiva " +
-                "con los parámetros configurados para la fuente seleccionada.";
+                "El cálculo fue realizado y no determinó una dosis " +
+                "positiva con los parámetros configurados para la " +
+                "fuente seleccionada.";
         }
 
         private static string TextoAportes(
@@ -890,10 +1308,13 @@ namespace CONATRADEC_API.Reportes
                 : string.Join(
                     " · ",
                     aportes
-                        .OrderBy(x => OrdenElemento(x.Key))
-                        .Select(x => $"{x.Key}: {x.Value:N2}"));
+                        .OrderBy(x =>
+                            OrdenElemento(x.Key))
+                        .Select(x =>
+                            $"{x.Key}: {x.Value:N2}"));
 
-        private static int OrdenElemento(string simbolo) =>
+        private static int OrdenElemento(
+            string simbolo) =>
             simbolo.Trim().ToUpperInvariant() switch
             {
                 "N" => 1,

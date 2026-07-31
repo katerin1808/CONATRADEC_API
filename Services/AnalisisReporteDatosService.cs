@@ -1,16 +1,27 @@
 using CONATRADEC_API.Models;
 using CONATRADEC_API.Reportes;
 using Microsoft.EntityFrameworkCore;
+using System.Globalization;
 
 namespace CONATRADEC_API.Services
 {
+    /// <summary>
+    /// Construye el modelo común utilizado por el PDF y el Excel.
+    ///
+    /// El requerimiento anual se vuelve a normalizar con la producción
+    /// guardada en la cabecera del análisis. De esta forma, el reporte no
+    /// reutiliza un requerimiento antiguo calculado con otra producción.
+    /// </summary>
     public sealed class AnalisisReporteDatosService
     {
         private readonly DBContext _db;
+        private readonly UnidadConversionService _unidadConversionService;
 
         public AnalisisReporteDatosService(DBContext db)
         {
             _db = db;
+            _unidadConversionService =
+                new UnidadConversionService(db);
         }
 
         public async Task<AnalisisReporte?> ObtenerAsync(
@@ -110,7 +121,7 @@ namespace CONATRADEC_API.Services
 
             await CargarRequerimientosAsync(
                 reporte,
-                analisisSueloCalculoId,
+                calculo,
                 cancellationToken);
 
             reporte.Balance = await CargarBalanceAsync(
@@ -164,48 +175,201 @@ namespace CONATRADEC_API.Services
 
         private async Task CargarRequerimientosAsync(
             AnalisisReporte reporte,
-            int analisisSueloCalculoId,
+            AnalisisSueloCalculo calculo,
             CancellationToken cancellationToken)
         {
             var filas = await (
                 from valor in _db.AnalisisSueloCalculoElementoQuimicos.AsNoTracking()
                 join elemento in _db.elementoQuimico.AsNoTracking()
                     on valor.elementoQuimicosId equals elemento.elementoQuimicosId
-                join unidad in _db.UnidadMedidas.AsNoTracking()
-                    on valor.unidadMedidaId equals (int?)unidad.unidadMedidaId
-                    into unidades
-                from unidad in unidades.DefaultIfEmpty()
-                where valor.analisisSueloCalculoId == analisisSueloCalculoId &&
+                where valor.analisisSueloCalculoId ==
+                          calculo.analisisSueloCalculoId &&
                       valor.activo
-                orderby elemento.nombreElementoQuimico
                 select new
                 {
+                    valor.elementoQuimicosId,
                     elemento.nombreElementoQuimico,
                     elemento.simboloElementoQuimico,
                     valor.cantidadIngresada,
                     valor.cantidadConvertidaLbMz,
                     valor.requerimientoCalculado,
-                    Unidad = unidad == null ? string.Empty : unidad.nombreUnidadMedida,
                     valor.clasificacion,
                     valor.observacion
                 }).ToListAsync(cancellationToken);
 
-            reporte.Requerimientos = filas
-                .Select(x => new AnalisisReporteRequerimiento
-                {
-                    Elemento = FormatearElemento(
-                        x.nombreElementoQuimico,
-                        x.simboloElementoQuimico),
-                    CantidadIngresada = x.cantidadIngresada,
-                    CantidadConvertidaLbMz = x.cantidadConvertidaLbMz,
-                    RequerimientoLbMz = x.requerimientoCalculado,
-                    UnidadResultado = string.IsNullOrWhiteSpace(x.Unidad)
-                        ? "lb/mz"
-                        : x.Unidad,
-                    Clasificacion = x.clasificacion ?? string.Empty,
-                    Observacion = x.observacion ?? string.Empty
-                })
+            List<int> elementosIds = filas
+                .Select(x => x.elementoQuimicosId)
+                .Distinct()
                 .ToList();
+
+            List<ParametroExtraccionNutrienteCafe>
+                extraccionesLista =
+                    await _db.ParametroExtraccionNutrienteCafe
+                        .AsNoTracking()
+                        .Where(x =>
+                            x.activo &&
+                            elementosIds.Contains(x.elementoQuimicosId))
+                        .ToListAsync(cancellationToken);
+
+            Dictionary<int, ParametroExtraccionNutrienteCafe>
+                extracciones =
+                    extraccionesLista
+                        .GroupBy(x => x.elementoQuimicosId)
+                        .ToDictionary(
+                            x => x.Key,
+                            x => x.First());
+
+            List<ParametroRangoNutrienteCultivo>
+                rangosLista =
+                    await _db.ParametroRangoNutrienteCultivo
+                        .AsNoTracking()
+                        .Where(x =>
+                            x.activo &&
+                            x.tipoCultivoId == calculo.tipoCultivoId &&
+                            elementosIds.Contains(x.elementoQuimicosId))
+                        .ToListAsync(cancellationToken);
+
+            Dictionary<int, ParametroRangoNutrienteCultivo>
+                rangos =
+                    rangosLista
+                        .GroupBy(x => x.elementoQuimicosId)
+                        .ToDictionary(
+                            x => x.Key,
+                            x => x.First());
+
+            UnidadMedida? unidadKgHa =
+                await _db.UnidadMedidas
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(
+                        x =>
+                            x.activo &&
+                            x.nombreUnidadMedida.Trim().ToLower() == "kg/ha",
+                        cancellationToken);
+
+            decimal? materiaOrganicaPorcentaje =
+                await ObtenerMateriaOrganicaPorcentajeAsync(
+                    calculo,
+                    cancellationToken);
+
+            var requerimientos = new List<AnalisisReporteRequerimiento>();
+
+            foreach (var fila in filas)
+            {
+                decimal? rangoMinimoLbMz = null;
+                decimal? rangoMaximoLbMz = null;
+                decimal? requerimiento = fila.requerimientoCalculado;
+                string observacion = fila.observacion ?? string.Empty;
+
+                try
+                {
+                    if (unidadKgHa != null &&
+                        materiaOrganicaPorcentaje.HasValue &&
+                        extracciones.TryGetValue(
+                            fila.elementoQuimicosId,
+                            out ParametroExtraccionNutrienteCafe? extraccion) &&
+                        rangos.TryGetValue(
+                            fila.elementoQuimicosId,
+                            out ParametroRangoNutrienteCultivo? rango))
+                    {
+                        ResultadoConversionUnidad minimo =
+                            await _unidadConversionService
+                                .ConvertirElementoALbMzAsync(
+                                    fila.elementoQuimicosId,
+                                    unidadKgHa.unidadMedidaId,
+                                    rango.valorMinimo,
+                                    materiaOrganicaPorcentaje.Value,
+                                    cancellationToken);
+
+                        ResultadoConversionUnidad maximo =
+                            await _unidadConversionService
+                                .ConvertirElementoALbMzAsync(
+                                    fila.elementoQuimicosId,
+                                    unidadKgHa.unidadMedidaId,
+                                    rango.valorMaximo,
+                                    materiaOrganicaPorcentaje.Value,
+                                    cancellationToken);
+
+                        rangoMinimoLbMz = minimo.valorConvertido;
+                        rangoMaximoLbMz = maximo.valorConvertido;
+
+                        decimal extraccionProduccion =
+                            Math.Round(
+                                calculo.cantidadQuintalesOro *
+                                extraccion.cantidadExtraidaPorQQOro,
+                                4);
+
+                        requerimiento = Math.Round(
+                            rangoMaximoLbMz.Value +
+                            extraccionProduccion,
+                            4);
+
+                        observacion = CrearObservacionRequerimiento(
+                            fila.simboloElementoQuimico,
+                            fila.clasificacion,
+                            fila.cantidadConvertidaLbMz,
+                            rangoMinimoLbMz,
+                            rangoMaximoLbMz,
+                            requerimiento);
+                    }
+                }
+                catch
+                {
+                    /*
+                     * Un reporte histórico no debe dejar de generarse si una
+                     * parametrización fue modificada o desactivada. En ese
+                     * caso se conserva el valor almacenado originalmente.
+                     */
+                }
+
+                requerimientos.Add(
+                    new AnalisisReporteRequerimiento
+                    {
+                        Elemento = FormatearElemento(
+                            fila.nombreElementoQuimico,
+                            fila.simboloElementoQuimico),
+                        CantidadIngresada = fila.cantidadIngresada,
+                        CantidadConvertidaLbMz =
+                            fila.cantidadConvertidaLbMz,
+                        RequerimientoLbMz = requerimiento,
+                        UnidadResultado = "lb/Mz",
+                        Clasificacion =
+                            fila.clasificacion ?? string.Empty,
+                        Observacion = observacion
+                    });
+            }
+
+            reporte.Requerimientos = requerimientos
+                .OrderByDescending(x => x.RequerimientoLbMz ?? 0)
+                .ThenBy(
+                    x => x.Elemento,
+                    StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
+        }
+
+        private async Task<decimal?>
+            ObtenerMateriaOrganicaPorcentajeAsync(
+                AnalisisSueloCalculo calculo,
+                CancellationToken cancellationToken)
+        {
+            if (!calculo.unidadMedidaMateriaOrganicaId.HasValue ||
+                !calculo.materiaOrganica.HasValue ||
+                calculo.materiaOrganica.Value <= 0)
+            {
+                return null;
+            }
+
+            try
+            {
+                return await _unidadConversionService
+                    .ConvertirMateriaOrganicaAPorcentajeAsync(
+                        calculo.materiaOrganica.Value,
+                        calculo.unidadMedidaMateriaOrganicaId.Value,
+                        cancellationToken);
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private async Task<AnalisisReporteBalance?> CargarBalanceAsync(
@@ -657,6 +821,37 @@ namespace CONATRADEC_API.Services
                 Detalles = detalles
             };
         }
+
+        private static string CrearObservacionRequerimiento(
+            string? simbolo,
+            string? clasificacion,
+            decimal? cantidadConvertidaLbMz,
+            decimal? rangoMinimoLbMz,
+            decimal? rangoMaximoLbMz,
+            decimal? requerimientoCalculado)
+        {
+            if (!cantidadConvertidaLbMz.HasValue ||
+                !rangoMinimoLbMz.HasValue ||
+                !rangoMaximoLbMz.HasValue ||
+                !requerimientoCalculado.HasValue)
+            {
+                return string.Empty;
+            }
+
+            return
+                $"Elemento {(simbolo ?? string.Empty).Trim()}: " +
+                $"clasificación {(clasificacion ?? string.Empty).Trim()}. " +
+                $"Cantidad convertida: {F(cantidadConvertidaLbMz.Value)} lb/Mz. " +
+                $"Rango de referencia: {F(rangoMinimoLbMz.Value)} - " +
+                $"{F(rangoMaximoLbMz.Value)} lb/Mz. " +
+                $"Requerimiento anual calculado: " +
+                $"{F(requerimientoCalculado.Value)} lb/Mz.";
+        }
+
+        private static string F(decimal valor) =>
+            valor.ToString(
+                "0.####",
+                CultureInfo.InvariantCulture);
 
         private static string FormatearElemento(string? nombre, string? simbolo)
         {
