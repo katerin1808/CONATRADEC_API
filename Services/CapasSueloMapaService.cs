@@ -205,7 +205,15 @@ public sealed class CapasSueloMapaService
                     calculo.analisisSueloCalculoId,
                 TerrenoId = terreno.terrenoId,
                 Codigo = terreno.codigoTerreno,
-                Productor = terreno.nombrePropietarioTerreno,
+                Productor =
+                    terreno.RelacionesPropietario
+                        .Where(relacion =>
+                            relacion.activo &&
+                            relacion.Propietario.activo)
+                        .Select(relacion =>
+                            relacion.Propietario.nombreCompleto)
+                        .FirstOrDefault() ??
+                    string.Empty,
                 DepartamentoId =
                     terreno.Municipio.DepartamentoId,
                 Departamento =

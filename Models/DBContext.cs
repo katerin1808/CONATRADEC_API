@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using static CONATRADEC_API.Models.RolInterfaz;
 
@@ -20,6 +20,8 @@ namespace CONATRADEC_API.Models
         public DbSet<Procedencia> Procedencia { get; set; } = null!;
         public DbSet<Usuario> Usuarios { get; set; } = null!;
         public DbSet<Terreno> Terreno { get; set; } = null!;
+        public DbSet<Propietario> Propietarios { get; set; } = null!;
+        public DbSet<PropietarioTerreno> PropietarioTerrenos { get; set; } = null!;
         public DbSet<FotoTerreno> FotoTerreno { get; set; }
         public DbSet<FuenteNutriente> fuenteNutriente { get; set; }
         public DbSet<ElementoQuimico> elementoQuimico { get; set; }
@@ -58,7 +60,7 @@ namespace CONATRADEC_API.Models
         public DbSet<FormulaNutricionalAporte> formulaNutricionalAporte { get; set; }
 
 
-       
+
         public DbSet<FertilizacionMixta> fertilizacionMixta { get; set; }
         public DbSet<FertilizacionMixtaFuente> fertilizacionMixtaFuente { get; set; }
         public DbSet<FuenteFertilizacionMixta> fuenteFertilizacionMixta { get; set; } = null!;
@@ -77,8 +79,60 @@ namespace CONATRADEC_API.Models
         {
             base.OnModelCreating(modelBuilder);
 
-            // Configuraciones que ya tenías 
+            // Configuraciones que ya tenías
             // (las dejo intactas)
+
+            modelBuilder.Entity<Propietario>(entity =>
+            {
+                entity.ToTable("propietario", "dbo");
+                entity.HasKey(item => item.propietarioId);
+                entity.HasIndex(item => item.identificacionNormalizada)
+                    .IsUnique();
+                entity.Property(item => item.identificacion)
+                    .HasMaxLength(50)
+                    .IsRequired();
+                entity.Property(item => item.identificacionNormalizada)
+                    .HasMaxLength(50)
+                    .IsRequired();
+                entity.Property(item => item.nombreCompleto)
+                    .HasMaxLength(150)
+                    .IsRequired();
+                entity.Property(item => item.telefono)
+                    .HasMaxLength(25);
+                entity.Property(item => item.correo)
+                    .HasMaxLength(150);
+                entity.Property(item => item.direccion)
+                    .HasMaxLength(300);
+                entity.Property(item => item.activo)
+                    .HasDefaultValue(true)
+                    .IsRequired();
+            });
+
+            modelBuilder.Entity<PropietarioTerreno>(entity =>
+            {
+                entity.ToTable("propietarioTerreno", "dbo");
+                entity.HasKey(item => item.propietarioTerrenoId);
+
+                entity.HasOne(item => item.Propietario)
+                    .WithMany(item => item.RelacionesTerreno)
+                    .HasForeignKey(item => item.propietarioId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                entity.HasOne(item => item.Terreno)
+                    .WithMany(item => item.RelacionesPropietario)
+                    .HasForeignKey(item => item.terrenoId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                entity.HasIndex(item => new
+                {
+                    item.propietarioId,
+                    item.activo
+                });
+
+                entity.Property(item => item.activo)
+                    .HasDefaultValue(true)
+                    .IsRequired();
+            });
 
             // Interfaz
             modelBuilder.Entity<Interfaz>(e =>

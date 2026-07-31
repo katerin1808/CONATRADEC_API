@@ -230,8 +230,12 @@ namespace CONATRADEC_API.Controllers
                 query = query.Where(item =>
                     item.codigoTerreno
                         .Contains(texto) ||
-                    item.nombrePropietarioTerreno
-                        .Contains(texto) ||
+                    item.RelacionesPropietario
+                        .Any(relacion =>
+                            relacion.activo &&
+                            relacion.Propietario.activo &&
+                            relacion.Propietario.nombreCompleto
+                                .Contains(texto)) ||
                     item.direccionTerreno
                         .Contains(texto));
             }
@@ -245,7 +249,15 @@ namespace CONATRADEC_API.Controllers
                         item.terrenoId,
                         item.codigoTerreno,
                         item.direccionTerreno,
-                        item.nombrePropietarioTerreno,
+                        NombrePropietario =
+                            item.RelacionesPropietario
+                                .Where(relacion =>
+                                    relacion.activo &&
+                                    relacion.Propietario.activo)
+                                .Select(relacion =>
+                                    relacion.Propietario.nombreCompleto)
+                                .FirstOrDefault() ??
+                            string.Empty,
                         item.latitud,
                         item.longitud,
                         item.extensionManzanaTerreno,
@@ -335,8 +347,7 @@ namespace CONATRADEC_API.Controllers
                             terreno.direccionTerreno,
 
                         productor =
-                            terreno
-                                .nombrePropietarioTerreno,
+                            terreno.NombrePropietario,
 
                         latitud =
                             terreno.latitud,

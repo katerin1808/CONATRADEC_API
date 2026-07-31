@@ -4,31 +4,47 @@ using Microsoft.EntityFrameworkCore;
 namespace CONATRADEC_API.Infrastructure;
 
 /// <summary>
-/// Crea la estructura independiente que separa:
-/// - la cuenta de usuario;
-/// - el propietario legal;
-/// - la propiedad del terreno;
-/// - la asignación operativa;
-/// - la cobertura territorial.
+/// Mantiene la estructura normalizada de acceso y propiedad.
 ///
-/// No modifica ni elimina los campos históricos de propietario de dbo.terreno.
-/// Esos campos se utilizan para una migración inicial compatible.
+/// La propiedad legal de una finca se representa mediante:
+///
+/// propietario -> propietarioTerreno -> terreno
+///
+/// La cuenta del portal se representa mediante:
+///
+/// usuario -> usuarioPropietario -> propietario
+///
+/// Las asignaciones operativas y coberturas territoriales son relaciones
+/// independientes y nunca deben utilizarse para determinar propiedad.
 /// </summary>
 public sealed class ParametrizacionAccesoDatabaseInitializer
 {
-    public const string ParametrizacionAcceso = "ParametrizacionAccesoPage";
-    public const string Propietarios = "PropietariosPage";
-    public const string UsuarioPropietario = "UsuarioPropietarioPage";
-    public const string AsignacionTerreno = "AsignacionTerrenoPage";
-    public const string CoberturaTerritorial = "CoberturaTerritorialPage";
-    public const string PortalPropietario = "PortalPropietarioPage";
+    public const string ParametrizacionAcceso =
+        "ParametrizacionAccesoPage";
+
+    public const string Propietarios =
+        "PropietariosPage";
+
+    public const string UsuarioPropietario =
+        "UsuarioPropietarioPage";
+
+    public const string AsignacionTerreno =
+        "AsignacionTerrenoPage";
+
+    public const string CoberturaTerritorial =
+        "CoberturaTerritorialPage";
+
+    public const string PortalPropietario =
+        "PortalPropietarioPage";
 
     private readonly DBContext db;
-    private readonly ILogger<ParametrizacionAccesoDatabaseInitializer> logger;
+    private readonly ILogger<
+        ParametrizacionAccesoDatabaseInitializer> logger;
 
     public ParametrizacionAccesoDatabaseInitializer(
         DBContext db,
-        ILogger<ParametrizacionAccesoDatabaseInitializer> logger)
+        ILogger<
+            ParametrizacionAccesoDatabaseInitializer> logger)
     {
         this.db = db;
         this.logger = logger;
@@ -38,14 +54,14 @@ public sealed class ParametrizacionAccesoDatabaseInitializer
         CancellationToken cancellationToken = default)
     {
         await CrearEstructuraAsync(cancellationToken);
-        await MigrarPropietariosExistentesAsync(cancellationToken);
+
         await CrearPermisosAsync(cancellationToken);
 
         logger.LogInformation(
-            "Parametrización de propietarios y acceso a terrenos inicializada.");
+            "Estructura normalizada de propietarios y terrenos inicializada.");
     }
 
-    private async Task CrearEstructuraAsync(
+    private Task CrearEstructuraAsync(
         CancellationToken cancellationToken)
     {
         const string sql = """
@@ -55,307 +71,300 @@ public sealed class ParametrizacionAccesoDatabaseInitializer
                 (
                     propietarioId INT IDENTITY(1,1) NOT NULL
                         CONSTRAINT PK_propietario PRIMARY KEY,
+
                     identificacion NVARCHAR(50) NOT NULL,
+
                     identificacionNormalizada NVARCHAR(50) NOT NULL,
+
                     nombreCompleto NVARCHAR(150) NOT NULL,
+
                     telefono NVARCHAR(25) NULL,
+
                     correo NVARCHAR(150) NULL,
+
                     direccion NVARCHAR(300) NULL,
+
                     activo BIT NOT NULL
-                        CONSTRAINT DF_propietario_activo DEFAULT(1),
+                        CONSTRAINT DF_propietario_activo
+                        DEFAULT(1),
+
                     fechaRegistroUtc DATETIME2(0) NOT NULL
                         CONSTRAINT DF_propietario_fechaRegistroUtc
                         DEFAULT(SYSUTCDATETIME()),
+
                     fechaActualizacionUtc DATETIME2(0) NULL,
+
                     usuarioRegistroId INT NULL,
+
                     usuarioActualizacionId INT NULL
                 );
 
-                CREATE UNIQUE INDEX UX_propietario_identificacionNormalizada
-                    ON dbo.propietario(identificacionNormalizada);
+                CREATE UNIQUE INDEX
+                    UX_propietario_identificacionNormalizada
+                    ON dbo.propietario(
+                        identificacionNormalizada);
             END;
 
-            IF OBJECT_ID(N'dbo.propietarioTerreno', N'U') IS NULL
+            IF OBJECT_ID(
+                    N'dbo.propietarioTerreno',
+                    N'U') IS NULL
             BEGIN
                 CREATE TABLE dbo.propietarioTerreno
                 (
-                    propietarioTerrenoId INT IDENTITY(1,1) NOT NULL
-                        CONSTRAINT PK_propietarioTerreno PRIMARY KEY,
+                    propietarioTerrenoId
+                        INT IDENTITY(1,1) NOT NULL
+                        CONSTRAINT PK_propietarioTerreno
+                        PRIMARY KEY,
+
                     propietarioId INT NOT NULL,
+
                     terrenoId INT NOT NULL,
+
                     activo BIT NOT NULL
-                        CONSTRAINT DF_propietarioTerreno_activo DEFAULT(1),
+                        CONSTRAINT
+                            DF_propietarioTerreno_activo
+                        DEFAULT(1),
+
                     fechaAsignacionUtc DATETIME2(0) NOT NULL
-                        CONSTRAINT DF_propietarioTerreno_fechaAsignacionUtc
+                        CONSTRAINT
+                            DF_propietarioTerreno_fechaAsignacionUtc
                         DEFAULT(SYSUTCDATETIME()),
+
                     fechaDesasignacionUtc DATETIME2(0) NULL,
+
                     asignadoPorUsuarioId INT NULL,
+
                     desasignadoPorUsuarioId INT NULL,
-                    CONSTRAINT FK_propietarioTerreno_propietario
+
+                    CONSTRAINT
+                        FK_propietarioTerreno_propietario
                         FOREIGN KEY(propietarioId)
-                        REFERENCES dbo.propietario(propietarioId),
-                    CONSTRAINT FK_propietarioTerreno_terreno
+                        REFERENCES dbo.propietario(
+                            propietarioId),
+
+                    CONSTRAINT
+                        FK_propietarioTerreno_terreno
                         FOREIGN KEY(terrenoId)
-                        REFERENCES dbo.terreno(terrenoId)
+                        REFERENCES dbo.terreno(
+                            terrenoId)
                 );
 
-                CREATE UNIQUE INDEX UX_propietarioTerreno_terreno_activo
+                CREATE UNIQUE INDEX
+                    UX_propietarioTerreno_terreno_activo
                     ON dbo.propietarioTerreno(terrenoId)
                     WHERE activo = 1;
 
-                CREATE INDEX IX_propietarioTerreno_propietario
-                    ON dbo.propietarioTerreno(propietarioId, activo);
+                CREATE INDEX
+                    IX_propietarioTerreno_propietario
+                    ON dbo.propietarioTerreno(
+                        propietarioId,
+                        activo);
             END;
 
-            IF OBJECT_ID(N'dbo.usuarioPropietario', N'U') IS NULL
+            IF OBJECT_ID(
+                    N'dbo.usuarioPropietario',
+                    N'U') IS NULL
             BEGIN
                 CREATE TABLE dbo.usuarioPropietario
                 (
-                    usuarioPropietarioId INT IDENTITY(1,1) NOT NULL
-                        CONSTRAINT PK_usuarioPropietario PRIMARY KEY,
+                    usuarioPropietarioId
+                        INT IDENTITY(1,1) NOT NULL
+                        CONSTRAINT PK_usuarioPropietario
+                        PRIMARY KEY,
+
                     usuarioId INT NOT NULL,
+
                     propietarioId INT NOT NULL,
+
                     activo BIT NOT NULL
-                        CONSTRAINT DF_usuarioPropietario_activo DEFAULT(1),
+                        CONSTRAINT
+                            DF_usuarioPropietario_activo
+                        DEFAULT(1),
+
                     fechaAsignacionUtc DATETIME2(0) NOT NULL
-                        CONSTRAINT DF_usuarioPropietario_fechaAsignacionUtc
+                        CONSTRAINT
+                            DF_usuarioPropietario_fechaAsignacionUtc
                         DEFAULT(SYSUTCDATETIME()),
+
                     fechaDesasignacionUtc DATETIME2(0) NULL,
+
                     asignadoPorUsuarioId INT NULL,
+
                     desasignadoPorUsuarioId INT NULL,
-                    CONSTRAINT FK_usuarioPropietario_usuario
+
+                    CONSTRAINT
+                        FK_usuarioPropietario_usuario
                         FOREIGN KEY(usuarioId)
                         REFERENCES dbo.usuario(UsuarioId),
-                    CONSTRAINT FK_usuarioPropietario_propietario
+
+                    CONSTRAINT
+                        FK_usuarioPropietario_propietario
                         FOREIGN KEY(propietarioId)
-                        REFERENCES dbo.propietario(propietarioId)
+                        REFERENCES dbo.propietario(
+                            propietarioId)
                 );
 
-                CREATE UNIQUE INDEX UX_usuarioPropietario_usuario_activo
+                CREATE UNIQUE INDEX
+                    UX_usuarioPropietario_usuario_activo
                     ON dbo.usuarioPropietario(usuarioId)
                     WHERE activo = 1;
 
-                CREATE UNIQUE INDEX UX_usuarioPropietario_propietario_activo
-                    ON dbo.usuarioPropietario(propietarioId)
+                CREATE UNIQUE INDEX
+                    UX_usuarioPropietario_propietario_activo
+                    ON dbo.usuarioPropietario(
+                        propietarioId)
                     WHERE activo = 1;
             END;
 
-            IF OBJECT_ID(N'dbo.usuarioTerrenoAsignacion', N'U') IS NULL
+            IF OBJECT_ID(
+                    N'dbo.usuarioTerrenoAsignacion',
+                    N'U') IS NULL
             BEGIN
                 CREATE TABLE dbo.usuarioTerrenoAsignacion
                 (
-                    usuarioTerrenoAsignacionId INT IDENTITY(1,1) NOT NULL
-                        CONSTRAINT PK_usuarioTerrenoAsignacion PRIMARY KEY,
+                    usuarioTerrenoAsignacionId
+                        INT IDENTITY(1,1) NOT NULL
+                        CONSTRAINT
+                            PK_usuarioTerrenoAsignacion
+                        PRIMARY KEY,
+
                     usuarioId INT NOT NULL,
+
                     terrenoId INT NOT NULL,
+
                     tipoAsignacion NVARCHAR(50) NOT NULL,
+
                     esResponsablePrincipal BIT NOT NULL
-                        CONSTRAINT DF_usuarioTerrenoAsignacion_principal
+                        CONSTRAINT
+                            DF_usuarioTerrenoAsignacion_principal
                         DEFAULT(0),
+
                     observacion NVARCHAR(500) NULL,
+
                     activo BIT NOT NULL
-                        CONSTRAINT DF_usuarioTerrenoAsignacion_activo DEFAULT(1),
+                        CONSTRAINT
+                            DF_usuarioTerrenoAsignacion_activo
+                        DEFAULT(1),
+
                     fechaInicioUtc DATETIME2(0) NOT NULL
-                        CONSTRAINT DF_usuarioTerrenoAsignacion_fechaInicioUtc
+                        CONSTRAINT
+                            DF_usuarioTerrenoAsignacion_fechaInicioUtc
                         DEFAULT(SYSUTCDATETIME()),
+
                     fechaFinUtc DATETIME2(0) NULL,
+
                     asignadoPorUsuarioId INT NULL,
+
                     desasignadoPorUsuarioId INT NULL,
-                    CONSTRAINT FK_usuarioTerrenoAsignacion_usuario
+
+                    CONSTRAINT
+                        FK_usuarioTerrenoAsignacion_usuario
                         FOREIGN KEY(usuarioId)
                         REFERENCES dbo.usuario(UsuarioId),
-                    CONSTRAINT FK_usuarioTerrenoAsignacion_terreno
+
+                    CONSTRAINT
+                        FK_usuarioTerrenoAsignacion_terreno
                         FOREIGN KEY(terrenoId)
                         REFERENCES dbo.terreno(terrenoId)
                 );
 
-                CREATE UNIQUE INDEX UX_usuarioTerrenoAsignacion_activa
-                    ON dbo.usuarioTerrenoAsignacion(
+                CREATE UNIQUE INDEX
+                    UX_usuarioTerrenoAsignacion_activa
+                    ON dbo.usuarioTerrenoAsignacion
+                    (
                         usuarioId,
                         terrenoId,
-                        tipoAsignacion)
+                        tipoAsignacion
+                    )
                     WHERE activo = 1;
 
-                CREATE INDEX IX_usuarioTerrenoAsignacion_terreno
-                    ON dbo.usuarioTerrenoAsignacion(terrenoId, activo);
+                CREATE INDEX
+                    IX_usuarioTerrenoAsignacion_terreno
+                    ON dbo.usuarioTerrenoAsignacion
+                    (
+                        terrenoId,
+                        activo
+                    );
             END;
 
-            IF OBJECT_ID(N'dbo.usuarioCoberturaTerritorial', N'U') IS NULL
+            IF OBJECT_ID(
+                    N'dbo.usuarioCoberturaTerritorial',
+                    N'U') IS NULL
             BEGIN
                 CREATE TABLE dbo.usuarioCoberturaTerritorial
                 (
-                    usuarioCoberturaTerritorialId INT IDENTITY(1,1) NOT NULL
-                        CONSTRAINT PK_usuarioCoberturaTerritorial PRIMARY KEY,
+                    usuarioCoberturaTerritorialId
+                        INT IDENTITY(1,1) NOT NULL
+                        CONSTRAINT
+                            PK_usuarioCoberturaTerritorial
+                        PRIMARY KEY,
+
                     usuarioId INT NOT NULL,
+
                     tipoCobertura NVARCHAR(30) NOT NULL,
+
                     departamentoId INT NULL,
+
                     municipioId INT NULL,
+
                     observacion NVARCHAR(500) NULL,
+
                     activo BIT NOT NULL
-                        CONSTRAINT DF_usuarioCoberturaTerritorial_activo
+                        CONSTRAINT
+                            DF_usuarioCoberturaTerritorial_activo
                         DEFAULT(1),
+
                     fechaInicioUtc DATETIME2(0) NOT NULL
-                        CONSTRAINT DF_usuarioCoberturaTerritorial_fechaInicioUtc
+                        CONSTRAINT
+                            DF_usuarioCoberturaTerritorial_fechaInicioUtc
                         DEFAULT(SYSUTCDATETIME()),
+
                     fechaFinUtc DATETIME2(0) NULL,
+
                     asignadoPorUsuarioId INT NULL,
+
                     desasignadoPorUsuarioId INT NULL,
-                    CONSTRAINT FK_usuarioCoberturaTerritorial_usuario
+
+                    CONSTRAINT
+                        FK_usuarioCoberturaTerritorial_usuario
                         FOREIGN KEY(usuarioId)
                         REFERENCES dbo.usuario(UsuarioId),
-                    CONSTRAINT FK_usuarioCoberturaTerritorial_departamento
+
+                    CONSTRAINT
+                        FK_usuarioCoberturaTerritorial_departamento
                         FOREIGN KEY(departamentoId)
-                        REFERENCES dbo.departamento(departamentoId),
-                    CONSTRAINT FK_usuarioCoberturaTerritorial_municipio
+                        REFERENCES dbo.departamento(
+                            departamentoId),
+
+                    CONSTRAINT
+                        FK_usuarioCoberturaTerritorial_municipio
                         FOREIGN KEY(municipioId)
-                        REFERENCES dbo.municipio(municipioId),
-                    CONSTRAINT CK_usuarioCoberturaTerritorial_tipo
-                        CHECK(tipoCobertura IN (
-                            N'NACIONAL',
-                            N'DEPARTAMENTO',
-                            N'MUNICIPIO'))
+                        REFERENCES dbo.municipio(
+                            municipioId),
+
+                    CONSTRAINT
+                        CK_usuarioCoberturaTerritorial_tipo
+                        CHECK(
+                            tipoCobertura IN
+                            (
+                                N'NACIONAL',
+                                N'DEPARTAMENTO',
+                                N'MUNICIPIO'
+                            )
+                        )
                 );
 
-                CREATE INDEX IX_usuarioCoberturaTerritorial_usuario
-                    ON dbo.usuarioCoberturaTerritorial(usuarioId, activo);
+                CREATE INDEX
+                    IX_usuarioCoberturaTerritorial_usuario
+                    ON dbo.usuarioCoberturaTerritorial
+                    (
+                        usuarioId,
+                        activo
+                    );
             END;
             """;
 
-        await db.Database.ExecuteSqlRawAsync(
-            sql,
-            cancellationToken);
-    }
-
-    private async Task MigrarPropietariosExistentesAsync(
-        CancellationToken cancellationToken)
-    {
-        const string sql = """
-            ;WITH PropietariosBase AS
-            (
-                SELECT
-                    identificacion =
-                        LTRIM(RTRIM(t.identificacionPropietarioTerreno)),
-                    identificacionNormalizada =
-                        UPPER(
-                            REPLACE(
-                                REPLACE(
-                                    REPLACE(
-                                        REPLACE(
-                                            LTRIM(RTRIM(
-                                                t.identificacionPropietarioTerreno)),
-                                            N'-',
-                                            N''),
-                                        N' ',
-                                        N''),
-                                    N'.',
-                                    N''),
-                                N'/',
-                                N'')),
-                    nombreCompleto =
-                        NULLIF(LTRIM(RTRIM(
-                            t.nombrePropietarioTerreno)), N''),
-                    telefono =
-                        NULLIF(CONVERT(NVARCHAR(25),
-                            t.telefonoPropietario), N'0'),
-                    correo =
-                        NULLIF(LTRIM(RTRIM(t.correoPropietario)), N''),
-                    fila = ROW_NUMBER() OVER
-                    (
-                        PARTITION BY
-                            UPPER(
-                                REPLACE(
-                                    REPLACE(
-                                        REPLACE(
-                                            REPLACE(
-                                                LTRIM(RTRIM(
-                                                    t.identificacionPropietarioTerreno)),
-                                                N'-',
-                                                N''),
-                                            N' ',
-                                            N''),
-                                        N'.',
-                                        N''),
-                                    N'/',
-                                    N''))
-                        ORDER BY t.terrenoId
-                    )
-                FROM dbo.terreno t
-                WHERE NULLIF(
-                    LTRIM(RTRIM(
-                        t.identificacionPropietarioTerreno)), N'') IS NOT NULL
-            )
-            INSERT INTO dbo.propietario
-            (
-                identificacion,
-                identificacionNormalizada,
-                nombreCompleto,
-                telefono,
-                correo,
-                activo,
-                fechaRegistroUtc
-            )
-            SELECT
-                p.identificacion,
-                p.identificacionNormalizada,
-                COALESCE(p.nombreCompleto, N'PROPIETARIO SIN NOMBRE'),
-                p.telefono,
-                p.correo,
-                1,
-                SYSUTCDATETIME()
-            FROM PropietariosBase p
-            WHERE p.fila = 1
-              AND p.identificacionNormalizada <> N''
-              AND NOT EXISTS
-              (
-                  SELECT 1
-                  FROM dbo.propietario existente
-                  WHERE existente.identificacionNormalizada =
-                        p.identificacionNormalizada
-              );
-
-            INSERT INTO dbo.propietarioTerreno
-            (
-                propietarioId,
-                terrenoId,
-                activo,
-                fechaAsignacionUtc
-            )
-            SELECT
-                p.propietarioId,
-                t.terrenoId,
-                1,
-                SYSUTCDATETIME()
-            FROM dbo.terreno t
-            INNER JOIN dbo.propietario p
-                ON p.identificacionNormalizada =
-                    UPPER(
-                        REPLACE(
-                            REPLACE(
-                                REPLACE(
-                                    REPLACE(
-                                        LTRIM(RTRIM(
-                                            t.identificacionPropietarioTerreno)),
-                                        N'-',
-                                        N''),
-                                    N' ',
-                                    N''),
-                                N'.',
-                                N''),
-                            N'/',
-                            N''))
-            WHERE NULLIF(
-                LTRIM(RTRIM(
-                    t.identificacionPropietarioTerreno)), N'') IS NOT NULL
-              AND NOT EXISTS
-              (
-                  SELECT 1
-                  FROM dbo.propietarioTerreno pt
-                  WHERE pt.terrenoId = t.terrenoId
-                    AND pt.activo = 1
-              );
-            """;
-
-        await db.Database.ExecuteSqlRawAsync(
+        return db.Database.ExecuteSqlRawAsync(
             sql,
             cancellationToken);
     }
@@ -368,91 +377,125 @@ public sealed class ParametrizacionAccesoDatabaseInitializer
             new Definicion(
                 ParametrizacionAcceso,
                 "Propietarios y acceso",
-                "Permite abrir el módulo de parametrización de acceso a terrenos."),
+                "Permite abrir el módulo de parametrización " +
+                "de acceso a terrenos."),
+
             new Definicion(
                 Propietarios,
                 "Propietarios",
                 "Permite consultar y administrar propietarios."),
+
             new Definicion(
                 UsuarioPropietario,
                 "Vinculación de portal",
-                "Permite vincular cuentas de usuario con propietarios."),
+                "Permite vincular cuentas de usuario con " +
+                "propietarios."),
+
             new Definicion(
                 AsignacionTerreno,
                 "Asignación de terrenos",
-                "Permite asignar terrenos a técnicos, supervisores u otros usuarios."),
+                "Permite asignar terrenos a técnicos, " +
+                "supervisores u otros usuarios."),
+
             new Definicion(
                 CoberturaTerritorial,
                 "Cobertura territorial",
-                "Permite definir acceso nacional, departamental o municipal."),
+                "Permite definir acceso nacional, " +
+                "departamental o municipal."),
+
             new Definicion(
                 PortalPropietario,
                 "Portal del propietario",
-                "Permite ingresar al portal y consultar la información propia.")
+                "Permite ingresar al portal y consultar la " +
+                "información propia.")
         };
 
         foreach (Definicion definicion in definiciones)
         {
             Interfaz? interfaz = await db.Interfaz
                 .FirstOrDefaultAsync(
-                    x => x.nombreInterfaz == definicion.Codigo,
+                    item =>
+                        item.nombreInterfaz ==
+                        definicion.Codigo,
                     cancellationToken);
 
             if (interfaz is null)
             {
                 db.Interfaz.Add(new Interfaz
                 {
-                    nombreInterfaz = definicion.Codigo,
-                    nombreAmigableInterfaz = definicion.Nombre,
-                    descripcionInterfaz = definicion.Descripcion,
+                    nombreInterfaz =
+                        definicion.Codigo,
+                    nombreAmigableInterfaz =
+                        definicion.Nombre,
+                    descripcionInterfaz =
+                        definicion.Descripcion,
                     activo = true
                 });
             }
             else
             {
-                interfaz.nombreAmigableInterfaz = definicion.Nombre;
-                interfaz.descripcionInterfaz = definicion.Descripcion;
+                interfaz.nombreAmigableInterfaz =
+                    definicion.Nombre;
+
+                interfaz.descripcionInterfaz =
+                    definicion.Descripcion;
+
                 interfaz.activo = true;
             }
         }
 
         await db.SaveChangesAsync(cancellationToken);
 
-        List<int> rolesAdministradores = await db.Roles
-            .AsNoTracking()
-            .Where(x =>
-                x.activo &&
-                x.nombreRol.Trim().ToUpper() == "ADMINISTRADOR")
-            .Select(x => x.rolId)
-            .ToListAsync(cancellationToken);
+        List<int> rolesAdministradores =
+            await db.Roles
+                .AsNoTracking()
+                .Where(item =>
+                    item.activo &&
+                    item.nombreRol
+                        .Trim()
+                        .ToUpper() ==
+                    "ADMINISTRADOR")
+                .Select(item => item.rolId)
+                .ToListAsync(cancellationToken);
 
-        List<Interfaz> interfaces = await db.Interfaz
-            .Where(x => definiciones
-                .Select(d => d.Codigo)
-                .Contains(x.nombreInterfaz))
-            .ToListAsync(cancellationToken);
+        string[] codigos =
+            definiciones
+                .Select(item => item.Codigo)
+                .ToArray();
+
+        List<Interfaz> interfaces =
+            await db.Interfaz
+                .Where(item =>
+                    codigos.Contains(
+                        item.nombreInterfaz))
+                .ToListAsync(cancellationToken);
 
         foreach (int rolId in rolesAdministradores)
         {
             foreach (Interfaz interfaz in interfaces)
             {
-                RolInterfaz? relacion = await db.RolInterfaz
-                    .FirstOrDefaultAsync(
-                        x => x.rolId == rolId &&
-                             x.interfazId == interfaz.interfazId,
-                        cancellationToken);
+                RolInterfaz? relacion =
+                    await db.RolInterfaz
+                        .FirstOrDefaultAsync(
+                            item =>
+                                item.rolId == rolId &&
+                                item.interfazId ==
+                                interfaz.interfazId,
+                            cancellationToken);
 
                 if (relacion is null)
                 {
-                    db.RolInterfaz.Add(new RolInterfaz
-                    {
-                        rolId = rolId,
-                        interfazId = interfaz.interfazId,
-                        leer = true,
-                        agregar = true,
-                        actualizar = true,
-                        eliminar = true
-                    });
+                    db.RolInterfaz.Add(
+                        new RolInterfaz
+                        {
+                            rolId = rolId,
+                            interfazId =
+                                interfaz.interfazId,
+                            leer = true,
+                            agregar = true,
+                            actualizar = true,
+                            eliminar = true
+                        });
                 }
                 else
                 {

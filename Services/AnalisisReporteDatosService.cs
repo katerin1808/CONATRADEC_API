@@ -53,6 +53,21 @@ namespace CONATRADEC_API.Services
                     x => x.terrenoId == calculo.terrenoId,
                     cancellationToken);
 
+            string propietario = terreno == null
+                ? string.Empty
+                : await _db.PropietarioTerrenos
+                    .AsNoTracking()
+                    .Where(relacion =>
+                        relacion.terrenoId == terreno.terrenoId &&
+                        relacion.activo &&
+                        relacion.Propietario.activo)
+                    .OrderByDescending(relacion =>
+                        relacion.fechaAsignacionUtc)
+                    .Select(relacion =>
+                        relacion.Propietario.nombreCompleto)
+                    .FirstOrDefaultAsync(cancellationToken) ??
+                  string.Empty;
+
             var tipoCultivo = await _db.TipoCultivos
                 .AsNoTracking()
                 .FirstOrDefaultAsync(
@@ -94,7 +109,7 @@ namespace CONATRADEC_API.Services
                 FechaAnalisis = analisis.fechaAnalisisSuelo,
                 FechaCalculo = calculo.fechaCalculo,
                 Laboratorio = analisis.laboratorioAnalasisSuelo,
-                Cliente = terreno?.nombrePropietarioTerreno ?? string.Empty,
+                Cliente = propietario,
                 Terreno = FormatearTerreno(
                     terreno?.codigoTerreno,
                     terreno?.direccionTerreno,

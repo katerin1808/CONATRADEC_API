@@ -12,9 +12,9 @@ namespace CONATRADEC_API.Controllers
     /// Centraliza la consulta y reactivación de registros eliminados
     /// lógicamente utilizados por las pantallas de Configuración.
     ///
-    /// No modifica ni elimina relaciones históricas. Al reactivar solo
-    /// vuelve a habilitar la entidad principal después de validar sus
-    /// dependencias.
+    /// No elimina relaciones históricas. Al reactivar un terreno también
+    /// habilita su relación de propiedad más reciente, manteniendo intacto
+    /// el historial anterior.
     /// </summary>
     [ApiController]
     [Route("api/catalogos-eliminados")]
@@ -796,12 +796,26 @@ public async Task<ActionResult> BuscarCoincidenciaUsuario(
                     Id = x.terrenoId,
                     Catalogo = Catalogos.Terreno,
                     Titulo = x.codigoTerreno,
-                    Subtitulo = x.nombrePropietarioTerreno,
+                    Subtitulo =
+                        x.RelacionesPropietario
+                            .OrderByDescending(relacion =>
+                                relacion.fechaAsignacionUtc)
+                            .Select(relacion =>
+                                relacion.Propietario.nombreCompleto)
+                            .FirstOrDefault() ??
+                        "Sin propietario",
                     Detalle =
                         x.Municipio.NombreMunicipio +
                         " · " +
                         x.Municipio.Departamento.NombreDepartamento,
-                    Codigo = x.identificacionPropietarioTerreno,
+                    Codigo =
+                        x.RelacionesPropietario
+                            .OrderByDescending(relacion =>
+                                relacion.fechaAsignacionUtc)
+                            .Select(relacion =>
+                                relacion.Propietario.identificacion)
+                            .FirstOrDefault() ??
+                        string.Empty,
                     Activo = x.activo
                 })
                 .ToListAsync(cancellationToken);
@@ -1303,6 +1317,23 @@ public async Task<ActionResult> BuscarCoincidenciaUsuario(
                 return ConflictoIdentidad("terreno");
 
             entity.activo = true;
+
+            PropietarioTerreno? relacion =
+                await db.PropietarioTerrenos
+                    .Where(item =>
+                        item.terrenoId == id)
+                    .OrderByDescending(item =>
+                        item.fechaAsignacionUtc)
+                    .FirstOrDefaultAsync(
+                        cancellationToken);
+
+            if (relacion is not null)
+            {
+                relacion.activo = true;
+                relacion.fechaDesasignacionUtc = null;
+                relacion.desasignadoPorUsuarioId = null;
+            }
+
             await db.SaveChangesAsync(cancellationToken);
             return Reactivado("Terreno");
         }

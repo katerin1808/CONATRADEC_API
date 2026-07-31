@@ -337,12 +337,32 @@ namespace CONATRADEC_API.Controllers
 
                     if (terreno != null)
                     {
+                        var propietario =
+                            await _db.PropietarioTerrenos
+                                .AsNoTracking()
+                                .Where(relacion =>
+                                    relacion.terrenoId ==
+                                        terreno.terrenoId &&
+                                    relacion.activo &&
+                                    relacion.Propietario.activo)
+                                .OrderByDescending(relacion =>
+                                    relacion.fechaAsignacionUtc)
+                                .Select(relacion => new
+                                {
+                                    relacion.Propietario.propietarioId,
+                                    relacion.Propietario.identificacion,
+                                    relacion.Propietario.nombreCompleto,
+                                    relacion.Propietario.telefono,
+                                    relacion.Propietario.correo,
+                                    relacion.Propietario.direccion
+                                })
+                                .FirstOrDefaultAsync();
+
                         terrenoResumen = new
                         {
                             terreno.terrenoId,
                             terreno.codigoTerreno,
-                            terreno
-                                .nombrePropietarioTerreno,
+                            propietario,
                             terreno
                                 .extensionManzanaTerreno,
                             terreno

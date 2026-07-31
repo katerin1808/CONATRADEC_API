@@ -448,6 +448,15 @@ namespace CONATRADEC_API.Controllers
                 select new
                 {
                     Terreno = terreno,
+                    Propietario =
+                        terreno.RelacionesPropietario
+                            .Where(relacion =>
+                                relacion.activo &&
+                                relacion.Propietario.activo)
+                            .Select(relacion =>
+                                relacion.Propietario.nombreCompleto)
+                            .FirstOrDefault() ??
+                        string.Empty,
                     Calculo = calculo,
                     Departamento =
                         terreno.Municipio.Departamento
@@ -467,6 +476,7 @@ namespace CONATRADEC_API.Controllers
                 {
                     alertas.Add(CrearAlerta(
                         item.Terreno,
+                        item.Propietario,
                         item.Departamento,
                         item.Municipio,
                         item.Calculo.fechaCalculo,
@@ -481,6 +491,7 @@ namespace CONATRADEC_API.Controllers
                 {
                     alertas.Add(CrearAlerta(
                         item.Terreno,
+                        item.Propietario,
                         item.Departamento,
                         item.Municipio,
                         item.Calculo.fechaCalculo,
@@ -497,6 +508,7 @@ namespace CONATRADEC_API.Controllers
                 {
                     alertas.Add(CrearAlerta(
                         item.Terreno,
+                        item.Propietario,
                         item.Departamento,
                         item.Municipio,
                         item.Calculo.fechaCalculo,
@@ -513,6 +525,7 @@ namespace CONATRADEC_API.Controllers
                 {
                     alertas.Add(CrearAlerta(
                         item.Terreno,
+                        item.Propietario,
                         item.Departamento,
                         item.Municipio,
                         item.Calculo.fechaCalculo,
@@ -534,6 +547,7 @@ namespace CONATRADEC_API.Controllers
 
         private static AlertaTerrenoDto CrearAlerta(
             Terreno terreno,
+            string propietario,
             string departamento,
             string municipio,
             DateTime fechaAnalisis,
@@ -546,7 +560,7 @@ namespace CONATRADEC_API.Controllers
             {
                 terrenoId = terreno.terrenoId,
                 codigoTerreno = terreno.codigoTerreno,
-                propietario = terreno.nombrePropietarioTerreno,
+                propietario = propietario,
                 departamento = departamento,
                 municipio = municipio,
                 nivel = nivel,

@@ -782,7 +782,14 @@ namespace CONATRADEC_API.Controllers
                             item.codigoTerreno,
 
                         Propietario =
-                            item.nombrePropietarioTerreno,
+                            item.RelacionesPropietario
+                                .Where(relacion =>
+                                    relacion.activo &&
+                                    relacion.Propietario.activo)
+                                .Select(relacion =>
+                                    relacion.Propietario.nombreCompleto)
+                                .FirstOrDefault() ??
+                            string.Empty,
 
                         Direccion =
                             item.direccionTerreno,

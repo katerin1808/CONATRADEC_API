@@ -382,6 +382,29 @@ public class AnalisisSueloController :
                             calculo
                                 .terrenoId);
 
+        var propietario =
+            calculo == null
+                ? null
+                : await _db.PropietarioTerrenos
+                    .AsNoTracking()
+                    .Where(relacion =>
+                        relacion.terrenoId ==
+                            calculo.terrenoId &&
+                        relacion.activo &&
+                        relacion.Propietario.activo)
+                    .OrderByDescending(relacion =>
+                        relacion.fechaAsignacionUtc)
+                    .Select(relacion => new
+                    {
+                        relacion.Propietario.propietarioId,
+                        relacion.Propietario.identificacion,
+                        relacion.Propietario.nombreCompleto,
+                        relacion.Propietario.telefono,
+                        relacion.Propietario.correo,
+                        relacion.Propietario.direccion
+                    })
+                    .FirstOrDefaultAsync();
+
         TipoCultivo? tipoCultivo =
             calculo == null
                 ? null
@@ -512,8 +535,7 @@ public class AnalisisSueloController :
                             terreno.terrenoId,
                             terreno
                                 .codigoTerreno,
-                            terreno
-                                .nombrePropietarioTerreno,
+                            propietario,
                             terreno
                                 .direccionTerreno,
                             terreno

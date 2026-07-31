@@ -78,7 +78,15 @@ namespace CONATRADEC_API.Controllers
                     calculo.fechaCalculo,
                     calculo.terrenoId,
                     terreno.codigoTerreno,
-                    terreno.nombrePropietarioTerreno,
+                    NombrePropietario =
+                        terreno.RelacionesPropietario
+                            .Where(relacion =>
+                                relacion.activo &&
+                                relacion.Propietario.activo)
+                            .Select(relacion =>
+                                relacion.Propietario.nombreCompleto)
+                            .FirstOrDefault() ??
+                        string.Empty,
                     calculo.tipoCultivoId,
                     calculo.tipoAnalisisSueloId,
                     calculo.cantidadQuintalesOro,
@@ -112,7 +120,7 @@ namespace CONATRADEC_API.Controllers
                     x.identificadorAnalisisSuelo.Contains(texto) ||
                     x.laboratorioAnalasisSuelo.Contains(texto) ||
                     x.codigoTerreno.Contains(texto) ||
-                    x.nombrePropietarioTerreno.Contains(texto) ||
+                    x.NombrePropietario.Contains(texto) ||
                     x.NombreUsuario.Contains(texto) ||
                     x.NombreCuenta.Contains(texto));
             }
@@ -236,7 +244,7 @@ namespace CONATRADEC_API.Controllers
                 terrenoId = x.terrenoId,
                 codigoTerreno = x.codigoTerreno,
                 nombreCliente =
-                    x.nombrePropietarioTerreno,
+                    x.NombrePropietario,
                 nombreTerreno = x.codigoTerreno,
                 tipoCultivoId = x.tipoCultivoId,
                 tipoAnalisisSueloId =

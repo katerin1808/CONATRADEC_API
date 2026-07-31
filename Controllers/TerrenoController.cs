@@ -1,102 +1,183 @@
-using CONATRADEC_API.DTOs;
 using CONATRADEC_API.Models;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
-using System.Text.RegularExpressions;
+using Microsoft.EntityFrameworkCore.Storage;
+using System.Data;
+using System.Data.Common;
+using System.Globalization;
+using System.Security.Claims;
+using System.Text;
 using static CONATRADEC_API.DTOs.TerrenoDto;
 
 namespace CONATRADEC_API.Controllers
 {
     [ApiController]
     [Route("api/terreno")]
-    public class TerrenoController : ControllerBase
+    public sealed class TerrenoController : ControllerBase
     {
-        private readonly DBContext _db;
-
-        private static readonly Regex CedulaRegex = new(
-            @"^\d{3}-\d{6}-\d{4}[A-Z]$",
-            RegexOptions.Compiled |
-            RegexOptions.CultureInvariant |
-            RegexOptions.IgnoreCase);
+        private readonly DBContext db;
 
         public TerrenoController(DBContext db)
         {
-            _db = db;
+            this.db = db;
         }
 
         // ============================================================
-        // LISTAR TERRENOS
-        // Se conserva por compatibilidad. Las pantallas nuevas deben usar
-        // /buscar para no descargar toda la tabla en dispositivos móviles.
+        // LISTAR
         // ============================================================
+
         [HttpGet("listar")]
         public async Task<ActionResult<IEnumerable<TerrenoListarDto>>> Listar(
             CancellationToken cancellationToken)
         {
-            List<TerrenoListarDto> lista = await _db.Terreno
-                .AsNoTracking()
-                .Where(x => x.activo)
-                .OrderBy(x => x.codigoTerreno)
-                .Select(x => new TerrenoListarDto
-                {
-                    terrenoId = x.terrenoId,
-                    codigoTerreno = x.codigoTerreno,
-                    identificacionPropietarioTerreno =
-                        x.identificacionPropietarioTerreno,
-                    nombrePropietarioTerreno = x.nombrePropietarioTerreno,
-                    telefonoPropietario = x.telefonoPropietario,
-                    correoPropietario = x.correoPropietario,
-                    direccionTerreno = x.direccionTerreno,
-                    extensionManzanaTerreno = x.extensionManzanaTerreno,
-                    fechaIngresoTerreno = x.fechaIngresoTerreno,
-                    municipioId = x.municipioId,
-                    cantidadQuintalesOro = x.cantidadQuintalesOro,
-                    cantidadPlantasTerreno = x.cantidadPlantasTerreno,
-                    latitud = x.latitud,
-                    longitud = x.longitud,
-                    ubicacion = new TerrenoUbicacionDto
-                    {
-                        paisId = x.Municipio.Departamento.Pais.PaisId,
-                        nombrePais = x.Municipio.Departamento.Pais.NombrePais,
-                        departamentoId =
-                            x.Municipio.Departamento.DepartamentoId,
-                        nombreDepartamento =
-                            x.Municipio.Departamento.NombreDepartamento,
-                        municipioId = x.Municipio.MunicipioId,
-                        nombreMunicipio = x.Municipio.NombreMunicipio
-                    }
-                })
-                .ToListAsync(cancellationToken);
+            List<TerrenoListarDto> terrenos =
+                await ConsultarTerrenosAsync(
+                    texto: null,
+                    codigoTerreno: null,
+                    nombrePropietario: null,
+                    identificacionPropietario: null,
+                    direccion: null,
+                    paisId: null,
+                    departamentoId: null,
+                    municipioId: null,
+                    fechaDesde: null,
+                    fechaHasta: null,
+                    extensionMinima: null,
+                    extensionMaxima: null,
+                    page: null,
+                    pageSize: null,
+                    ordenarPor: "codigo",
+                    descendente: false,
+                    cancellationToken);
 
-            return Ok(lista);
+            return Ok(terrenos);
+        }
+
+        [HttpGet("{id:int}")]
+        public async Task<IActionResult> Obtener(
+            int id,
+            CancellationToken cancellationToken)
+        {
+            TerrenoListarDto? terreno =
+                (await ConsultarTerrenosPorIdAsync(
+                    id,
+                    cancellationToken))
+                .FirstOrDefault();
+
+            return terreno is null
+                ? NotFound(new
+                {
+                    mensaje = "No se encontró el terreno solicitado."
+                })
+                : Ok(terreno);
+        }
+
+        /// <summary>
+        /// Catálogo mínimo utilizado por el formulario de terreno.
+        ///
+        /// No permite crear, editar ni desactivar propietarios. Solo devuelve
+        /// personas activas para establecer la relación propietarioTerreno.
+        /// </summary>
+        [Authorize]
+        [HttpGet("propietarios-disponibles")]
+        public async Task<IActionResult> ListarPropietariosDisponibles(
+            [FromQuery] string? buscar,
+            CancellationToken cancellationToken = default)
+        {
+            string texto = NormalizarFiltro(buscar);
+
+            const string sql = """
+                SELECT
+                    p.propietarioId,
+                    p.identificacion,
+                    p.nombreCompleto,
+                    p.telefono,
+                    p.correo,
+                    p.direccion,
+                    p.activo,
+                    p.fechaRegistroUtc,
+                    COUNT(DISTINCT CASE
+                        WHEN pt.activo = 1
+                        THEN pt.terrenoId
+                    END) AS totalTerrenos
+                FROM dbo.propietario p
+                LEFT JOIN dbo.propietarioTerreno pt
+                    ON pt.propietarioId = p.propietarioId
+                WHERE p.activo = 1
+                  AND (
+                        @buscar = N''
+                        OR p.identificacion LIKE
+                            N'%' + @buscar + N'%'
+                        OR p.nombreCompleto LIKE
+                            N'%' + @buscar + N'%'
+                        OR ISNULL(p.correo, N'') LIKE
+                            N'%' + @buscar + N'%'
+                      )
+                GROUP BY
+                    p.propietarioId,
+                    p.identificacion,
+                    p.nombreCompleto,
+                    p.telefono,
+                    p.correo,
+                    p.direccion,
+                    p.activo,
+                    p.fechaRegistroUtc
+                ORDER BY
+                    p.nombreCompleto,
+                    p.identificacion;
+                """;
+
+            var propietarios = await ConsultarAsync(
+                sql,
+                command => AgregarParametro(
+                    command,
+                    "@buscar",
+                    texto),
+                reader => new
+                {
+                    propietarioId =
+                        reader.GetInt32(0),
+                    identificacion =
+                        Texto(reader, 1),
+                    nombreCompleto =
+                        Texto(reader, 2),
+                    telefono =
+                        TextoNullable(reader, 3),
+                    correo =
+                        TextoNullable(reader, 4),
+                    direccion =
+                        TextoNullable(reader, 5),
+                    activo =
+                        reader.GetBoolean(6),
+                    fechaRegistroUtc =
+                        reader.GetDateTime(7),
+                    totalTerrenos =
+                        reader.GetInt32(8),
+                    usuarioPortalId =
+                        (int?)null,
+                    usuarioPortal =
+                        (string?)null
+                },
+                cancellationToken);
+
+            return Ok(propietarios);
         }
 
         // ============================================================
-        // CREAR TERRENO
-        // El código nunca se recibe del cliente. Primero se obtiene el
-        // terrenoId de SQL Server y luego se genera:
-        // TRR-{municipioId:0000}-{terrenoId:000000}
+        // CREAR
         // ============================================================
+
         [HttpPost("crear")]
         public async Task<IActionResult> Crear(
             [FromBody] TerrenoCrearDto dto,
             CancellationToken cancellationToken)
         {
-            string? errorValidacion = ValidarDatosTerreno(
-                dto.identificacionPropietarioTerreno,
-                dto.nombrePropietarioTerreno,
-                dto.direccionTerreno,
-                dto.extensionManzanaTerreno,
-                dto.cantidadQuintalesOro,
-                dto.cantidadPlantasTerreno,
-                dto.telefonoPropietario,
-                dto.municipioId,
-                dto.latitud,
-                dto.longitud);
+            string? error = ValidarDatosTerreno(dto);
 
-            if (errorValidacion != null)
-                return BadRequest(new { mensaje = errorValidacion });
+            if (error is not null)
+                return BadRequest(new { mensaje = error });
 
             if (!await MunicipioActivoExisteAsync(
                     dto.municipioId,
@@ -104,119 +185,140 @@ namespace CONATRADEC_API.Controllers
             {
                 return BadRequest(new
                 {
-                    mensaje = "El municipio seleccionado no existe o está inactivo."
+                    mensaje =
+                        "El municipio seleccionado no existe o está inactivo."
                 });
             }
 
-            await using var transaccion =
-                await _db.Database.BeginTransactionAsync(cancellationToken);
+            PropietarioBase? propietario =
+                await ResolverPropietarioAsync(
+                    dto.propietarioId,
+                    cancellationToken);
+
+            if (propietario is null)
+            {
+                return BadRequest(new
+                {
+                    mensaje =
+                        "Debe seleccionar un propietario activo registrado."
+                });
+            }
+
+            await using IDbContextTransaction transaccion =
+                await db.Database.BeginTransactionAsync(
+                    cancellationToken);
 
             try
             {
                 var terreno = new Terreno
                 {
-                    // Valor temporal irrepetible. Se reemplaza dentro de la
-                    // misma transacción después de obtener el terrenoId.
                     codigoTerreno = $"TMP-{Guid.NewGuid():N}",
-                    identificacionPropietarioTerreno =
-                        NormalizarCedula(dto.identificacionPropietarioTerreno),
-                    nombrePropietarioTerreno =
-                        dto.nombrePropietarioTerreno.Trim(),
-                    telefonoPropietario = dto.telefonoPropietario,
-                    correoPropietario = NormalizarOpcional(dto.correoPropietario),
                     direccionTerreno = dto.direccionTerreno.Trim(),
                     extensionManzanaTerreno =
                         decimal.Round(dto.extensionManzanaTerreno, 2),
-                    // Fecha interna de control. No se toma del cliente.
                     fechaIngresoTerreno =
                         DateOnly.FromDateTime(DateTime.Now),
+                    cantidadPlantasTerreno =
+                        dto.cantidadPlantasTerreno,
+                    activo = true,
                     municipioId = dto.municipioId,
                     cantidadQuintalesOro =
                         decimal.Round(dto.cantidadQuintalesOro, 2),
-                    cantidadPlantasTerreno = dto.cantidadPlantasTerreno,
                     latitud = dto.latitud,
-                    longitud = dto.longitud,
-                    activo = true
+                    longitud = dto.longitud
                 };
 
-                _db.Terreno.Add(terreno);
-                await _db.SaveChangesAsync(cancellationToken);
+                db.Terreno.Add(terreno);
+                await db.SaveChangesAsync(cancellationToken);
 
                 terreno.codigoTerreno = GenerarCodigoTerreno(
                     terreno.municipioId,
                     terreno.terrenoId);
 
-                await _db.SaveChangesAsync(cancellationToken);
+                await db.SaveChangesAsync(cancellationToken);
+
+                await CrearRelacionPropietarioTerrenoAsync(
+                    propietario.PropietarioId,
+                    terreno.terrenoId,
+                    ObtenerUsuarioIdNullable(),
+                    cancellationToken);
+
                 await transaccion.CommitAsync(cancellationToken);
+
+                TerrenoListarDto? creado =
+                    (await ConsultarTerrenosPorIdAsync(
+                        terreno.terrenoId,
+                        cancellationToken))
+                    .FirstOrDefault();
 
                 return Ok(new
                 {
                     mensaje = "Terreno creado correctamente.",
-                    data = new
+                    data = creado ?? new TerrenoListarDto
                     {
-                        terreno.terrenoId,
-                        terreno.codigoTerreno
+                        terrenoId = terreno.terrenoId,
+                        codigoTerreno = terreno.codigoTerreno,
+                        propietarioId = propietario.PropietarioId
                     }
                 });
             }
-            catch (DbUpdateException ex) when (EsConflictoUnico(ex))
+            catch (DbUpdateException ex)
+                when (EsConflictoUnico(ex))
             {
-                await transaccion.RollbackAsync(CancellationToken.None);
+                await transaccion.RollbackAsync(
+                    CancellationToken.None);
 
                 return Conflict(new
                 {
                     mensaje =
-                        "No fue posible generar un código único para el terreno. Intente guardar nuevamente."
+                        "No fue posible generar un código único para " +
+                        "el terreno. Intente guardar nuevamente."
                 });
             }
             catch (OperationCanceledException)
             {
-                await transaccion.RollbackAsync(CancellationToken.None);
+                await transaccion.RollbackAsync(
+                    CancellationToken.None);
                 throw;
             }
             catch
             {
-                await transaccion.RollbackAsync(CancellationToken.None);
+                await transaccion.RollbackAsync(
+                    CancellationToken.None);
 
-                return StatusCode(StatusCodes.Status500InternalServerError, new
-                {
-                    mensaje =
-                        "Ocurrió un error al crear el terreno. Intente nuevamente."
-                });
+                return StatusCode(
+                    StatusCodes.Status500InternalServerError,
+                    new
+                    {
+                        mensaje =
+                            "Ocurrió un error al crear el terreno."
+                    });
             }
         }
 
         // ============================================================
-        // EDITAR TERRENO
-        // El código no se modifica aunque un cliente antiguo lo envíe.
+        // EDITAR
         // ============================================================
+
         [HttpPut("editar/{id:int}")]
         public async Task<IActionResult> Editar(
             int id,
             [FromBody] TerrenoEditarDto dto,
             CancellationToken cancellationToken)
         {
-            string? errorValidacion = ValidarDatosTerreno(
-                dto.identificacionPropietarioTerreno,
-                dto.nombrePropietarioTerreno,
-                dto.direccionTerreno,
-                dto.extensionManzanaTerreno,
-                dto.cantidadQuintalesOro,
-                dto.cantidadPlantasTerreno,
-                dto.telefonoPropietario,
-                dto.municipioId,
-                dto.latitud,
-                dto.longitud);
+            string? error = ValidarDatosTerreno(dto);
 
-            if (errorValidacion != null)
-                return BadRequest(new { mensaje = errorValidacion });
+            if (error is not null)
+                return BadRequest(new { mensaje = error });
 
-            Terreno? terreno = await _db.Terreno
+            Terreno? terreno = await db.Terreno
                 .FirstOrDefaultAsync(
-                    x => x.terrenoId == id && x.activo,
+                    item =>
+                        item.terrenoId == id &&
+                        item.activo,
                     cancellationToken);
 
-            if (terreno == null)
+            if (terreno is null)
             {
                 return NotFound(new
                 {
@@ -230,81 +332,193 @@ namespace CONATRADEC_API.Controllers
             {
                 return BadRequest(new
                 {
-                    mensaje = "El municipio seleccionado no existe o está inactivo."
+                    mensaje =
+                        "El municipio seleccionado no existe o está inactivo."
                 });
             }
 
-            // terreno.codigoTerreno permanece intacto deliberadamente.
-            terreno.identificacionPropietarioTerreno =
-                NormalizarCedula(dto.identificacionPropietarioTerreno);
-            terreno.nombrePropietarioTerreno =
-                dto.nombrePropietarioTerreno.Trim();
-            terreno.telefonoPropietario = dto.telefonoPropietario;
-            terreno.correoPropietario = NormalizarOpcional(dto.correoPropietario);
-            terreno.direccionTerreno = dto.direccionTerreno.Trim();
-            terreno.extensionManzanaTerreno =
-                decimal.Round(dto.extensionManzanaTerreno, 2);
-            // La fecha de ingreso es inmutable y se conserva tal como fue
-            // registrada al crear el terreno.
-            terreno.municipioId = dto.municipioId;
-            terreno.cantidadQuintalesOro =
-                decimal.Round(dto.cantidadQuintalesOro, 2);
-            terreno.cantidadPlantasTerreno = dto.cantidadPlantasTerreno;
-            terreno.latitud = dto.latitud;
-            terreno.longitud = dto.longitud;
+            PropietarioBase? propietario =
+                await ResolverPropietarioAsync(
+                    dto.propietarioId,
+                    cancellationToken);
 
-            await _db.SaveChangesAsync(cancellationToken);
-
-            return Ok(new
+            if (propietario is null)
             {
-                mensaje = "Terreno editado correctamente.",
-                data = new
+                return BadRequest(new
                 {
+                    mensaje =
+                        "Debe seleccionar un propietario activo registrado."
+                });
+            }
+
+            await using IDbContextTransaction transaccion =
+                await db.Database.BeginTransactionAsync(
+                    cancellationToken);
+
+            try
+            {
+                // El código y la fecha de ingreso son inmutables.
+                terreno.direccionTerreno =
+                    dto.direccionTerreno.Trim();
+
+                terreno.extensionManzanaTerreno =
+                    decimal.Round(
+                        dto.extensionManzanaTerreno,
+                        2);
+
+                terreno.municipioId = dto.municipioId;
+
+                terreno.cantidadQuintalesOro =
+                    decimal.Round(
+                        dto.cantidadQuintalesOro,
+                        2);
+
+                terreno.cantidadPlantasTerreno =
+                    dto.cantidadPlantasTerreno;
+
+                terreno.latitud = dto.latitud;
+                terreno.longitud = dto.longitud;
+
+                await db.SaveChangesAsync(cancellationToken);
+
+                await CambiarPropietarioTerrenoAsync(
+                    propietario.PropietarioId,
                     terreno.terrenoId,
-                    terreno.codigoTerreno
-                }
-            });
+                    ObtenerUsuarioIdNullable(),
+                    cancellationToken);
+
+                await transaccion.CommitAsync(cancellationToken);
+
+                TerrenoListarDto? actualizado =
+                    (await ConsultarTerrenosPorIdAsync(
+                        terreno.terrenoId,
+                        cancellationToken))
+                    .FirstOrDefault();
+
+                return Ok(new
+                {
+                    mensaje = "Terreno actualizado correctamente.",
+                    data = actualizado
+                });
+            }
+            catch (OperationCanceledException)
+            {
+                await transaccion.RollbackAsync(
+                    CancellationToken.None);
+                throw;
+            }
+            catch
+            {
+                await transaccion.RollbackAsync(
+                    CancellationToken.None);
+
+                return StatusCode(
+                    StatusCodes.Status500InternalServerError,
+                    new
+                    {
+                        mensaje =
+                            "Ocurrió un error al actualizar el terreno."
+                    });
+            }
         }
 
         // ============================================================
         // ELIMINAR LÓGICAMENTE
         // ============================================================
+
         [HttpDelete("eliminar/{id:int}")]
         public async Task<IActionResult> Eliminar(
             int id,
             CancellationToken cancellationToken)
         {
-            Terreno? terreno = await _db.Terreno
+            Terreno? terreno = await db.Terreno
                 .FirstOrDefaultAsync(
-                    x => x.terrenoId == id && x.activo,
+                    item =>
+                        item.terrenoId == id &&
+                        item.activo,
                     cancellationToken);
 
-            if (terreno == null)
+            if (terreno is null)
             {
                 return NotFound(new
                 {
-                    mensaje = "Terreno no encontrado o ya está desactivado."
+                    mensaje =
+                        "Terreno no encontrado o ya desactivado."
                 });
             }
 
-            terreno.activo = false;
-            await _db.SaveChangesAsync(cancellationToken);
+            await using IDbContextTransaction transaccion =
+                await db.Database.BeginTransactionAsync(
+                    cancellationToken);
 
-            return Ok(new
+            try
             {
-                mensaje = "Terreno eliminado correctamente.",
-                data = new
+                terreno.activo = false;
+                await db.SaveChangesAsync(cancellationToken);
+
+                await EjecutarAsync(
+                    """
+                    UPDATE dbo.propietarioTerreno
+                    SET activo = 0,
+                        fechaDesasignacionUtc =
+                            SYSUTCDATETIME(),
+                        desasignadoPorUsuarioId =
+                            @usuarioId
+                    WHERE terrenoId = @terrenoId
+                      AND activo = 1;
+                    """,
+                    command =>
+                    {
+                        AgregarParametro(
+                            command,
+                            "@usuarioId",
+                            ObtenerUsuarioIdNullable());
+
+                        AgregarParametro(
+                            command,
+                            "@terrenoId",
+                            terreno.terrenoId);
+                    },
+                    cancellationToken);
+
+                await transaccion.CommitAsync(cancellationToken);
+
+                return Ok(new
                 {
-                    terreno.terrenoId,
-                    terreno.codigoTerreno,
-                    terreno.activo
-                }
-            });
+                    mensaje = "Terreno eliminado correctamente.",
+                    data = new
+                    {
+                        terreno.terrenoId,
+                        terreno.codigoTerreno,
+                        terreno.activo
+                    }
+                });
+            }
+            catch (OperationCanceledException)
+            {
+                await transaccion.RollbackAsync(
+                    CancellationToken.None);
+                throw;
+            }
+            catch
+            {
+                await transaccion.RollbackAsync(
+                    CancellationToken.None);
+
+                return StatusCode(
+                    StatusCodes.Status500InternalServerError,
+                    new
+                    {
+                        mensaje =
+                            "Ocurrió un error al eliminar el terreno."
+                    });
+            }
         }
 
         // ============================================================
-        // BÚSQUEDA AVANZADA PAGINADA
+        // BÚSQUEDA PAGINADA
         // ============================================================
+
         [HttpGet("buscar")]
         public async Task<IActionResult> Buscar(
             string? texto,
@@ -328,141 +542,49 @@ namespace CONATRADEC_API.Controllers
             page = Math.Max(1, page);
             pageSize = Math.Clamp(pageSize, 1, 100);
 
-            string? errorFiltros = ValidarFiltrosBusqueda(
+            string? error = ValidarFiltrosBusqueda(
                 fechaDesde,
                 fechaHasta,
                 extensionMinima,
                 extensionMaxima);
 
-            if (errorFiltros != null)
-                return BadRequest(new { mensaje = errorFiltros });
+            if (error is not null)
+                return BadRequest(new { mensaje = error });
 
-            IQueryable<Terreno> query = _db.Terreno
-                .AsNoTracking()
-                .Where(x => x.activo);
+            int total = await ContarTerrenosAsync(
+                texto,
+                codigoTerreno,
+                nombrePropietario,
+                identificacionPropietario,
+                direccion,
+                paisId,
+                departamentoId,
+                municipioId,
+                fechaDesde,
+                fechaHasta,
+                extensionMinima,
+                extensionMaxima,
+                cancellationToken);
 
-            texto = NormalizarFiltro(texto);
-            codigoTerreno = NormalizarFiltro(codigoTerreno);
-            nombrePropietario = NormalizarFiltro(nombrePropietario);
-            identificacionPropietario =
-                NormalizarFiltro(identificacionPropietario);
-            direccion = NormalizarFiltro(direccion);
-
-            if (texto != null)
-            {
-                query = query.Where(x =>
-                    x.codigoTerreno.Contains(texto) ||
-                    x.nombrePropietarioTerreno.Contains(texto) ||
-                    x.identificacionPropietarioTerreno.Contains(texto) ||
-                    x.direccionTerreno.Contains(texto));
-            }
-
-            if (codigoTerreno != null)
-            {
-                query = query.Where(x =>
-                    x.codigoTerreno.Contains(codigoTerreno));
-            }
-
-            if (nombrePropietario != null)
-            {
-                query = query.Where(x =>
-                    x.nombrePropietarioTerreno.Contains(nombrePropietario));
-            }
-
-            if (identificacionPropietario != null)
-            {
-                query = query.Where(x =>
-                    x.identificacionPropietarioTerreno
-                        .Contains(identificacionPropietario));
-            }
-
-            if (direccion != null)
-            {
-                query = query.Where(x =>
-                    x.direccionTerreno.Contains(direccion));
-            }
-
-            if (paisId is > 0)
-            {
-                query = query.Where(x =>
-                    x.Municipio.Departamento.PaisId == paisId.Value);
-            }
-
-            if (departamentoId is > 0)
-            {
-                query = query.Where(x =>
-                    x.Municipio.DepartamentoId == departamentoId.Value);
-            }
-
-            if (municipioId is > 0)
-            {
-                query = query.Where(x =>
-                    x.municipioId == municipioId.Value);
-            }
-
-            if (fechaDesde.HasValue)
-            {
-                query = query.Where(x =>
-                    x.fechaIngresoTerreno >= fechaDesde.Value);
-            }
-
-            if (fechaHasta.HasValue)
-            {
-                query = query.Where(x =>
-                    x.fechaIngresoTerreno <= fechaHasta.Value);
-            }
-
-            if (extensionMinima.HasValue)
-            {
-                query = query.Where(x =>
-                    x.extensionManzanaTerreno >= extensionMinima.Value);
-            }
-
-            if (extensionMaxima.HasValue)
-            {
-                query = query.Where(x =>
-                    x.extensionManzanaTerreno <= extensionMaxima.Value);
-            }
-
-            query = AplicarOrdenamiento(
-                query,
-                ordenarPor,
-                descendente);
-
-            int total = await query.CountAsync(cancellationToken);
-
-            var data = await query
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
-                .Select(x => new
-                {
-                    x.terrenoId,
-                    x.codigoTerreno,
-                    x.identificacionPropietarioTerreno,
-                    x.nombrePropietarioTerreno,
-                    x.telefonoPropietario,
-                    x.correoPropietario,
-                    x.direccionTerreno,
-                    x.extensionManzanaTerreno,
-                    x.fechaIngresoTerreno,
-                    x.cantidadPlantasTerreno,
-                    x.cantidadQuintalesOro,
-                    x.latitud,
-                    x.longitud,
-                    x.municipioId,
-                    ubicacion = new
-                    {
-                        paisId = x.Municipio.Departamento.Pais.PaisId,
-                        nombrePais = x.Municipio.Departamento.Pais.NombrePais,
-                        departamentoId =
-                            x.Municipio.Departamento.DepartamentoId,
-                        nombreDepartamento =
-                            x.Municipio.Departamento.NombreDepartamento,
-                        municipioId = x.Municipio.MunicipioId,
-                        nombreMunicipio = x.Municipio.NombreMunicipio
-                    }
-                })
-                .ToListAsync(cancellationToken);
+            List<TerrenoListarDto> data =
+                await ConsultarTerrenosAsync(
+                    texto,
+                    codigoTerreno,
+                    nombrePropietario,
+                    identificacionPropietario,
+                    direccion,
+                    paisId,
+                    departamentoId,
+                    municipioId,
+                    fechaDesde,
+                    fechaHasta,
+                    extensionMinima,
+                    extensionMaxima,
+                    page,
+                    pageSize,
+                    ordenarPor,
+                    descendente,
+                    cancellationToken);
 
             return Ok(new
             {
@@ -471,104 +593,596 @@ namespace CONATRADEC_API.Controllers
                 pageSize,
                 totalPages = total == 0
                     ? 0
-                    : (int)Math.Ceiling(total / (decimal)pageSize),
+                    : (int)Math.Ceiling(
+                        total / (decimal)pageSize),
                 data
             });
         }
 
-        private static IQueryable<Terreno> AplicarOrdenamiento(
-            IQueryable<Terreno> query,
-            string? ordenarPor,
-            bool descendente)
+        // ============================================================
+        // CONSULTAS
+        // ============================================================
+
+        private Task<List<TerrenoListarDto>>
+            ConsultarTerrenosPorIdAsync(
+                int terrenoId,
+                CancellationToken cancellationToken) =>
+            ConsultarTerrenosInternoAsync(
+                terrenoId,
+                texto: null,
+                codigoTerreno: null,
+                nombrePropietario: null,
+                identificacionPropietario: null,
+                direccion: null,
+                paisId: null,
+                departamentoId: null,
+                municipioId: null,
+                fechaDesde: null,
+                fechaHasta: null,
+                extensionMinima: null,
+                extensionMaxima: null,
+                page: null,
+                pageSize: null,
+                ordenarPor: "codigo",
+                descendente: false,
+                cancellationToken);
+
+        private Task<List<TerrenoListarDto>>
+            ConsultarTerrenosAsync(
+                string? texto,
+                string? codigoTerreno,
+                string? nombrePropietario,
+                string? identificacionPropietario,
+                string? direccion,
+                int? paisId,
+                int? departamentoId,
+                int? municipioId,
+                DateOnly? fechaDesde,
+                DateOnly? fechaHasta,
+                decimal? extensionMinima,
+                decimal? extensionMaxima,
+                int? page,
+                int? pageSize,
+                string? ordenarPor,
+                bool descendente,
+                CancellationToken cancellationToken) =>
+            ConsultarTerrenosInternoAsync(
+                terrenoId: null,
+                texto,
+                codigoTerreno,
+                nombrePropietario,
+                identificacionPropietario,
+                direccion,
+                paisId,
+                departamentoId,
+                municipioId,
+                fechaDesde,
+                fechaHasta,
+                extensionMinima,
+                extensionMaxima,
+                page,
+                pageSize,
+                ordenarPor,
+                descendente,
+                cancellationToken);
+
+        private async Task<List<TerrenoListarDto>>
+            ConsultarTerrenosInternoAsync(
+                int? terrenoId,
+                string? texto,
+                string? codigoTerreno,
+                string? nombrePropietario,
+                string? identificacionPropietario,
+                string? direccion,
+                int? paisId,
+                int? departamentoId,
+                int? municipioId,
+                DateOnly? fechaDesde,
+                DateOnly? fechaHasta,
+                decimal? extensionMinima,
+                decimal? extensionMaxima,
+                int? page,
+                int? pageSize,
+                string? ordenarPor,
+                bool descendente,
+                CancellationToken cancellationToken)
         {
-            string campo = ordenarPor?.Trim().ToLowerInvariant() ?? "codigo";
+            string orden = CrearOrdenamiento(
+                ordenarPor,
+                descendente);
 
-            return campo switch
+            string paginacion =
+                page.HasValue && pageSize.HasValue
+                    ? """
+                      OFFSET @offset ROWS
+                      FETCH NEXT @pageSize ROWS ONLY
+                      """
+                    : string.Empty;
+
+            string sql = $"""
+                SELECT
+                    t.terrenoId,
+                    t.codigoTerreno,
+                    t.direccionTerreno,
+                    t.extensionManzanaTerreno,
+                    t.fechaIngresoTerreno,
+                    t.cantidadPlantasTerreno,
+                    t.municipioId,
+                    t.cantidadQuintalesOro,
+                    t.latitud,
+                    t.longitud,
+                    t.activo,
+
+                    p.propietarioId,
+                    p.identificacion,
+                    p.nombreCompleto,
+                    p.telefono,
+                    p.correo,
+                    p.direccion,
+
+                    pa.PaisId,
+                    pa.NombrePais,
+                    d.DepartamentoId,
+                    d.NombreDepartamento,
+                    m.MunicipioId,
+                    m.NombreMunicipio
+                FROM dbo.terreno t
+                INNER JOIN dbo.municipio m
+                    ON m.MunicipioId = t.municipioId
+                INNER JOIN dbo.departamento d
+                    ON d.DepartamentoId = m.DepartamentoId
+                INNER JOIN dbo.pais pa
+                    ON pa.PaisId = d.PaisId
+                LEFT JOIN dbo.propietarioTerreno pt
+                    ON pt.terrenoId = t.terrenoId
+                   AND pt.activo = 1
+                LEFT JOIN dbo.propietario p
+                    ON p.propietarioId = pt.propietarioId
+                WHERE t.activo = 1
+                  AND (@terrenoId IS NULL
+                       OR t.terrenoId = @terrenoId)
+                  AND (
+                        @texto = N''
+                        OR t.codigoTerreno LIKE
+                            N'%' + @texto + N'%'
+                        OR t.direccionTerreno LIKE
+                            N'%' + @texto + N'%'
+                        OR ISNULL(p.nombreCompleto, N'') LIKE
+                            N'%' + @texto + N'%'
+                        OR ISNULL(p.identificacion, N'') LIKE
+                            N'%' + @texto + N'%'
+                      )
+                  AND (
+                        @codigo = N''
+                        OR t.codigoTerreno LIKE
+                            N'%' + @codigo + N'%'
+                      )
+                  AND (
+                        @nombrePropietario = N''
+                        OR ISNULL(p.nombreCompleto, N'') LIKE
+                            N'%' + @nombrePropietario + N'%'
+                      )
+                  AND (
+                        @identificacion = N''
+                        OR ISNULL(p.identificacion, N'') LIKE
+                            N'%' + @identificacion + N'%'
+                      )
+                  AND (
+                        @direccion = N''
+                        OR t.direccionTerreno LIKE
+                            N'%' + @direccion + N'%'
+                      )
+                  AND (@paisId IS NULL
+                       OR pa.PaisId = @paisId)
+                  AND (@departamentoId IS NULL
+                       OR d.DepartamentoId = @departamentoId)
+                  AND (@municipioId IS NULL
+                       OR m.MunicipioId = @municipioId)
+                  AND (@fechaDesde IS NULL
+                       OR t.fechaIngresoTerreno >= @fechaDesde)
+                  AND (@fechaHasta IS NULL
+                       OR t.fechaIngresoTerreno <= @fechaHasta)
+                  AND (@extensionMinima IS NULL
+                       OR t.extensionManzanaTerreno >=
+                            @extensionMinima)
+                  AND (@extensionMaxima IS NULL
+                       OR t.extensionManzanaTerreno <=
+                            @extensionMaxima)
+                ORDER BY {orden}
+                {paginacion};
+                """;
+
+            return await ConsultarAsync(
+                sql,
+                command =>
+                {
+                    ConfigurarParametrosBusqueda(
+                        command,
+                        terrenoId,
+                        texto,
+                        codigoTerreno,
+                        nombrePropietario,
+                        identificacionPropietario,
+                        direccion,
+                        paisId,
+                        departamentoId,
+                        municipioId,
+                        fechaDesde,
+                        fechaHasta,
+                        extensionMinima,
+                        extensionMaxima);
+
+                    if (page.HasValue && pageSize.HasValue)
+                    {
+                        AgregarParametro(
+                            command,
+                            "@offset",
+                            (page.Value - 1) *
+                            pageSize.Value);
+
+                        AgregarParametro(
+                            command,
+                            "@pageSize",
+                            pageSize.Value);
+                    }
+                },
+                MapearTerreno,
+                cancellationToken);
+        }
+
+        private async Task<int> ContarTerrenosAsync(
+            string? texto,
+            string? codigoTerreno,
+            string? nombrePropietario,
+            string? identificacionPropietario,
+            string? direccion,
+            int? paisId,
+            int? departamentoId,
+            int? municipioId,
+            DateOnly? fechaDesde,
+            DateOnly? fechaHasta,
+            decimal? extensionMinima,
+            decimal? extensionMaxima,
+            CancellationToken cancellationToken)
+        {
+            const string sql = """
+                SELECT COUNT_BIG(1)
+                FROM dbo.terreno t
+                INNER JOIN dbo.municipio m
+                    ON m.MunicipioId = t.municipioId
+                INNER JOIN dbo.departamento d
+                    ON d.DepartamentoId = m.DepartamentoId
+                INNER JOIN dbo.pais pa
+                    ON pa.PaisId = d.PaisId
+                LEFT JOIN dbo.propietarioTerreno pt
+                    ON pt.terrenoId = t.terrenoId
+                   AND pt.activo = 1
+                LEFT JOIN dbo.propietario p
+                    ON p.propietarioId = pt.propietarioId
+                WHERE t.activo = 1
+                  AND (
+                        @texto = N''
+                        OR t.codigoTerreno LIKE
+                            N'%' + @texto + N'%'
+                        OR t.direccionTerreno LIKE
+                            N'%' + @texto + N'%'
+                        OR ISNULL(p.nombreCompleto, N'') LIKE
+                            N'%' + @texto + N'%'
+                        OR ISNULL(p.identificacion, N'') LIKE
+                            N'%' + @texto + N'%'
+                      )
+                  AND (
+                        @codigo = N''
+                        OR t.codigoTerreno LIKE
+                            N'%' + @codigo + N'%'
+                      )
+                  AND (
+                        @nombrePropietario = N''
+                        OR ISNULL(p.nombreCompleto, N'') LIKE
+                            N'%' + @nombrePropietario + N'%'
+                      )
+                  AND (
+                        @identificacion = N''
+                        OR ISNULL(p.identificacion, N'') LIKE
+                            N'%' + @identificacion + N'%'
+                      )
+                  AND (
+                        @direccion = N''
+                        OR t.direccionTerreno LIKE
+                            N'%' + @direccion + N'%'
+                      )
+                  AND (@paisId IS NULL
+                       OR pa.PaisId = @paisId)
+                  AND (@departamentoId IS NULL
+                       OR d.DepartamentoId = @departamentoId)
+                  AND (@municipioId IS NULL
+                       OR m.MunicipioId = @municipioId)
+                  AND (@fechaDesde IS NULL
+                       OR t.fechaIngresoTerreno >= @fechaDesde)
+                  AND (@fechaHasta IS NULL
+                       OR t.fechaIngresoTerreno <= @fechaHasta)
+                  AND (@extensionMinima IS NULL
+                       OR t.extensionManzanaTerreno >=
+                            @extensionMinima)
+                  AND (@extensionMaxima IS NULL
+                       OR t.extensionManzanaTerreno <=
+                            @extensionMaxima);
+                """;
+
+            long total = await EscalarLongAsync(
+                sql,
+                command => ConfigurarParametrosBusqueda(
+                    command,
+                    terrenoId: null,
+                    texto,
+                    codigoTerreno,
+                    nombrePropietario,
+                    identificacionPropietario,
+                    direccion,
+                    paisId,
+                    departamentoId,
+                    municipioId,
+                    fechaDesde,
+                    fechaHasta,
+                    extensionMinima,
+                    extensionMaxima),
+                cancellationToken);
+
+            return total > int.MaxValue
+                ? int.MaxValue
+                : (int)total;
+        }
+
+        private static TerrenoListarDto MapearTerreno(
+            DbDataReader reader)
+        {
+            int? propietarioId =
+                EnteroNullable(reader, 11);
+
+            TerrenoPropietarioDto? propietario =
+                propietarioId.HasValue
+                    ? new TerrenoPropietarioDto
+                    {
+                        propietarioId =
+                            propietarioId.Value,
+                        identificacion =
+                            Texto(reader, 12),
+                        nombreCompleto =
+                            Texto(reader, 13),
+                        telefono =
+                            TextoNullable(reader, 14),
+                        correo =
+                            TextoNullable(reader, 15),
+                        direccion =
+                            TextoNullable(reader, 16)
+                    }
+                    : null;
+
+            return new TerrenoListarDto
             {
-                "propietario" when descendente => query
-                    .OrderByDescending(x => x.nombrePropietarioTerreno)
-                    .ThenByDescending(x => x.terrenoId),
-
-                "propietario" => query
-                    .OrderBy(x => x.nombrePropietarioTerreno)
-                    .ThenBy(x => x.terrenoId),
-
-                "fecha" when descendente => query
-                    .OrderByDescending(x => x.fechaIngresoTerreno)
-                    .ThenByDescending(x => x.terrenoId),
-
-                "fecha" => query
-                    .OrderBy(x => x.fechaIngresoTerreno)
-                    .ThenBy(x => x.terrenoId),
-
-                "extension" when descendente => query
-                    .OrderByDescending(x => x.extensionManzanaTerreno)
-                    .ThenByDescending(x => x.terrenoId),
-
-                "extension" => query
-                    .OrderBy(x => x.extensionManzanaTerreno)
-                    .ThenBy(x => x.terrenoId),
-
-                _ when descendente => query
-                    .OrderByDescending(x => x.codigoTerreno)
-                    .ThenByDescending(x => x.terrenoId),
-
-                _ => query
-                    .OrderBy(x => x.codigoTerreno)
-                    .ThenBy(x => x.terrenoId)
+                terrenoId = reader.GetInt32(0),
+                codigoTerreno = Texto(reader, 1),
+                direccionTerreno = Texto(reader, 2),
+                extensionManzanaTerreno =
+                    reader.GetDecimal(3),
+                fechaIngresoTerreno =
+                    DateOnly.FromDateTime(
+                        reader.GetDateTime(4)),
+                cantidadPlantasTerreno =
+                    reader.GetInt32(5),
+                municipioId = reader.GetInt32(6),
+                cantidadQuintalesOro =
+                    reader.GetDecimal(7),
+                latitud = reader.GetDecimal(8),
+                longitud = reader.GetDecimal(9),
+                activo = reader.GetBoolean(10),
+                propietarioId = propietarioId,
+                propietario = propietario,
+                ubicacion = new TerrenoUbicacionDto
+                {
+                    paisId = reader.GetInt32(17),
+                    nombrePais = Texto(reader, 18),
+                    departamentoId =
+                        reader.GetInt32(19),
+                    nombreDepartamento =
+                        Texto(reader, 20),
+                    municipioId =
+                        reader.GetInt32(21),
+                    nombreMunicipio =
+                        Texto(reader, 22)
+                }
             };
         }
 
-        private static string? ValidarDatosTerreno(
-            string? identificacionPropietario,
-            string? nombrePropietario,
-            string? direccion,
-            decimal extensionManzanas,
-            decimal cantidadQuintales,
-            int cantidadPlantas,
-            int telefono,
-            int municipioId,
-            decimal latitud,
-            decimal longitud)
+        // ============================================================
+        // PROPIETARIO
+        // ============================================================
+
+        private async Task<PropietarioBase?>
+            ResolverPropietarioAsync(
+                int propietarioId,
+                CancellationToken cancellationToken)
         {
-            if (string.IsNullOrWhiteSpace(identificacionPropietario) ||
-                !CedulaRegex.IsMatch(identificacionPropietario.Trim()))
+            const string sql = """
+                SELECT TOP (1)
+                    propietarioId,
+                    identificacion,
+                    nombreCompleto,
+                    telefono,
+                    correo
+                FROM dbo.propietario
+                WHERE propietarioId = @propietarioId
+                  AND activo = 1;
+                """;
+
+            List<PropietarioBase> resultados =
+                await ConsultarAsync(
+                    sql,
+                    command => AgregarParametro(
+                        command,
+                        "@propietarioId",
+                        propietarioId),
+                    reader => new PropietarioBase
+                    {
+                        PropietarioId =
+                            reader.GetInt32(0),
+                        Identificacion =
+                            Texto(reader, 1),
+                        NombreCompleto =
+                            Texto(reader, 2),
+                        Telefono =
+                            TextoNullable(reader, 3),
+                        Correo =
+                            TextoNullable(reader, 4)
+                    },
+                    cancellationToken);
+
+            return resultados.FirstOrDefault();
+        }
+
+        private async Task CrearRelacionPropietarioTerrenoAsync(
+            int propietarioId,
+            int terrenoId,
+            int? usuarioId,
+            CancellationToken cancellationToken)
+        {
+            await EjecutarAsync(
+                """
+                INSERT INTO dbo.propietarioTerreno
+                (
+                    propietarioId,
+                    terrenoId,
+                    activo,
+                    fechaAsignacionUtc,
+                    asignadoPorUsuarioId
+                )
+                VALUES
+                (
+                    @propietarioId,
+                    @terrenoId,
+                    1,
+                    SYSUTCDATETIME(),
+                    @usuarioId
+                );
+                """,
+                command =>
+                {
+                    AgregarParametro(
+                        command,
+                        "@propietarioId",
+                        propietarioId);
+
+                    AgregarParametro(
+                        command,
+                        "@terrenoId",
+                        terrenoId);
+
+                    AgregarParametro(
+                        command,
+                        "@usuarioId",
+                        usuarioId);
+                },
+                cancellationToken);
+        }
+
+        private async Task CambiarPropietarioTerrenoAsync(
+            int propietarioId,
+            int terrenoId,
+            int? usuarioId,
+            CancellationToken cancellationToken)
+        {
+            int? actual = await EscalarEnteroAsync(
+                """
+                SELECT TOP (1) propietarioId
+                FROM dbo.propietarioTerreno
+                WHERE terrenoId = @terrenoId
+                  AND activo = 1;
+                """,
+                command => AgregarParametro(
+                    command,
+                    "@terrenoId",
+                    terrenoId),
+                cancellationToken);
+
+            if (actual == propietarioId)
+                return;
+
+            await EjecutarAsync(
+                """
+                UPDATE dbo.propietarioTerreno
+                SET activo = 0,
+                    fechaDesasignacionUtc =
+                        SYSUTCDATETIME(),
+                    desasignadoPorUsuarioId =
+                        @usuarioId
+                WHERE terrenoId = @terrenoId
+                  AND activo = 1;
+                """,
+                command =>
+                {
+                    AgregarParametro(
+                        command,
+                        "@usuarioId",
+                        usuarioId);
+
+                    AgregarParametro(
+                        command,
+                        "@terrenoId",
+                        terrenoId);
+                },
+                cancellationToken);
+
+            await CrearRelacionPropietarioTerrenoAsync(
+                propietarioId,
+                terrenoId,
+                usuarioId,
+                cancellationToken);
+        }
+
+        // ============================================================
+        // VALIDACIONES
+        // ============================================================
+
+        private static string? ValidarDatosTerreno(
+            TerrenoGuardarBaseDto dto)
+        {
+            if (string.IsNullOrWhiteSpace(
+                    dto.direccionTerreno))
             {
-                return "La identificación del propietario debe tener el formato 001-080701-1050R.";
+                return "La dirección del terreno es obligatoria.";
             }
 
-            if (string.IsNullOrWhiteSpace(nombrePropietario))
-                return "El nombre del propietario es obligatorio.";
+            if (dto.extensionManzanaTerreno <= 0)
+            {
+                return
+                    "La extensión del terreno debe ser mayor que cero.";
+            }
 
-            if (string.IsNullOrWhiteSpace(direccion))
-                return "La dirección del terreno es obligatoria.";
+            if (dto.cantidadQuintalesOro < 0)
+            {
+                return
+                    "La cantidad de quintales no puede ser negativa.";
+            }
 
-            if (municipioId <= 0)
-                return "Debe seleccionar un municipio válido.";
+            if (dto.cantidadPlantasTerreno < 0)
+            {
+                return
+                    "La cantidad de plantas no puede ser negativa.";
+            }
 
-            if (extensionManzanas <= 0)
-                return "La extensión del terreno debe ser mayor que cero.";
+            if (dto.municipioId <= 0)
+                return "Debe seleccionar un municipio.";
 
-            if (!TieneMaximoDosDecimales(extensionManzanas))
-                return "La extensión del terreno solo permite dos decimales.";
-
-            if (cantidadQuintales < 0)
-                return "La cantidad de quintales no puede ser negativa.";
-
-            if (!TieneMaximoDosDecimales(cantidadQuintales))
-                return "La cantidad de quintales solo permite dos decimales.";
-
-            if (cantidadPlantas < 0)
-                return "La cantidad de plantas debe ser un número entero positivo o cero.";
-
-            if (telefono < 0)
-                return "El teléfono solo debe contener números enteros positivos.";
-
-            if (latitud < -90 || latitud > 90)
+            if (dto.latitud is < -90 or > 90)
                 return "La latitud debe estar entre -90 y 90.";
 
-            if (longitud < -180 || longitud > 180)
+            if (dto.longitud is < -180 or > 180)
                 return "La longitud debe estar entre -180 y 180.";
+
+            if (dto.propietarioId <= 0)
+            {
+                return "Debe seleccionar un propietario registrado.";
+            }
 
             return null;
         }
@@ -581,21 +1195,24 @@ namespace CONATRADEC_API.Controllers
         {
             if (fechaDesde.HasValue &&
                 fechaHasta.HasValue &&
-                fechaDesde.Value > fechaHasta.Value)
+                fechaDesde > fechaHasta)
             {
-                return "La fecha inicial no puede ser mayor que la fecha final.";
+                return
+                    "La fecha inicial no puede ser mayor que la final.";
             }
 
-            if (extensionMinima is < 0 || extensionMaxima is < 0)
+            if (extensionMinima is < 0 ||
+                extensionMaxima is < 0)
             {
-                return "Las extensiones utilizadas como filtro no pueden ser negativas.";
+                return "La extensión no puede ser negativa.";
             }
 
             if (extensionMinima.HasValue &&
                 extensionMaxima.HasValue &&
-                extensionMinima.Value > extensionMaxima.Value)
+                extensionMinima > extensionMaxima)
             {
-                return "La extensión mínima no puede ser mayor que la extensión máxima.";
+                return
+                    "La extensión mínima no puede superar la máxima.";
             }
 
             return null;
@@ -603,50 +1220,383 @@ namespace CONATRADEC_API.Controllers
 
         private Task<bool> MunicipioActivoExisteAsync(
             int municipioId,
-            CancellationToken cancellationToken)
-        {
-            return _db.Municipios
+            CancellationToken cancellationToken) =>
+            db.Municipios
                 .AsNoTracking()
                 .AnyAsync(
-                    x => x.MunicipioId == municipioId && x.Activo,
+                    item =>
+                        item.MunicipioId == municipioId &&
+                        item.Activo,
                     cancellationToken);
+
+        // ============================================================
+        // SQL
+        // ============================================================
+
+        private async Task<List<T>> ConsultarAsync<T>(
+            string sql,
+            Action<DbCommand> configurar,
+            Func<DbDataReader, T> mapear,
+            CancellationToken cancellationToken)
+        {
+            DbConnection connection =
+                db.Database.GetDbConnection();
+
+            bool cerrar =
+                connection.State != ConnectionState.Open;
+
+            if (cerrar)
+                await connection.OpenAsync(cancellationToken);
+
+            try
+            {
+                await using DbCommand command =
+                    connection.CreateCommand();
+
+                command.CommandText = sql;
+                AsignarTransaccionActual(command);
+                configurar(command);
+
+                await using DbDataReader reader =
+                    await command.ExecuteReaderAsync(
+                        cancellationToken);
+
+                var resultados = new List<T>();
+
+                while (await reader.ReadAsync(
+                           cancellationToken))
+                {
+                    resultados.Add(mapear(reader));
+                }
+
+                return resultados;
+            }
+            finally
+            {
+                if (cerrar &&
+                    db.Database.CurrentTransaction is null)
+                {
+                    await connection.CloseAsync();
+                }
+            }
+        }
+
+        private async Task<int> EjecutarAsync(
+            string sql,
+            Action<DbCommand> configurar,
+            CancellationToken cancellationToken)
+        {
+            DbConnection connection =
+                db.Database.GetDbConnection();
+
+            bool cerrar =
+                connection.State != ConnectionState.Open;
+
+            if (cerrar)
+                await connection.OpenAsync(cancellationToken);
+
+            try
+            {
+                await using DbCommand command =
+                    connection.CreateCommand();
+
+                command.CommandText = sql;
+                AsignarTransaccionActual(command);
+                configurar(command);
+
+                return await command.ExecuteNonQueryAsync(
+                    cancellationToken);
+            }
+            finally
+            {
+                if (cerrar &&
+                    db.Database.CurrentTransaction is null)
+                {
+                    await connection.CloseAsync();
+                }
+            }
+        }
+
+        private async Task<int?> EscalarEnteroAsync(
+            string sql,
+            Action<DbCommand> configurar,
+            CancellationToken cancellationToken)
+        {
+            object? valor = await EscalarAsync(
+                sql,
+                configurar,
+                cancellationToken);
+
+            return valor is null or DBNull
+                ? null
+                : Convert.ToInt32(
+                    valor,
+                    CultureInfo.InvariantCulture);
+        }
+
+        private async Task<long> EscalarLongAsync(
+            string sql,
+            Action<DbCommand> configurar,
+            CancellationToken cancellationToken)
+        {
+            object? valor = await EscalarAsync(
+                sql,
+                configurar,
+                cancellationToken);
+
+            return valor is null or DBNull
+                ? 0
+                : Convert.ToInt64(
+                    valor,
+                    CultureInfo.InvariantCulture);
+        }
+
+        private async Task<object?> EscalarAsync(
+            string sql,
+            Action<DbCommand> configurar,
+            CancellationToken cancellationToken)
+        {
+            DbConnection connection =
+                db.Database.GetDbConnection();
+
+            bool cerrar =
+                connection.State != ConnectionState.Open;
+
+            if (cerrar)
+                await connection.OpenAsync(cancellationToken);
+
+            try
+            {
+                await using DbCommand command =
+                    connection.CreateCommand();
+
+                command.CommandText = sql;
+                AsignarTransaccionActual(command);
+                configurar(command);
+
+                return await command.ExecuteScalarAsync(
+                    cancellationToken);
+            }
+            finally
+            {
+                if (cerrar &&
+                    db.Database.CurrentTransaction is null)
+                {
+                    await connection.CloseAsync();
+                }
+            }
+        }
+
+        private void AsignarTransaccionActual(
+            DbCommand command)
+        {
+            IDbContextTransaction? transaccion =
+                db.Database.CurrentTransaction;
+
+            if (transaccion is not null)
+            {
+                command.Transaction =
+                    transaccion.GetDbTransaction();
+            }
+        }
+
+        private static void AgregarParametro(
+            DbCommand command,
+            string nombre,
+            object? valor)
+        {
+            DbParameter parametro =
+                command.CreateParameter();
+
+            parametro.ParameterName = nombre;
+            parametro.Value = valor ?? DBNull.Value;
+            command.Parameters.Add(parametro);
+        }
+
+        private static void ConfigurarParametrosBusqueda(
+            DbCommand command,
+            int? terrenoId,
+            string? texto,
+            string? codigoTerreno,
+            string? nombrePropietario,
+            string? identificacionPropietario,
+            string? direccion,
+            int? paisId,
+            int? departamentoId,
+            int? municipioId,
+            DateOnly? fechaDesde,
+            DateOnly? fechaHasta,
+            decimal? extensionMinima,
+            decimal? extensionMaxima)
+        {
+            AgregarParametro(
+                command,
+                "@terrenoId",
+                terrenoId);
+
+            AgregarParametro(
+                command,
+                "@texto",
+                NormalizarFiltro(texto));
+
+            AgregarParametro(
+                command,
+                "@codigo",
+                NormalizarFiltro(codigoTerreno));
+
+            AgregarParametro(
+                command,
+                "@nombrePropietario",
+                NormalizarFiltro(nombrePropietario));
+
+            AgregarParametro(
+                command,
+                "@identificacion",
+                NormalizarFiltro(
+                    identificacionPropietario));
+
+            AgregarParametro(
+                command,
+                "@direccion",
+                NormalizarFiltro(direccion));
+
+            AgregarParametro(
+                command,
+                "@paisId",
+                PositivoONull(paisId));
+
+            AgregarParametro(
+                command,
+                "@departamentoId",
+                PositivoONull(departamentoId));
+
+            AgregarParametro(
+                command,
+                "@municipioId",
+                PositivoONull(municipioId));
+
+            AgregarParametro(
+                command,
+                "@fechaDesde",
+                fechaDesde?.ToDateTime(
+                    TimeOnly.MinValue));
+
+            AgregarParametro(
+                command,
+                "@fechaHasta",
+                fechaHasta?.ToDateTime(
+                    TimeOnly.MinValue));
+
+            AgregarParametro(
+                command,
+                "@extensionMinima",
+                extensionMinima);
+
+            AgregarParametro(
+                command,
+                "@extensionMaxima",
+                extensionMaxima);
+        }
+
+        // ============================================================
+        // AUXILIARES
+        // ============================================================
+
+        private static string CrearOrdenamiento(
+            string? ordenarPor,
+            bool descendente)
+        {
+            string direccion =
+                descendente ? "DESC" : "ASC";
+
+            return ordenarPor?
+                .Trim()
+                .ToLowerInvariant() switch
+            {
+                "propietario" =>
+                    $"p.nombreCompleto {direccion}, " +
+                    $"t.terrenoId {direccion}",
+
+                "fecha" =>
+                    $"t.fechaIngresoTerreno {direccion}, " +
+                    $"t.terrenoId {direccion}",
+
+                "extension" =>
+                    $"t.extensionManzanaTerreno {direccion}, " +
+                    $"t.terrenoId {direccion}",
+
+                _ =>
+                    $"t.codigoTerreno {direccion}, " +
+                    $"t.terrenoId {direccion}"
+            };
         }
 
         private static string GenerarCodigoTerreno(
             int municipioId,
-            int terrenoId)
+            int terrenoId) =>
+            $"TRR-{municipioId:0000}-{terrenoId:000000}";
+
+        private static bool EsConflictoUnico(
+            DbUpdateException exception) =>
+            exception.InnerException is SqlException sql &&
+            sql.Number is 2601 or 2627;
+
+        private static string NormalizarFiltro(
+            string? valor) =>
+            (valor ?? string.Empty).Trim();
+
+        private static int? PositivoONull(
+            int? valor) =>
+            valor is > 0 ? valor : null;
+
+        private int? ObtenerUsuarioIdNullable()
         {
-            return $"TRR-{municipioId:D4}-{terrenoId:D6}";
+            string? valor =
+                User.FindFirst("uid")?.Value ??
+                User.FindFirst(
+                    ClaimTypes.NameIdentifier)?.Value ??
+                User.FindFirst("sub")?.Value;
+
+            return int.TryParse(
+                valor,
+                NumberStyles.Integer,
+                CultureInfo.InvariantCulture,
+                out int usuarioId) &&
+                usuarioId > 0
+                    ? usuarioId
+                    : null;
         }
 
-        private static string NormalizarCedula(string valor)
-        {
-            return valor.Trim().ToUpperInvariant();
-        }
+        private static string Texto(
+            DbDataReader reader,
+            int ordinal) =>
+            reader.IsDBNull(ordinal)
+                ? string.Empty
+                : reader.GetString(ordinal);
 
-        private static string? NormalizarOpcional(string? valor)
-        {
-            return string.IsNullOrWhiteSpace(valor)
+        private static string? TextoNullable(
+            DbDataReader reader,
+            int ordinal) =>
+            reader.IsDBNull(ordinal)
                 ? null
-                : valor.Trim();
-        }
+                : reader.GetString(ordinal);
 
-        private static string? NormalizarFiltro(string? valor)
-        {
-            return string.IsNullOrWhiteSpace(valor)
+        private static int? EnteroNullable(
+            DbDataReader reader,
+            int ordinal) =>
+            reader.IsDBNull(ordinal)
                 ? null
-                : valor.Trim();
-        }
+                : reader.GetInt32(ordinal);
 
-        private static bool TieneMaximoDosDecimales(decimal valor)
+        private sealed class PropietarioBase
         {
-            return decimal.Round(valor, 2) == valor;
-        }
-
-        private static bool EsConflictoUnico(DbUpdateException exception)
-        {
-            return exception.InnerException is SqlException sqlException &&
-                   (sqlException.Number == 2601 || sqlException.Number == 2627);
+            public int PropietarioId { get; set; }
+            public string Identificacion { get; set; } =
+                string.Empty;
+            public string NombreCompleto { get; set; } =
+                string.Empty;
+            public string? Telefono { get; set; }
+            public string? Correo { get; set; }
         }
     }
 }

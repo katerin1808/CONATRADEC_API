@@ -668,7 +668,7 @@ public sealed class ParametrizacionAccesoController : ControllerBase
                 u.nombreCompletoUsuario,
                 a.terrenoId,
                 t.codigoTerreno,
-                t.nombrePropietarioTerreno,
+                ISNULL(p.nombreCompleto, N''),
                 a.tipoAsignacion,
                 a.esResponsablePrincipal,
                 a.observacion,
@@ -678,6 +678,12 @@ public sealed class ParametrizacionAccesoController : ControllerBase
                 ON u.UsuarioId = a.usuarioId
             INNER JOIN dbo.terreno t
                 ON t.terrenoId = a.terrenoId
+            LEFT JOIN dbo.propietarioTerreno pt
+                ON pt.terrenoId = t.terrenoId
+               AND pt.activo = 1
+            LEFT JOIN dbo.propietario p
+                ON p.propietarioId = pt.propietarioId
+               AND p.activo = 1
             WHERE a.activo = 1
               AND (@usuarioId IS NULL OR a.usuarioId = @usuarioId)
               AND (@terrenoId IS NULL OR a.terrenoId = @terrenoId)
@@ -1116,7 +1122,15 @@ public sealed class ParametrizacionAccesoController : ControllerBase
             {
                 terrenoId = x.terrenoId,
                 codigoTerreno = x.codigoTerreno,
-                propietarioActual = x.nombrePropietarioTerreno,
+                propietarioActual =
+                    x.RelacionesPropietario
+                        .Where(relacion =>
+                            relacion.activo &&
+                            relacion.Propietario.activo)
+                        .Select(relacion =>
+                            relacion.Propietario.nombreCompleto)
+                        .FirstOrDefault() ??
+                    string.Empty,
                 direccion = x.direccionTerreno
             })
             .ToListAsync(cancellationToken);
@@ -1227,7 +1241,7 @@ public sealed class ParametrizacionAccesoController : ControllerBase
             SELECT DISTINCT
                 t.terrenoId,
                 t.codigoTerreno,
-                t.nombrePropietarioTerreno,
+                ISNULL(p.nombreCompleto, N''),
                 t.direccionTerreno,
                 t.extensionManzanaTerreno,
                 t.cantidadQuintalesOro,
@@ -1236,6 +1250,12 @@ public sealed class ParametrizacionAccesoController : ControllerBase
             FROM TerrenosAutorizados a
             INNER JOIN dbo.terreno t
                 ON t.terrenoId = a.terrenoId
+            LEFT JOIN dbo.propietarioTerreno pt
+                ON pt.terrenoId = t.terrenoId
+               AND pt.activo = 1
+            LEFT JOIN dbo.propietario p
+                ON p.propietarioId = pt.propietarioId
+               AND p.activo = 1
             WHERE t.activo = 1
             ORDER BY t.codigoTerreno;
             """,

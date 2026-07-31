@@ -402,9 +402,16 @@ public sealed class AuditoriaAnalisisController : ControllerBase
                 codigoTerreno = terreno == null
                     ? string.Empty
                     : terreno.codigoTerreno,
-                nombrePropietarioTerreno = terreno == null
+                NombrePropietario = terreno == null
                     ? string.Empty
-                    : terreno.nombrePropietarioTerreno,
+                    : terreno.RelacionesPropietario
+                        .Where(relacion =>
+                            relacion.activo &&
+                            relacion.Propietario.activo)
+                        .Select(relacion =>
+                            relacion.Propietario.nombreCompleto)
+                        .FirstOrDefault() ??
+                      string.Empty,
                 direccionTerreno = terreno == null
                     ? string.Empty
                     : terreno.direccionTerreno,
@@ -651,7 +658,7 @@ public sealed class AuditoriaAnalisisController : ControllerBase
                     {
                         cabecera.terrenoId,
                         cabecera.codigoTerreno,
-                        propietario = cabecera.nombrePropietarioTerreno,
+                        propietario = cabecera.NombrePropietario,
                         direccion = cabecera.direccionTerreno,
                         extensionManzanas = cabecera.extensionManzanaTerreno,
                         activo = cabecera.terrenoActivo
@@ -787,7 +794,16 @@ public sealed class AuditoriaAnalisisController : ControllerBase
                 CalculoActivo = calculo.activo,
                 TerrenoId = calculo.terrenoId,
                 CodigoTerreno = terreno == null ? string.Empty : terreno.codigoTerreno,
-                Propietario = terreno == null ? string.Empty : terreno.nombrePropietarioTerreno,
+                Propietario = terreno == null
+                    ? string.Empty
+                    : terreno.RelacionesPropietario
+                        .Where(relacion =>
+                            relacion.activo &&
+                            relacion.Propietario.activo)
+                        .Select(relacion =>
+                            relacion.Propietario.nombreCompleto)
+                        .FirstOrDefault() ??
+                      string.Empty,
                 TerrenoActivo = terreno != null && terreno.activo,
                 UsuarioId = calculo.usuarioId,
                 UsuarioNombre = usuario == null ? string.Empty : usuario.nombreCompletoUsuario,

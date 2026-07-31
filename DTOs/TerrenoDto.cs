@@ -1,66 +1,75 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace CONATRADEC_API.DTOs
 {
     public class TerrenoDto
     {
-        public class TerrenoCrearDto
+        public abstract class TerrenoGuardarBaseDto
         {
-            // Se conserva opcional por compatibilidad con versiones anteriores
-            // del frontend. La API no utiliza este valor al crear el terreno.
-            public string? codigoTerreno { get; set; }
+            [Range(1, int.MaxValue)]
+            public int propietarioId { get; set; }
 
-            public string identificacionPropietarioTerreno { get; set; } = null!;
-            public string nombrePropietarioTerreno { get; set; } = null!;
-            public int telefonoPropietario { get; set; }
-            public string? correoPropietario { get; set; }
-            public string direccionTerreno { get; set; } = null!;
+            [Required, MaxLength(300)]
+            public string direccionTerreno { get; set; } = string.Empty;
+
+            [Range(typeof(decimal), "0.01", "9999999999")]
             public decimal extensionManzanaTerreno { get; set; }
-            public DateOnly fechaIngresoTerreno { get; set; }
-            public int cantidadPlantasTerreno { get; set; }
+
+            [Range(1, int.MaxValue)]
             public int municipioId { get; set; }
+
+            [Range(typeof(decimal), "0", "9999999999")]
             public decimal cantidadQuintalesOro { get; set; }
+
+            [Range(0, int.MaxValue)]
+            public int cantidadPlantasTerreno { get; set; }
+
+            [Range(typeof(decimal), "-90", "90")]
             public decimal latitud { get; set; }
+
+            [Range(typeof(decimal), "-180", "180")]
             public decimal longitud { get; set; }
         }
 
-        public class TerrenoEditarDto
+        public sealed class TerrenoCrearDto : TerrenoGuardarBaseDto
         {
-            // Se acepta para no romper clientes antiguos, pero nunca se aplica.
-            // El código del terreno es inmutable una vez generado.
             public string? codigoTerreno { get; set; }
-
-            public string identificacionPropietarioTerreno { get; set; } = null!;
-            public string nombrePropietarioTerreno { get; set; } = null!;
-            public int telefonoPropietario { get; set; }
-            public string? correoPropietario { get; set; }
-            public string direccionTerreno { get; set; } = null!;
-            public decimal extensionManzanaTerreno { get; set; }
-            public DateOnly fechaIngresoTerreno { get; set; }
-            public int cantidadPlantasTerreno { get; set; }
-            public int municipioId { get; set; }
-            public decimal cantidadQuintalesOro { get; set; }
-            public decimal latitud { get; set; }
-            public decimal longitud { get; set; }
+            public DateOnly? fechaIngresoTerreno { get; set; }
         }
 
-        public class TerrenoUbicacionDto
+        public sealed class TerrenoEditarDto : TerrenoGuardarBaseDto
+        {
+            public string? codigoTerreno { get; set; }
+            public DateOnly? fechaIngresoTerreno { get; set; }
+        }
+
+        public sealed class TerrenoUbicacionDto
         {
             public int paisId { get; set; }
-            public string nombrePais { get; set; } = null!;
+            public string nombrePais { get; set; } = string.Empty;
             public int departamentoId { get; set; }
-            public string nombreDepartamento { get; set; } = null!;
+            public string nombreDepartamento { get; set; } = string.Empty;
             public int municipioId { get; set; }
-            public string nombreMunicipio { get; set; } = null!;
+            public string nombreMunicipio { get; set; } = string.Empty;
         }
 
-        public class TerrenoListarDto
+        public sealed class TerrenoPropietarioDto
+        {
+            public int propietarioId { get; set; }
+            public string identificacion { get; set; } = string.Empty;
+            public string nombreCompleto { get; set; } = string.Empty;
+            public string? telefono { get; set; }
+            public string? correo { get; set; }
+            public string? direccion { get; set; }
+        }
+
+        public sealed class TerrenoListarDto
         {
             public int terrenoId { get; set; }
-            public string codigoTerreno { get; set; } = null!;
-            public string identificacionPropietarioTerreno { get; set; } = null!;
-            public string nombrePropietarioTerreno { get; set; } = null!;
-            public int telefonoPropietario { get; set; }
-            public string? correoPropietario { get; set; }
-            public string direccionTerreno { get; set; } = null!;
+            public string codigoTerreno { get; set; } = string.Empty;
+            public int? propietarioId { get; set; }
+            public TerrenoPropietarioDto? propietario { get; set; }
+            public string direccionTerreno { get; set; } = string.Empty;
             public decimal extensionManzanaTerreno { get; set; }
             public DateOnly fechaIngresoTerreno { get; set; }
             public int cantidadPlantasTerreno { get; set; }
@@ -68,7 +77,8 @@ namespace CONATRADEC_API.DTOs
             public decimal cantidadQuintalesOro { get; set; }
             public decimal latitud { get; set; }
             public decimal longitud { get; set; }
-            public TerrenoUbicacionDto ubicacion { get; set; } = null!;
+            public bool activo { get; set; }
+            public TerrenoUbicacionDto ubicacion { get; set; } = new();
         }
     }
 }

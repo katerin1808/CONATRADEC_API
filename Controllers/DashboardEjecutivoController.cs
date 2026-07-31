@@ -337,6 +337,15 @@ namespace CONATRADEC_API.Controllers
                 {
                     Calculo = calculo,
                     Terreno = terreno,
+                    Propietario =
+                        terreno.RelacionesPropietario
+                            .Where(relacion =>
+                                relacion.activo &&
+                                relacion.Propietario.activo)
+                            .Select(relacion =>
+                                relacion.Propietario.nombreCompleto)
+                            .FirstOrDefault() ??
+                        string.Empty,
                     Municipio = terreno.Municipio.NombreMunicipio,
                     Departamento = terreno.Municipio.Departamento.NombreDepartamento
                 })
@@ -378,7 +387,7 @@ namespace CONATRADEC_API.Controllers
                     {
                         terrenoId = item.Terreno.terrenoId,
                         codigoTerreno = item.Terreno.codigoTerreno,
-                        propietario = item.Terreno.nombrePropietarioTerreno,
+                        propietario = item.Propietario,
                         departamento = item.Departamento,
                         municipio = item.Municipio,
                         nivel = nivel,

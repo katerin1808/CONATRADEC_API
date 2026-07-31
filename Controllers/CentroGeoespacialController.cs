@@ -293,7 +293,15 @@ public sealed class CentroGeoespacialController : ControllerBase
                 item.terrenoId,
                 item.codigoTerreno,
                 item.direccionTerreno,
-                item.nombrePropietarioTerreno,
+                NombrePropietario =
+                    item.RelacionesPropietario
+                        .Where(relacion =>
+                            relacion.activo &&
+                            relacion.Propietario.activo)
+                        .Select(relacion =>
+                            relacion.Propietario.nombreCompleto)
+                        .FirstOrDefault() ??
+                    string.Empty,
                 item.extensionManzanaTerreno,
                 item.cantidadQuintalesOro,
                 Municipio = item.Municipio.NombreMunicipio,
@@ -412,7 +420,7 @@ public sealed class CentroGeoespacialController : ControllerBase
             TerrenoId = terreno.terrenoId,
             Codigo = terreno.codigoTerreno,
             Nombre = terreno.direccionTerreno,
-            Productor = terreno.nombrePropietarioTerreno,
+            Productor = terreno.NombrePropietario,
             Departamento = terreno.Departamento,
             Municipio = terreno.Municipio,
             ExtensionManzanas = terreno.extensionManzanaTerreno,

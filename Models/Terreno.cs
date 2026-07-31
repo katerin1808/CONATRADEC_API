@@ -17,26 +17,23 @@ namespace CONATRADEC_API.Models
         [Required, MaxLength(50)]
         public string codigoTerreno { get; set; } = null!;
 
-        [Required, MaxLength(50)]
-        public string identificacionPropietarioTerreno { get; set; } = null!;
-
-        [Required, MaxLength(150)]
-        public string nombrePropietarioTerreno { get; set; } = null!;
-
-        public int telefonoPropietario { get; set; }
-        public string? correoPropietario { get; set; }
-
         [Required, MaxLength(300)]
         public string direccionTerreno { get; set; } = null!;
 
+        [Column(TypeName = "decimal(12,2)")]
         public decimal extensionManzanaTerreno { get; set; }
+
         public DateOnly fechaIngresoTerreno { get; set; }
+
         public int cantidadPlantasTerreno { get; set; }
+
         public bool activo { get; set; }
 
         public int municipioId { get; set; }
+
         public Municipio Municipio { get; set; } = null!;
 
+        [Column(TypeName = "decimal(12,2)")]
         public decimal cantidadQuintalesOro { get; set; }
 
         [Column(TypeName = "decimal(20,17)")]
@@ -47,5 +44,8 @@ namespace CONATRADEC_API.Models
 
         public virtual ICollection<FotoTerreno> FotosTerreno { get; set; }
             = new List<FotoTerreno>();
+
+        public ICollection<PropietarioTerreno> RelacionesPropietario { get; set; }
+            = new List<PropietarioTerreno>();
     }
 }
