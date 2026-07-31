@@ -1,0 +1,85 @@
+ARCHIVO:
+CONATRADEC_API/Services/AnalisisReporteDatosService.cs
+
+UBIQUE ESTE BLOQUE ACTUAL DENTRO DE ObtenerAsync:
+
+            string propietario = terreno == null
+                ? string.Empty
+                : await _db.PropietarioTerrenos
+                    .AsNoTracking()
+                    .Where(relacion =>
+                        relacion.terrenoId == terreno.terrenoId &&
+                        relacion.activo &&
+                        relacion.Propietario.activo)
+                    .OrderByDescending(relacion =>
+                        relacion.fechaAsignacionUtc)
+                    .Select(relacion =>
+                        relacion.Propietario.nombreCompleto)
+                    .FirstOrDefaultAsync(cancellationToken) ??
+                  string.Empty;
+
+REEMPLÁCELO COMPLETO POR ESTE BLOQUE:
+
+            /*
+             * fechaCalculo se guarda con DateTime.Now, mientras que las
+             * asignaciones de propietario utilizan fechas UTC. Al leer desde
+             * SQL Server, fechaCalculo llega normalmente como Unspecified;
+             * se interpreta como hora local del servidor antes de convertirla.
+             */
+            DateTime fechaReferenciaPropietarioUtc =
+                calculo.fechaCalculo.Kind == DateTimeKind.Utc
+                    ? calculo.fechaCalculo
+                    : DateTime.SpecifyKind(
+                            calculo.fechaCalculo,
+                            DateTimeKind.Local)
+                        .ToUniversalTime();
+
+            string propietario = string.Empty;
+
+            if (terreno != null)
+            {
+                propietario =
+                    await _db.PropietarioTerrenos
+                        .AsNoTracking()
+                        .Where(relacion =>
+                            relacion.terrenoId == terreno.terrenoId &&
+                            relacion.fechaAsignacionUtc <=
+                                fechaReferenciaPropietarioUtc &&
+                            (
+                                !relacion.fechaDesasignacionUtc.HasValue ||
+                                relacion.fechaDesasignacionUtc.Value >
+                                    fechaReferenciaPropietarioUtc
+                            ))
+                        .OrderByDescending(relacion =>
+                            relacion.fechaAsignacionUtc)
+                        .Select(relacion =>
+                            relacion.Propietario.nombreCompleto)
+                        .FirstOrDefaultAsync(cancellationToken) ??
+                    string.Empty;
+
+                /*
+                 * Compatibilidad con análisis antiguos creados antes de que
+                 * existiera el historial propietarioTerreno. Si no hay una
+                 * relación válida para esa fecha, se conserva la primera
+                 * relación conocida del terreno como mejor referencia.
+                 */
+                if (string.IsNullOrWhiteSpace(propietario))
+                {
+                    propietario =
+                        await _db.PropietarioTerrenos
+                            .AsNoTracking()
+                            .Where(relacion =>
+                                relacion.terrenoId == terreno.terrenoId)
+                            .OrderBy(relacion =>
+                                relacion.fechaAsignacionUtc)
+                            .Select(relacion =>
+                                relacion.Propietario.nombreCompleto)
+                            .FirstOrDefaultAsync(cancellationToken) ??
+                        string.Empty;
+                }
+            }
+
+IMPORTANTE:
+- No agregue nuevamente las condiciones relacion.activo ni Propietario.activo.
+- Un propietario desactivado debe seguir apareciendo en sus reportes históricos.
+- No requiere migración ni script de base de datos.
