@@ -29,8 +29,8 @@ public sealed class PortalWebDatabaseInitializer
         {
             new Definicion(
                 AccesoPortal,
-                "Acceso al portal administrativo",
-                "Permite iniciar sesión y navegar dentro del portal web."),
+                "Acceso al portal web",
+                "Permite iniciar sesión y navegar dentro de la aplicación web."),
             new Definicion(
                 RolesWeb,
                 "Administración de roles",

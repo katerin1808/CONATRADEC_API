@@ -1,3 +1,8 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using CONATRADEC_API.DTOs;
 using CONATRADEC_API.Models;
 using Microsoft.AspNetCore.Mvc;
@@ -154,8 +159,7 @@ namespace CONATRADEC_API.Controllers
             ConstruirPaqueteAsync(
                 CancellationToken cancellationToken)
         {
-            var contenido =
-                new MotorCalculoContenidoDto();
+            var contenido = new MotorCalculoContenidoDto();
 
             UnidadMedida? unidadResultado =
                 await db.UnidadMedidas
@@ -206,8 +210,7 @@ namespace CONATRADEC_API.Controllers
                     .Select(item => new MotorTipoCultivoDto
                     {
                         tipoCultivoId = item.tipoCultivoId,
-                        nombreTipoCultivo =
-                            item.nombreTipoCultivo,
+                        nombreTipoCultivo = item.nombreTipoCultivo,
                         activo = item.activo
                     })
                     .ToListAsync(cancellationToken);
@@ -216,12 +219,10 @@ namespace CONATRADEC_API.Controllers
                 await db.TipoAnalisisSuelos
                     .AsNoTracking()
                     .Where(item => item.activo)
-                    .OrderBy(item =>
-                        item.nombreTipoAnalisisSuelo)
+                    .OrderBy(item => item.nombreTipoAnalisisSuelo)
                     .Select(item => new MotorTipoAnalisisDto
                     {
-                        tipoAnalisisSueloId =
-                            item.tipoAnalisisSueloId,
+                        tipoAnalisisSueloId = item.tipoAnalisisSueloId,
                         nombreTipoAnalisisSuelo =
                             item.nombreTipoAnalisisSuelo,
                         activo = item.activo
@@ -232,12 +233,10 @@ namespace CONATRADEC_API.Controllers
                 await db.elementoQuimico
                     .AsNoTracking()
                     .Where(item => item.activo)
-                    .OrderBy(item =>
-                        item.nombreElementoQuimico)
+                    .OrderBy(item => item.nombreElementoQuimico)
                     .Select(item => new MotorElementoDto
                     {
-                        elementoQuimicosId =
-                            item.elementoQuimicosId,
+                        elementoQuimicosId = item.elementoQuimicosId,
                         simboloElementoQuimico =
                             item.simboloElementoQuimico,
                         nombreElementoQuimico =
@@ -256,8 +255,7 @@ namespace CONATRADEC_API.Controllers
                     .Select(item => new MotorUnidadDto
                     {
                         unidadMedidaId = item.unidadMedidaId,
-                        nombreUnidadMedida =
-                            item.nombreUnidadMedida,
+                        nombreUnidadMedida = item.nombreUnidadMedida,
                         activo = item.activo
                     })
                     .ToListAsync(cancellationToken);
@@ -268,26 +266,19 @@ namespace CONATRADEC_API.Controllers
                     .Where(item => item.activo)
                     .OrderBy(item => item.elementoQuimicosId)
                     .ThenBy(item => item.orden)
-                    .Select(item =>
-                        new MotorConversionElementoDto
-                        {
-                            elementoQuimicosId =
-                                item.elementoQuimicosId,
-                            unidadMedidaId =
-                                item.unidadMedidaId,
-                            codigoFormulaConversion =
-                                item.codigoFormulaConversion,
-                            factorPrincipal =
-                                item.factorPrincipal,
-                            factorSecundario =
-                                item.factorSecundario,
-                            factorTerciario =
-                                item.factorTerciario,
-                            divisor = item.divisor,
-                            desplazamiento =
-                                item.desplazamiento,
-                            activo = item.activo
-                        })
+                    .Select(item => new MotorConversionElementoDto
+                    {
+                        elementoQuimicosId = item.elementoQuimicosId,
+                        unidadMedidaId = item.unidadMedidaId,
+                        codigoFormulaConversion =
+                            item.codigoFormulaConversion,
+                        factorPrincipal = item.factorPrincipal,
+                        factorSecundario = item.factorSecundario,
+                        factorTerciario = item.factorTerciario,
+                        divisor = item.divisor,
+                        desplazamiento = item.desplazamiento,
+                        activo = item.activo
+                    })
                     .ToListAsync(cancellationToken);
 
             contenido.conversionesMateriaOrganica =
@@ -295,24 +286,18 @@ namespace CONATRADEC_API.Controllers
                     .AsNoTracking()
                     .Where(item => item.activo)
                     .OrderBy(item => item.orden)
-                    .Select(item =>
-                        new MotorConversionMateriaOrganicaDto
-                        {
-                            unidadMedidaId =
-                                item.unidadMedidaId,
-                            codigoFormulaConversion =
-                                item.codigoFormulaConversion,
-                            factorPrincipal =
-                                item.factorPrincipal,
-                            factorSecundario =
-                                item.factorSecundario,
-                            factorTerciario =
-                                item.factorTerciario,
-                            divisor = item.divisor,
-                            desplazamiento =
-                                item.desplazamiento,
-                            activo = item.activo
-                        })
+                    .Select(item => new MotorConversionMateriaOrganicaDto
+                    {
+                        unidadMedidaId = item.unidadMedidaId,
+                        codigoFormulaConversion =
+                            item.codigoFormulaConversion,
+                        factorPrincipal = item.factorPrincipal,
+                        factorSecundario = item.factorSecundario,
+                        factorTerciario = item.factorTerciario,
+                        divisor = item.divisor,
+                        desplazamiento = item.desplazamiento,
+                        activo = item.activo
+                    })
                     .ToListAsync(cancellationToken);
 
             contenido.parametrosExtraccion =
@@ -322,8 +307,7 @@ namespace CONATRADEC_API.Controllers
                     .OrderBy(item => item.elementoQuimicosId)
                     .Select(item => new MotorExtraccionDto
                     {
-                        elementoQuimicosId =
-                            item.elementoQuimicosId,
+                        elementoQuimicosId = item.elementoQuimicosId,
                         cantidadExtraidaPorQQOro =
                             item.cantidadExtraidaPorQQOro,
                         activo = item.activo
@@ -339,8 +323,7 @@ namespace CONATRADEC_API.Controllers
                     .Select(item => new MotorRangoCultivoDto
                     {
                         tipoCultivoId = item.tipoCultivoId,
-                        elementoQuimicosId =
-                            item.elementoQuimicosId,
+                        elementoQuimicosId = item.elementoQuimicosId,
                         valorMinimo = item.valorMinimo,
                         valorMaximo = item.valorMaximo,
                         unidadBase = item.unidadBase,
@@ -372,22 +355,16 @@ namespace CONATRADEC_API.Controllers
                     .OrderBy(item => item.nombreNutriente)
                     .Select(item => new MotorFuenteNutrienteDto
                     {
-                        fuenteNutrientesId =
-                            item.fuenteNutrientesId,
-                        nombreNutriente =
-                            item.nombreNutriente,
-                        descripcionNutriente =
-                            item.descripcionNutriente,
-                        precioNutriente =
-                            item.precioNutriente,
+                        fuenteNutrientesId = item.fuenteNutrientesId,
+                        nombreNutriente = item.nombreNutriente,
+                        descripcionNutriente = item.descripcionNutriente,
+                        precioNutriente = item.precioNutriente,
                         habilitadaEnmiendaCalcarea =
                             fuentesEnmiendaIds.Contains(
                                 item.fuenteNutrientesId),
                         habilitadaFertilizacionMixta =
-                            contenido
-                                .fuentesFertilizacionMixtaIds
-                                .Contains(
-                                    item.fuenteNutrientesId),
+                            contenido.fuentesFertilizacionMixtaIds.Contains(
+                                item.fuenteNutrientesId),
                         activo = item.activo
                     })
                     .ToListAsync(cancellationToken);
@@ -407,12 +384,9 @@ namespace CONATRADEC_API.Controllers
                     {
                         fuenteNutrienteElementoQuimicoId =
                             item.fuenteNutrienteElementoQuimicoId,
-                        fuenteNutrientesId =
-                            item.fuenteNutrientesId,
-                        elementoQuimicosId =
-                            item.elementoQuimicosId,
-                        cantidadAporte =
-                            item.cantidadAporte,
+                        fuenteNutrientesId = item.fuenteNutrientesId,
+                        elementoQuimicosId = item.elementoQuimicosId,
+                        cantidadAporte = item.cantidadAporte,
                         activo = item.activo
                     })
                     .ToListAsync(cancellationToken);
@@ -428,41 +402,36 @@ namespace CONATRADEC_API.Controllers
                     {
                         parametroEnmiendaCalcareaId =
                             item.parametroEnmiendaCalcareaId,
-                        fuenteNutrientesId =
-                            item.fuenteNutrientesId,
+                        fuenteNutrientesId = item.fuenteNutrientesId,
                         saturacionBasesDeseada =
                             item.saturacionBasesDeseada,
                         prnt = item.prnt,
-                        factorTonHaALbHa =
-                            item.factorTonHaALbHa,
-                        factorHaAMz =
-                            item.factorHaAMz,
-                        factorTonHaAKgHa =
-                            item.factorTonHaAKgHa,
-                        descripcionParametro =
-                            item.descripcionParametro,
+                        factorTonHaALbHa = item.factorTonHaALbHa,
+                        factorHaAMz = item.factorHaAMz,
+                        factorTonHaAKgHa = item.factorTonHaAKgHa,
+                        descripcionParametro = item.descripcionParametro,
                         activo = item.activo
                     })
                     .ToListAsync(cancellationToken);
 
             string contenidoJson =
-                JsonSerializer.Serialize(
-                    contenido,
-                    HashJsonOptions);
+                JsonSerializer.Serialize(contenido, HashJsonOptions);
 
             string hash =
                 Convert.ToHexString(
                         SHA256.HashData(
-                            Encoding.UTF8.GetBytes(
-                                contenidoJson)))
+                            Encoding.UTF8.GetBytes(contenidoJson)))
                     .ToLowerInvariant();
 
             return new MotorCalculoPaqueteDto
             {
-                versionEsquema = 2,
-                versionMotorBase = "2.0.0",
-                versionPaquete =
-                    $"motor-completo-{hash[..16]}",
+                /*
+                 * El esquema 3 declara que el paquete contiene y valida los
+                 * catálogos indispensables del formulario offline.
+                 */
+                versionEsquema = 3,
+                versionMotorBase = "3.0.0",
+                versionPaquete = $"motor-completo-{hash[..16]}",
                 hashSha256 = hash,
                 fechaGeneracionUtc = DateTime.UtcNow,
                 versionMinimaAplicacion = "1.0.0",
