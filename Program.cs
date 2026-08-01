@@ -32,9 +32,12 @@ builder.WebHost.ConfigureKestrel(options =>
     options.Limits.MaxRequestBodySize = tamanoMaximoActualizacion;
 });
 
+builder.Services.AddScoped<AnalisisHistorialActionFilter>();
+
 builder.Services.AddControllers(options =>
 {
     options.Filters.Add<ApiErrorResponseFilter>();
+    options.Filters.AddService<AnalisisHistorialActionFilter>();
 });
 
 // JWT, expiración absoluta y control de inactividad de las sesiones.
@@ -62,9 +65,14 @@ builder.Services.Configure<ApiBehaviorOptions>(options =>
 
 builder.Services.AddScoped<AnalisisSueloCalculoService>();
 builder.Services.AddScoped<AnalisisReporteDatosService>();
+builder.Services.AddScoped<AnalisisReporteHistoricoService>();
+builder.Services.AddSingleton<AnalisisEdicionLockService>();
+builder.Services.AddScoped<AnalisisEdicionDatabaseLockService>();
+builder.Services.AddHostedService<AnalisisHistorialBackfillHostedService>();
 builder.Services.AddScoped<ImageService>();
 
 builder.Services.AddScoped<AnalisisSueloDatabaseInitializer>();
+builder.Services.AddScoped<AnalisisHistorialDatabaseInitializer>();
 builder.Services.AddScoped<PortalWebDatabaseInitializer>();
 builder.Services.AddScoped<ParametrizacionAccesoDatabaseInitializer>();
 builder.Services.AddScoped<ControlAnalisisDatabaseInitializer>();
@@ -417,6 +425,12 @@ await using (
             .GetRequiredService<AnalisisSueloDatabaseInitializer>();
 
     await analisisInitializer.InicializarAsync();
+
+    AnalisisHistorialDatabaseInitializer historialInitializer =
+        scope.ServiceProvider
+            .GetRequiredService<AnalisisHistorialDatabaseInitializer>();
+
+    await historialInitializer.InicializarAsync();
 
     NoticiasDatabaseInitializer noticiasInitializer =
         scope.ServiceProvider

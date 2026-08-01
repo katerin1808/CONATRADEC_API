@@ -1,3 +1,4 @@
+using System.Text.Json;
 using static CONATRADEC_API.DTOs.FertilizacionMixtaDto;
 using static CONATRADEC_API.DTOs.FormulaNutricionalDto;
 
@@ -10,6 +11,27 @@ namespace CONATRADEC_API.DTOs
 
         public AnalisisSueloCalculoResponseDto requerimientoAnual { get; set; }
             = new();
+
+        /*
+         * Metadatos de trazabilidad enviados por Android/Windows.
+         * Son opcionales para mantener compatibilidad con versiones anteriores.
+         */
+        public DateTime? fechaCreacionClienteUtc { get; set; }
+
+        public DateTime? fechaOperacionClienteUtc { get; set; }
+
+        public int? versionRegistro { get; set; }
+
+        public string? origenRegistro { get; set; }
+
+        public string? etagBase { get; set; }
+
+        /*
+         * Fotografía exacta del reporte calculado por el cliente.
+         * Es especialmente importante para operaciones offline, porque evita
+         * reconstruir Balance, Enmienda o Mixta con catálogos modificados.
+         */
+        public JsonElement? reporteHistoricoCliente { get; set; }
 
         /*
          * Los cálculos complementarios son opcionales.
