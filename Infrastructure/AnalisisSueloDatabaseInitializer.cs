@@ -8,11 +8,24 @@ namespace CONATRADEC_API.Infrastructure
     /// Inicializa de forma idempotente la estructura adicional del análisis
     /// de suelo y el sistema parametrizable de unidades y conversiones.
     ///
-    /// No sobrescribe configuraciones existentes. Únicamente crea tablas,
-    /// unidades o asociaciones que todavía no existan.
+    /// Las configuraciones existentes se conservan, excepto correcciones
+    /// explícitas de errores conocidos del motor, como la fórmula de
+    /// nitrógeno validada contra el Excel oficial de requerimiento anual.
     /// </summary>
     public sealed class AnalisisSueloDatabaseInitializer
     {
+        private const decimal MasaSueloExcelKgHa =
+            2000000m;
+
+        private const decimal MineralizacionTropicoExcel =
+            0.015m;
+
+        private const decimal ConversionKgHaALbMzExcel =
+            1.54m;
+
+        private const decimal DivisorPorcentajesExcel =
+            100m;
+
         private readonly DBContext db;
 
         private readonly ILogger<
@@ -48,6 +61,15 @@ namespace CONATRADEC_API.Infrastructure
                     cancellationToken);
 
                 await AsegurarConfiguracionesBaseAsync(
+                    cancellationToken);
+
+                /*
+                 * Corrige también bases existentes. El inicializador anterior
+                 * creaba NITROGENO_MO_LEGADO con una segunda multiplicación de
+                 * la materia orgánica. El Excel utiliza una masa fija del
+                 * suelo de 2,000,000 kg/Ha.
+                 */
+                await CorregirNitrogenoSegunExcelAsync(
                     cancellationToken);
 
                 await transaction.CommitAsync(
@@ -545,15 +567,19 @@ END;
                         elemento,
                         "%",
                         UnidadConversionService
-                            .FormulaNitrogenoMateriaOrganicaLegado,
-                        factorPrincipal: 1000000m,
-                        factorSecundario: 0.015m,
-                        factorTerciario: 1.54m,
-                        divisor: 100m,
+                            .FormulaNitrogenoMateriaOrganicaEstandar,
+                        factorPrincipal:
+                            MasaSueloExcelKgHa,
+                        factorSecundario:
+                            MineralizacionTropicoExcel,
+                        factorTerciario:
+                            ConversionKgHaALbMzExcel,
+                        divisor:
+                            DivisorPorcentajesExcel,
                         predeterminada: true,
                         orden: 10,
                         observacion:
-                            "Fórmula histórica de nitrógeno basada en materia orgánica.",
+                            "Excel de requerimiento anual: N% × MO% × 2,000,000 kg/Ha × 0.015 × 1.54 ÷ 100 = lb/Mz.",
                         porNombre: porNombre,
                         existentes: existentesElemento);
 
@@ -722,6 +748,157 @@ END;
 
             await db.SaveChangesAsync(
                 cancellationToken);
+        }
+
+        /// <summary>
+        /// Migra la configuración activa de nitrógeno porcentual a la fórmula
+        /// reproducida por la hoja "Requerimiento anual" del Excel:
+        ///
+        /// N lb/Mz =
+        /// N% × MO% × 2,000,000 kg/Ha × 0.015 × 1.54 ÷ 100.
+        ///
+        /// Esta operación migra únicamente la fórmula antigua conocida.
+        /// No sobrescribe una configuración estándar modificada después por
+        /// el administrador. No modifica análisis históricos ya guardados;
+        /// afecta cálculos nuevos y análisis reprocesados.
+        /// </summary>
+        private async Task
+            CorregirNitrogenoSegunExcelAsync(
+                CancellationToken cancellationToken)
+        {
+            ElementoQuimico? nitrogeno =
+                await db.elementoQuimico
+                    .FirstOrDefaultAsync(
+                        x =>
+                            x.activo &&
+                            x.simboloElementoQuimico
+                                .Trim()
+                                .ToUpper() == "N",
+                        cancellationToken);
+
+            UnidadMedida? porcentaje =
+                await db.UnidadMedidas
+                    .FirstOrDefaultAsync(
+                        x =>
+                            x.nombreUnidadMedida
+                                .Trim() == "%",
+                        cancellationToken);
+
+            if (nitrogeno == null ||
+                porcentaje == null)
+            {
+                logger.LogWarning(
+                    "No fue posible verificar la fórmula de nitrógeno porque no se encontró el elemento N o la unidad %.");
+
+                return;
+            }
+
+            ElementoQuimicoUnidadMedida? configuracion =
+                await db
+                    .Set<ElementoQuimicoUnidadMedida>()
+                    .FirstOrDefaultAsync(
+                        x =>
+                            x.elementoQuimicosId ==
+                                nitrogeno.elementoQuimicosId &&
+                            x.unidadMedidaId ==
+                                porcentaje.unidadMedidaId,
+                        cancellationToken);
+
+            if (configuracion == null)
+            {
+                logger.LogWarning(
+                    "No se encontró la configuración N/% para aplicar la fórmula del Excel.");
+
+                return;
+            }
+
+            string formulaActual =
+                Normalizar(
+                    configuracion
+                        .codigoFormulaConversion);
+
+            bool usaFormulaLegada =
+                formulaActual ==
+                Normalizar(
+                    UnidadConversionService
+                        .FormulaNitrogenoMateriaOrganicaLegado);
+
+            bool usaParametrosLegadosConocidos =
+                configuracion.factorPrincipal == 1000000m &&
+                configuracion.factorSecundario ==
+                    MineralizacionTropicoExcel &&
+                configuracion.factorTerciario ==
+                    ConversionKgHaALbMzExcel &&
+                configuracion.divisor ==
+                    DivisorPorcentajesExcel;
+
+            /*
+             * La corrección es una migración de la configuración antigua.
+             *
+             * Si el registro ya utiliza la fórmula estándar, no se vuelve a
+             * imponer el valor del Excel. De esta forma una modificación
+             * administrativa posterior no se pierde al reiniciar la API.
+             */
+            if (!usaFormulaLegada &&
+                !usaParametrosLegadosConocidos)
+            {
+                return;
+            }
+
+            /*
+             * Solo una unidad debe quedar como predeterminada para N.
+             */
+            List<ElementoQuimicoUnidadMedida>
+                configuracionesNitrogeno =
+                    await db
+                        .Set<ElementoQuimicoUnidadMedida>()
+                        .Where(x =>
+                            x.elementoQuimicosId ==
+                                nitrogeno
+                                    .elementoQuimicosId)
+                        .ToListAsync(
+                            cancellationToken);
+
+            foreach (
+                ElementoQuimicoUnidadMedida item
+                in configuracionesNitrogeno)
+            {
+                item.unidadPredeterminada = false;
+            }
+
+            porcentaje.activo = true;
+
+            configuracion.codigoFormulaConversion =
+                UnidadConversionService
+                    .FormulaNitrogenoMateriaOrganicaEstandar;
+
+            configuracion.factorPrincipal =
+                MasaSueloExcelKgHa;
+
+            configuracion.factorSecundario =
+                MineralizacionTropicoExcel;
+
+            configuracion.factorTerciario =
+                ConversionKgHaALbMzExcel;
+
+            configuracion.divisor =
+                DivisorPorcentajesExcel;
+
+            configuracion.desplazamiento = 0m;
+            configuracion.unidadPredeterminada = true;
+            configuracion.visibleEnFormulario = true;
+            configuracion.orden = 10;
+            configuracion.activo = true;
+            configuracion.observacion =
+                "Excel de requerimiento anual: " +
+                "N% × MO% × 2,000,000 kg/Ha × " +
+                "0.015 × 1.54 ÷ 100 = lb/Mz.";
+
+            await db.SaveChangesAsync(
+                cancellationToken);
+
+            logger.LogInformation(
+                "La configuración de nitrógeno fue actualizada según el Excel de requerimiento anual.");
         }
 
         private void AsegurarConversionesMasaArea(
