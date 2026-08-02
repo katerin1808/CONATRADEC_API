@@ -5,14 +5,8 @@ namespace CONATRADEC_API.Infrastructure;
 
 public sealed class PortalWebDatabaseInitializer
 {
-    /*
-     * La columna descripcionInterfaz de la base de datos de producción
-     * utiliza una longitud menor que la definida actualmente en el modelo.
-     *
-     * Se conserva este límite de compatibilidad para impedir que una
-     * descripción extensa detenga el inicio completo de la API.
-     */
-    private const int LongitudMaximaDescripcionCompatible = 100;
+    private const int LongitudMaximaDescripcionCompatible =
+        100;
 
     public const string AccesoPortal =
         "PortalAdministrativoWeb";
@@ -31,6 +25,12 @@ public sealed class PortalWebDatabaseInitializer
 
     public const string MapaRelacionesAnalisisWeb =
         "MapaRelacionesAnalisisWeb";
+
+    public const string UnidadesConversionesWeb =
+        "unidadesConversionesPage";
+
+    public const string ReportesWeb =
+        "reportesPage";
 
     private readonly DBContext db;
     private readonly ILogger<PortalWebDatabaseInitializer> logger;
@@ -76,18 +76,31 @@ public sealed class PortalWebDatabaseInitializer
             new Definicion(
                 MapaRelacionesAnalisisWeb,
                 "Mapa de relaciones de análisis",
-                "Consulta las relaciones del análisis de suelo.")
+                "Consulta las relaciones del análisis de suelo."),
+
+            new Definicion(
+                UnidadesConversionesWeb,
+                "Unidades y conversiones",
+                "Administra unidades y fórmulas de conversión."),
+
+            new Definicion(
+                ReportesWeb,
+                "Centro de reportes",
+                "Consulta indicadores y exporta reportes administrativos.")
         };
 
         foreach (Definicion permiso in permisos)
         {
-            Interfaz? interfaz = await db.Interfaz
-                .FirstOrDefaultAsync(
-                    x => x.nombreInterfaz == permiso.Codigo,
+            Interfaz? interfaz =
+                await db.Interfaz.FirstOrDefaultAsync(
+                    item =>
+                        item.nombreInterfaz ==
+                        permiso.Codigo,
                     cancellationToken);
 
             string descripcionSegura =
-                AjustarDescripcion(permiso.Descripcion);
+                AjustarDescripcion(
+                    permiso.Descripcion);
 
             if (interfaz is null)
             {
@@ -96,13 +109,10 @@ public sealed class PortalWebDatabaseInitializer
                     {
                         nombreInterfaz =
                             permiso.Codigo,
-
                         nombreAmigableInterfaz =
                             permiso.Nombre,
-
                         descripcionInterfaz =
                             descripcionSegura,
-
                         activo = true
                     });
             }
@@ -110,35 +120,38 @@ public sealed class PortalWebDatabaseInitializer
             {
                 interfaz.nombreAmigableInterfaz =
                     permiso.Nombre;
-
                 interfaz.descripcionInterfaz =
                     descripcionSegura;
-
                 interfaz.activo = true;
             }
         }
 
-        await db.SaveChangesAsync(cancellationToken);
+        await db.SaveChangesAsync(
+            cancellationToken);
 
-        List<int> rolesAdministradores = await db.Roles
-            .AsNoTracking()
-            .Where(x =>
-                x.activo &&
-                x.nombreRol.Trim().ToUpper() ==
-                "ADMINISTRADOR")
-            .Select(x => x.rolId)
-            .ToListAsync(cancellationToken);
+        List<int> rolesAdministradores =
+            await db.Roles
+                .AsNoTracking()
+                .Where(item =>
+                    item.activo &&
+                    item.nombreRol
+                        .Trim()
+                        .ToUpper() ==
+                    "ADMINISTRADOR")
+                .Select(item => item.rolId)
+                .ToListAsync(cancellationToken);
 
         string[] codigosPermisos =
             permisos
-                .Select(x => x.Codigo)
+                .Select(item => item.Codigo)
                 .ToArray();
 
-        List<Interfaz> interfaces = await db.Interfaz
-            .Where(x =>
-                codigosPermisos.Contains(
-                    x.nombreInterfaz))
-            .ToListAsync(cancellationToken);
+        List<Interfaz> interfaces =
+            await db.Interfaz
+                .Where(item =>
+                    codigosPermisos.Contains(
+                        item.nombreInterfaz))
+                .ToListAsync(cancellationToken);
 
         foreach (int rolId in rolesAdministradores)
         {
@@ -147,10 +160,10 @@ public sealed class PortalWebDatabaseInitializer
                 RolInterfaz? relacion =
                     await db.RolInterfaz
                         .FirstOrDefaultAsync(
-                            x =>
-                                x.rolId == rolId &&
-                                x.interfazId ==
-                                interfaz.interfazId,
+                            item =>
+                                item.rolId == rolId &&
+                                item.interfazId ==
+                                    interfaz.interfazId,
                             cancellationToken);
 
                 if (relacion is null)
@@ -177,7 +190,8 @@ public sealed class PortalWebDatabaseInitializer
             }
         }
 
-        await db.SaveChangesAsync(cancellationToken);
+        await db.SaveChangesAsync(
+            cancellationToken);
 
         logger.LogInformation(
             "Permisos del portal web inicializados correctamente.");

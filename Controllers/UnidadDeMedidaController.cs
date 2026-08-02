@@ -1,21 +1,38 @@
+using CONATRADEC_API.Infrastructure;
 using CONATRADEC_API.Models;
+using CONATRADEC_API.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 using static CONATRADEC_API.DTOs.UnidadDeMedidaDto;
 
 namespace CONATRADEC_API.Controllers
 {
     [ApiController]
+    [Authorize]
     [Route("api/unidad-medida")]
-    public class UnidadMedidaController : ControllerBase
+    public sealed class UnidadMedidaController :
+        ControllerBase
     {
-        private readonly DBContext db;
+        private const string PermisoAnterior =
+            "elementoQuimicoPage";
 
-        public UnidadMedidaController(DBContext db)
+        private readonly DBContext db;
+        private readonly PermisoApiService permisos;
+
+        public UnidadMedidaController(
+            DBContext db,
+            PermisoApiService permisos)
         {
             this.db = db;
+            this.permisos = permisos;
         }
 
+        /// <summary>
+        /// Lista operativa utilizada por formularios. Continúa disponible
+        /// para cualquier usuario autenticado.
+        /// </summary>
         [HttpGet("listar")]
         public async Task<IActionResult> Listar(
             CancellationToken cancellationToken)
@@ -23,14 +40,18 @@ namespace CONATRADEC_API.Controllers
             List<UnidadMedidaRespuestaDto> data =
                 await db.UnidadMedidas
                     .AsNoTracking()
-                    .Where(x => x.activo)
-                    .OrderBy(x => x.nombreUnidadMedida)
-                    .Select(x => new UnidadMedidaRespuestaDto
-                    {
-                        unidadMedidaId = x.unidadMedidaId,
-                        nombreUnidadMedida = x.nombreUnidadMedida,
-                        activo = x.activo
-                    })
+                    .Where(item => item.activo)
+                    .OrderBy(item =>
+                        item.nombreUnidadMedida)
+                    .Select(item =>
+                        new UnidadMedidaRespuestaDto
+                        {
+                            unidadMedidaId =
+                                item.unidadMedidaId,
+                            nombreUnidadMedida =
+                                item.nombreUnidadMedida,
+                            activo = item.activo
+                        })
                     .ToListAsync(cancellationToken);
 
             return Ok(data);
@@ -40,17 +61,29 @@ namespace CONATRADEC_API.Controllers
         public async Task<IActionResult> ListarInactivas(
             CancellationToken cancellationToken)
         {
+            IActionResult? acceso =
+                await ValidarAccesoAsync(
+                    TipoPermisoApi.Leer,
+                    cancellationToken);
+
+            if (acceso != null)
+                return acceso;
+
             List<UnidadMedidaRespuestaDto> data =
                 await db.UnidadMedidas
                     .AsNoTracking()
-                    .Where(x => !x.activo)
-                    .OrderBy(x => x.nombreUnidadMedida)
-                    .Select(x => new UnidadMedidaRespuestaDto
-                    {
-                        unidadMedidaId = x.unidadMedidaId,
-                        nombreUnidadMedida = x.nombreUnidadMedida,
-                        activo = x.activo
-                    })
+                    .Where(item => !item.activo)
+                    .OrderBy(item =>
+                        item.nombreUnidadMedida)
+                    .Select(item =>
+                        new UnidadMedidaRespuestaDto
+                        {
+                            unidadMedidaId =
+                                item.unidadMedidaId,
+                            nombreUnidadMedida =
+                                item.nombreUnidadMedida,
+                            activo = item.activo
+                        })
                     .ToListAsync(cancellationToken);
 
             return Ok(data);
@@ -61,25 +94,38 @@ namespace CONATRADEC_API.Controllers
             int id,
             CancellationToken cancellationToken)
         {
+            IActionResult? acceso =
+                await ValidarAccesoAsync(
+                    TipoPermisoApi.Leer,
+                    cancellationToken);
+
+            if (acceso != null)
+                return acceso;
+
             UnidadMedidaRespuestaDto? data =
                 await db.UnidadMedidas
                     .AsNoTracking()
-                    .Where(x =>
-                        x.unidadMedidaId == id &&
-                        x.activo)
-                    .Select(x => new UnidadMedidaRespuestaDto
-                    {
-                        unidadMedidaId = x.unidadMedidaId,
-                        nombreUnidadMedida = x.nombreUnidadMedida,
-                        activo = x.activo
-                    })
-                    .FirstOrDefaultAsync(cancellationToken);
+                    .Where(item =>
+                        item.unidadMedidaId == id &&
+                        item.activo)
+                    .Select(item =>
+                        new UnidadMedidaRespuestaDto
+                        {
+                            unidadMedidaId =
+                                item.unidadMedidaId,
+                            nombreUnidadMedida =
+                                item.nombreUnidadMedida,
+                            activo = item.activo
+                        })
+                    .FirstOrDefaultAsync(
+                        cancellationToken);
 
             if (data == null)
             {
                 return NotFound(new
                 {
-                    mensaje = "Unidad de medida no encontrada."
+                    mensaje =
+                        "Unidad de medida no encontrada."
                 });
             }
 
@@ -91,26 +137,36 @@ namespace CONATRADEC_API.Controllers
             [FromBody] UnidadMedidaCrearDto dto,
             CancellationToken cancellationToken)
         {
+            IActionResult? acceso =
+                await ValidarAccesoAsync(
+                    TipoPermisoApi.Agregar,
+                    cancellationToken);
+
+            if (acceso != null)
+                return acceso;
+
             string nombre =
-                NormalizarNombre(dto.nombreUnidadMedida);
+                NormalizarNombre(
+                    dto.nombreUnidadMedida);
 
             if (string.IsNullOrWhiteSpace(nombre))
             {
                 return BadRequest(new
                 {
-                    mensaje = "El nombre es obligatorio."
+                    mensaje =
+                        "El nombre es obligatorio."
                 });
             }
 
             bool existeActiva =
-                await db.UnidadMedidas
-                    .AnyAsync(
-                        x =>
-                            x.nombreUnidadMedida
-                                .Trim()
-                                .ToUpper() == nombre &&
-                            x.activo,
-                        cancellationToken);
+                await db.UnidadMedidas.AnyAsync(
+                    item =>
+                        item.nombreUnidadMedida
+                            .Trim()
+                            .ToUpper() ==
+                        nombre &&
+                        item.activo,
+                    cancellationToken);
 
             if (existeActiva)
             {
@@ -124,11 +180,12 @@ namespace CONATRADEC_API.Controllers
             UnidadMedida? inactiva =
                 await db.UnidadMedidas
                     .FirstOrDefaultAsync(
-                        x =>
-                            x.nombreUnidadMedida
+                        item =>
+                            item.nombreUnidadMedida
                                 .Trim()
-                                .ToUpper() == nombre &&
-                            !x.activo,
+                                .ToUpper() ==
+                            nombre &&
+                            !item.activo,
                         cancellationToken);
 
             if (inactiva != null)
@@ -146,14 +203,18 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
-            var entity = new UnidadMedida
-            {
-                nombreUnidadMedida = nombre,
-                activo = true
-            };
+            var entity =
+                new UnidadMedida
+                {
+                    nombreUnidadMedida =
+                        nombre,
+                    activo = true
+                };
 
             db.UnidadMedidas.Add(entity);
-            await db.SaveChangesAsync(cancellationToken);
+
+            await db.SaveChangesAsync(
+                cancellationToken);
 
             return Ok(new
             {
@@ -174,43 +235,54 @@ namespace CONATRADEC_API.Controllers
             [FromBody] UnidadMedidaEditarDto dto,
             CancellationToken cancellationToken)
         {
+            IActionResult? acceso =
+                await ValidarAccesoAsync(
+                    TipoPermisoApi.Actualizar,
+                    cancellationToken);
+
+            if (acceso != null)
+                return acceso;
+
             UnidadMedida? entity =
                 await db.UnidadMedidas
                     .FirstOrDefaultAsync(
-                        x =>
-                            x.unidadMedidaId == id &&
-                            x.activo,
+                        item =>
+                            item.unidadMedidaId == id &&
+                            item.activo,
                         cancellationToken);
 
             if (entity == null)
             {
                 return NotFound(new
                 {
-                    mensaje = "Unidad de medida no encontrada."
+                    mensaje =
+                        "Unidad de medida no encontrada."
                 });
             }
 
             string nombre =
-                NormalizarNombre(dto.nombreUnidadMedida);
+                NormalizarNombre(
+                    dto.nombreUnidadMedida);
 
             if (string.IsNullOrWhiteSpace(nombre))
             {
                 return BadRequest(new
                 {
-                    mensaje = "El nombre es obligatorio."
+                    mensaje =
+                        "El nombre es obligatorio."
                 });
             }
 
             bool existe =
-                await db.UnidadMedidas
-                    .AnyAsync(
-                        x =>
-                            x.unidadMedidaId != id &&
-                            x.nombreUnidadMedida
-                                .Trim()
-                                .ToUpper() == nombre &&
-                            x.activo,
-                        cancellationToken);
+                await db.UnidadMedidas.AnyAsync(
+                    item =>
+                        item.unidadMedidaId != id &&
+                        item.nombreUnidadMedida
+                            .Trim()
+                            .ToUpper() ==
+                        nombre &&
+                        item.activo,
+                    cancellationToken);
 
             if (existe)
             {
@@ -221,8 +293,11 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
-            entity.nombreUnidadMedida = nombre;
-            await db.SaveChangesAsync(cancellationToken);
+            entity.nombreUnidadMedida =
+                nombre;
+
+            await db.SaveChangesAsync(
+                cancellationToken);
 
             return Ok(new
             {
@@ -242,12 +317,20 @@ namespace CONATRADEC_API.Controllers
             int id,
             CancellationToken cancellationToken)
         {
+            IActionResult? acceso =
+                await ValidarAccesoAsync(
+                    TipoPermisoApi.Eliminar,
+                    cancellationToken);
+
+            if (acceso != null)
+                return acceso;
+
             UnidadMedida? entity =
                 await db.UnidadMedidas
                     .FirstOrDefaultAsync(
-                        x =>
-                            x.unidadMedidaId == id &&
-                            x.activo,
+                        item =>
+                            item.unidadMedidaId == id &&
+                            item.activo,
                         cancellationToken);
 
             if (entity == null)
@@ -280,7 +363,9 @@ namespace CONATRADEC_API.Controllers
             }
 
             entity.activo = false;
-            await db.SaveChangesAsync(cancellationToken);
+
+            await db.SaveChangesAsync(
+                cancellationToken);
 
             return Ok(new
             {
@@ -300,12 +385,20 @@ namespace CONATRADEC_API.Controllers
             int id,
             CancellationToken cancellationToken)
         {
+            IActionResult? acceso =
+                await ValidarAccesoAsync(
+                    TipoPermisoApi.Actualizar,
+                    cancellationToken);
+
+            if (acceso != null)
+                return acceso;
+
             UnidadMedida? entity =
                 await db.UnidadMedidas
                     .FirstOrDefaultAsync(
-                        x =>
-                            x.unidadMedidaId == id &&
-                            !x.activo,
+                        item =>
+                            item.unidadMedidaId == id &&
+                            !item.activo,
                         cancellationToken);
 
             if (entity == null)
@@ -318,18 +411,19 @@ namespace CONATRADEC_API.Controllers
             }
 
             string nombre =
-                NormalizarNombre(entity.nombreUnidadMedida);
+                NormalizarNombre(
+                    entity.nombreUnidadMedida);
 
             bool duplicada =
-                await db.UnidadMedidas
-                    .AnyAsync(
-                        x =>
-                            x.unidadMedidaId != id &&
-                            x.activo &&
-                            x.nombreUnidadMedida
-                                .Trim()
-                                .ToUpper() == nombre,
-                        cancellationToken);
+                await db.UnidadMedidas.AnyAsync(
+                    item =>
+                        item.unidadMedidaId != id &&
+                        item.activo &&
+                        item.nombreUnidadMedida
+                            .Trim()
+                            .ToUpper() ==
+                        nombre,
+                    cancellationToken);
 
             if (duplicada)
             {
@@ -341,7 +435,9 @@ namespace CONATRADEC_API.Controllers
             }
 
             entity.activo = true;
-            await db.SaveChangesAsync(cancellationToken);
+
+            await db.SaveChangesAsync(
+                cancellationToken);
 
             return Ok(new
             {
@@ -356,39 +452,50 @@ namespace CONATRADEC_API.Controllers
             });
         }
 
-        private async Task<List<string>> ObtenerDependenciasAsync(
-            int id,
-            CancellationToken cancellationToken)
+        private async Task<List<string>>
+            ObtenerDependenciasAsync(
+                int id,
+                CancellationToken cancellationToken)
         {
-            var dependencias = new List<string>();
+            var dependencias =
+                new List<string>();
 
-            if (await db.AnalisisSueloElementos.AnyAsync(
-                    x => x.unidadMedidaId == id,
-                    cancellationToken))
+            if (await db.AnalisisSueloElementos
+                    .AnyAsync(
+                        item =>
+                            item.unidadMedidaId == id,
+                        cancellationToken))
             {
                 dependencias.Add(
                     "elementos de análisis de suelo");
             }
 
-            if (await db.AnalisisSueloCalculoElementos.AnyAsync(
-                    x => x.unidadMedidaId == id,
-                    cancellationToken))
+            if (await db.AnalisisSueloCalculoElementos
+                    .AnyAsync(
+                        item =>
+                            item.unidadMedidaId == id,
+                        cancellationToken))
             {
                 dependencias.Add(
                     "cálculos de análisis de suelo");
             }
 
-            if (await db.AnalisisSueloCalculos.AnyAsync(
-                    x => x.unidadMedidaMateriaOrganicaId == id,
-                    cancellationToken))
+            if (await db.AnalisisSueloCalculos
+                    .AnyAsync(
+                        item =>
+                            item.unidadMedidaMateriaOrganicaId ==
+                            id,
+                        cancellationToken))
             {
                 dependencias.Add(
                     "mediciones de materia orgánica");
             }
 
-            if (await db.RangoNutrimentales.AnyAsync(
-                    x => x.unidadMedidaId == id,
-                    cancellationToken))
+            if (await db.RangoNutrimentales
+                    .AnyAsync(
+                        item =>
+                            item.unidadMedidaId == id,
+                        cancellationToken))
             {
                 dependencias.Add(
                     "rangos nutrimentales");
@@ -397,12 +504,68 @@ namespace CONATRADEC_API.Controllers
             return dependencias;
         }
 
-        private static string NormalizarNombre(string? nombre)
+        private async Task<IActionResult?> ValidarAccesoAsync(
+            TipoPermisoApi tipoPermiso,
+            CancellationToken cancellationToken)
         {
-            return (nombre ?? string.Empty)
+            int? usuarioId =
+                ObtenerUsuarioId();
+
+            ResultadoPermisoApi resultado =
+                await permisos.ValidarAsync(
+                    usuarioId,
+                    PortalWebDatabaseInitializer
+                        .UnidadesConversionesWeb,
+                    tipoPermiso,
+                    cancellationToken);
+
+            if (!resultado.Permitido &&
+                resultado.CodigoEstado ==
+                    StatusCodes.Status403Forbidden)
+            {
+                resultado =
+                    await permisos.ValidarAsync(
+                        usuarioId,
+                        PermisoAnterior,
+                        tipoPermiso,
+                        cancellationToken);
+            }
+
+            if (resultado.Permitido)
+                return null;
+
+            return StatusCode(
+                resultado.CodigoEstado,
+                new
+                {
+                    success = false,
+                    message = resultado.Mensaje,
+                    mensaje = resultado.Mensaje
+                });
+        }
+
+        private int? ObtenerUsuarioId()
+        {
+            string? valor =
+                User.FindFirstValue("uid") ??
+                User.FindFirstValue(
+                    ClaimTypes.NameIdentifier) ??
+                User.FindFirstValue("usuarioId") ??
+                User.FindFirstValue("sub");
+
+            return int.TryParse(
+                       valor,
+                       out int usuarioId) &&
+                   usuarioId > 0
+                ? usuarioId
+                : null;
+        }
+
+        private static string NormalizarNombre(
+            string? nombre) =>
+            (nombre ?? string.Empty)
                 .ReplaceLineEndings(" ")
                 .Trim()
                 .ToUpperInvariant();
-        }
     }
 }
