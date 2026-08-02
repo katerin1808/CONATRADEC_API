@@ -32,6 +32,9 @@ public sealed class PortalWebDatabaseInitializer
     public const string ReportesWeb =
         "reportesPage";
 
+    public const string FotosTerrenoWeb =
+        "fotosTerrenoPage";
+
     private readonly DBContext db;
     private readonly ILogger<PortalWebDatabaseInitializer> logger;
 
@@ -86,7 +89,12 @@ public sealed class PortalWebDatabaseInitializer
             new Definicion(
                 ReportesWeb,
                 "Centro de reportes",
-                "Consulta indicadores y exporta reportes administrativos.")
+                "Consulta indicadores y exporta reportes administrativos."),
+
+            new Definicion(
+                FotosTerrenoWeb,
+                "Fotografías de terrenos",
+                "Administra fotografías, portadas y metadatos de terrenos.")
         };
 
         foreach (Definicion permiso in permisos)
@@ -193,8 +201,162 @@ public sealed class PortalWebDatabaseInitializer
         await db.SaveChangesAsync(
             cancellationToken);
 
+        await InicializarEstructuraFotosTerrenoAsync(
+            cancellationToken);
+
         logger.LogInformation(
-            "Permisos del portal web inicializados correctamente.");
+            "Permisos y estructura del portal web inicializados correctamente.");
+    }
+
+    private async Task InicializarEstructuraFotosTerrenoAsync(
+        CancellationToken cancellationToken)
+    {
+        /*
+         * SQL Server compila cada lote completo antes de ejecutarlo.
+         * Por ese motivo, las instrucciones que utilizan columnas nuevas no
+         * pueden estar en el mismo lote que los ALTER TABLE que las crean.
+         *
+         * Primero garantizamos la estructura y, en una segunda ejecución,
+         * normalizamos portadas y creamos el índice.
+         */
+        const string sqlCrearColumnas =
+            """
+            IF OBJECT_ID(N'[dbo].[FotoTerreno]', N'U') IS NOT NULL
+            BEGIN
+                IF COL_LENGTH('dbo.FotoTerreno', 'tituloFotoTerreno') IS NULL
+                BEGIN
+                    ALTER TABLE [dbo].[FotoTerreno]
+                    ADD [tituloFotoTerreno] nvarchar(150) NOT NULL
+                        CONSTRAINT [DF_FotoTerreno_Titulo]
+                        DEFAULT(N'') WITH VALUES;
+                END;
+
+                IF COL_LENGTH('dbo.FotoTerreno', 'descripcionFotoTerreno') IS NULL
+                BEGIN
+                    ALTER TABLE [dbo].[FotoTerreno]
+                    ADD [descripcionFotoTerreno] nvarchar(600) NOT NULL
+                        CONSTRAINT [DF_FotoTerreno_Descripcion]
+                        DEFAULT(N'') WITH VALUES;
+                END;
+
+                IF COL_LENGTH('dbo.FotoTerreno', 'nombreArchivoOriginal') IS NULL
+                BEGIN
+                    ALTER TABLE [dbo].[FotoTerreno]
+                    ADD [nombreArchivoOriginal] nvarchar(255) NOT NULL
+                        CONSTRAINT [DF_FotoTerreno_ArchivoOriginal]
+                        DEFAULT(N'') WITH VALUES;
+                END;
+
+                IF COL_LENGTH('dbo.FotoTerreno', 'fechaRegistroUtc') IS NULL
+                BEGIN
+                    ALTER TABLE [dbo].[FotoTerreno]
+                    ADD [fechaRegistroUtc] datetime2 NOT NULL
+                        CONSTRAINT [DF_FotoTerreno_FechaRegistro]
+                        DEFAULT(SYSUTCDATETIME()) WITH VALUES;
+                END;
+
+                IF COL_LENGTH('dbo.FotoTerreno', 'fechaCaptura') IS NULL
+                BEGIN
+                    ALTER TABLE [dbo].[FotoTerreno]
+                    ADD [fechaCaptura] date NULL;
+                END;
+
+                IF COL_LENGTH('dbo.FotoTerreno', 'esPortada') IS NULL
+                BEGIN
+                    ALTER TABLE [dbo].[FotoTerreno]
+                    ADD [esPortada] bit NOT NULL
+                        CONSTRAINT [DF_FotoTerreno_EsPortada]
+                        DEFAULT(0) WITH VALUES;
+                END;
+            END;
+            """;
+
+        await db.Database.ExecuteSqlRawAsync(
+            sqlCrearColumnas,
+            cancellationToken);
+
+        const string sqlNormalizarDatosEIndices =
+            """
+            IF OBJECT_ID(N'[dbo].[FotoTerreno]', N'U') IS NOT NULL
+               AND COL_LENGTH('dbo.FotoTerreno', 'fechaRegistroUtc') IS NOT NULL
+               AND COL_LENGTH('dbo.FotoTerreno', 'esPortada') IS NOT NULL
+            BEGIN
+                UPDATE [dbo].[FotoTerreno]
+                SET [esPortada] = 0
+                WHERE [activo] = 0
+                  AND [esPortada] = 1;
+
+                ;WITH PortadasActivas AS
+                (
+                    SELECT
+                        fotoTerrenoId,
+                        ROW_NUMBER() OVER
+                        (
+                            PARTITION BY terrenoId
+                            ORDER BY fotoTerrenoId
+                        ) AS numero
+                    FROM [dbo].[FotoTerreno]
+                    WHERE activo = 1
+                      AND esPortada = 1
+                )
+                UPDATE foto
+                SET esPortada = 0
+                FROM [dbo].[FotoTerreno] foto
+                INNER JOIN PortadasActivas portada
+                    ON portada.fotoTerrenoId = foto.fotoTerrenoId
+                WHERE portada.numero > 1;
+
+                ;WITH PrimeraFoto AS
+                (
+                    SELECT
+                        fotoTerrenoId,
+                        terrenoId,
+                        ROW_NUMBER() OVER
+                        (
+                            PARTITION BY terrenoId
+                            ORDER BY fotoTerrenoId
+                        ) AS numero
+                    FROM [dbo].[FotoTerreno]
+                    WHERE activo = 1
+                )
+                UPDATE foto
+                SET esPortada = 1
+                FROM [dbo].[FotoTerreno] foto
+                INNER JOIN PrimeraFoto primera
+                    ON primera.fotoTerrenoId = foto.fotoTerrenoId
+                WHERE primera.numero = 1
+                  AND NOT EXISTS
+                  (
+                      SELECT 1
+                      FROM [dbo].[FotoTerreno] portada
+                      WHERE portada.terrenoId = foto.terrenoId
+                        AND portada.activo = 1
+                        AND portada.esPortada = 1
+                  );
+
+                IF NOT EXISTS
+                (
+                    SELECT 1
+                    FROM sys.indexes
+                    WHERE name = 'IX_FotoTerreno_TerrenoActivoFecha'
+                      AND object_id = OBJECT_ID(N'[dbo].[FotoTerreno]')
+                )
+                BEGIN
+                    CREATE INDEX [IX_FotoTerreno_TerrenoActivoFecha]
+                    ON [dbo].[FotoTerreno]
+                    (
+                        [terrenoId],
+                        [activo],
+                        [fechaRegistroUtc] DESC
+                    )
+                    INCLUDE ([esPortada]);
+                END;
+            END;
+            """;
+
+        await db.Database.ExecuteSqlRawAsync(
+            sqlNormalizarDatosEIndices,
+            cancellationToken);
     }
 
     private static string AjustarDescripcion(
