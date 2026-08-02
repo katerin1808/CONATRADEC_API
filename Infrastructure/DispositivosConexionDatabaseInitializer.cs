@@ -5,7 +5,8 @@ namespace CONATRADEC_API.Infrastructure
 {
     /// <summary>
     /// Crea o actualiza de forma idempotente la tabla, sus índices y la
-    /// interfaz de permisos. No requiere migración ni script SQL manual.
+    /// interfaz de permisos. También consolida registros históricos repetidos
+    /// que representan el mismo equipo.
     /// </summary>
     public sealed class DispositivosConexionDatabaseInitializer
     {
@@ -15,14 +16,14 @@ namespace CONATRADEC_API.Infrastructure
         private const string NombreAmigable =
             "Dispositivos conectados";
 
-        // La columna descripcionInterfaz admite 80 caracteres.
         private const string Descripcion =
-            "Consulta dispositivos Android y Windows conectados a la API.";
+            "Consulta dispositivos Android, Windows y Web conectados.";
 
         private readonly DispositivosConexionDbContext dispositivosDb;
         private readonly DBContext db;
-        private readonly ILogger<DispositivosConexionDatabaseInitializer>
-            logger;
+
+        private readonly ILogger<
+            DispositivosConexionDatabaseInitializer> logger;
 
         public DispositivosConexionDatabaseInitializer(
             DispositivosConexionDbContext dispositivosDb,
@@ -38,10 +39,8 @@ namespace CONATRADEC_API.Infrastructure
             CancellationToken cancellationToken = default)
         {
             /*
-             * SQL Server compila cada lote antes de ejecutarlo. Por eso,
-             * cuando una instalación existente todavía no tiene las
-             * columnas de ubicación, los índices deben crearse en una
-             * segunda ejecución posterior a los ALTER TABLE.
+             * SQL Server compila cada lote antes de ejecutarlo. Las columnas,
+             * la consolidación y los índices se ejecutan en lotes separados.
              */
             const string sqlEstructura = """
                 IF OBJECT_ID(N'[dbo].[dispositivoConexion]', N'U') IS NULL
@@ -124,44 +123,188 @@ namespace CONATRADEC_API.Infrastructure
                             CONSTRAINT [DF_dispositivoConexion_activo]
                             DEFAULT(1),
                         CONSTRAINT [PK_dispositivoConexion]
-                            PRIMARY KEY CLUSTERED ([DispositivoConexionId]),
+                            PRIMARY KEY CLUSTERED
+                            ([DispositivoConexionId]),
                         CONSTRAINT [FK_dispositivoConexion_usuario]
                             FOREIGN KEY ([UsuarioId])
                             REFERENCES [dbo].[usuario]([UsuarioId])
                     );
                 END;
 
-                IF COL_LENGTH(N'dbo.dispositivoConexion', N'Latitud') IS NULL
+                IF COL_LENGTH(
+                    N'dbo.dispositivoConexion',
+                    N'Latitud') IS NULL
+                BEGIN
                     ALTER TABLE [dbo].[dispositivoConexion]
                     ADD [Latitud] DECIMAL(9,6) NULL;
+                END;
 
-                IF COL_LENGTH(N'dbo.dispositivoConexion', N'Longitud') IS NULL
+                IF COL_LENGTH(
+                    N'dbo.dispositivoConexion',
+                    N'Longitud') IS NULL
+                BEGIN
                     ALTER TABLE [dbo].[dispositivoConexion]
                     ADD [Longitud] DECIMAL(9,6) NULL;
+                END;
 
-                IF COL_LENGTH(N'dbo.dispositivoConexion', N'PrecisionMetros') IS NULL
+                IF COL_LENGTH(
+                    N'dbo.dispositivoConexion',
+                    N'PrecisionMetros') IS NULL
+                BEGIN
                     ALTER TABLE [dbo].[dispositivoConexion]
                     ADD [PrecisionMetros] DECIMAL(10,2) NULL;
+                END;
 
-                IF COL_LENGTH(N'dbo.dispositivoConexion', N'FechaUbicacionUtc') IS NULL
+                IF COL_LENGTH(
+                    N'dbo.dispositivoConexion',
+                    N'FechaUbicacionUtc') IS NULL
+                BEGIN
                     ALTER TABLE [dbo].[dispositivoConexion]
                     ADD [FechaUbicacionUtc] DATETIME2(0) NULL;
+                END;
 
-                IF COL_LENGTH(N'dbo.dispositivoConexion', N'OrigenUbicacion') IS NULL
+                IF COL_LENGTH(
+                    N'dbo.dispositivoConexion',
+                    N'OrigenUbicacion') IS NULL
+                BEGIN
                     ALTER TABLE [dbo].[dispositivoConexion]
                     ADD [OrigenUbicacion] NVARCHAR(30) NOT NULL
-                        CONSTRAINT [DF_dispositivoConexion_origenUbicacion]
+                        CONSTRAINT
+                            [DF_dispositivoConexion_origenUbicacion]
                         DEFAULT(N'');
+                END;
 
-                IF COL_LENGTH(N'dbo.dispositivoConexion', N'EstadoPermisoUbicacion') IS NULL
+                IF COL_LENGTH(
+                    N'dbo.dispositivoConexion',
+                    N'EstadoPermisoUbicacion') IS NULL
+                BEGIN
                     ALTER TABLE [dbo].[dispositivoConexion]
                     ADD [EstadoPermisoUbicacion] NVARCHAR(30) NOT NULL
-                        CONSTRAINT [DF_dispositivoConexion_permisoUbicacion]
+                        CONSTRAINT
+                            [DF_dispositivoConexion_permisoUbicacion]
                         DEFAULT(N'NO_REPORTADO');
+                END;
 
-                IF COL_LENGTH(N'dbo.dispositivoConexion', N'UbicacionSimulada') IS NULL
+                IF COL_LENGTH(
+                    N'dbo.dispositivoConexion',
+                    N'UbicacionSimulada') IS NULL
+                BEGIN
                     ALTER TABLE [dbo].[dispositivoConexion]
                     ADD [UbicacionSimulada] BIT NULL;
+                END;
+                """;
+
+            /*
+             * Conserva el registro con el último latido de cada combinación
+             * lógica de usuario y equipo. El contador utiliza MAX y no SUM
+             * para no perpetuar contadores inflados por pestañas antiguas.
+             */
+            const string sqlConsolidacion = """
+                IF OBJECT_ID(
+                    N'[dbo].[dispositivoConexion]',
+                    N'U') IS NOT NULL
+                BEGIN
+                    IF OBJECT_ID(
+                        N'tempdb..#MapaDispositivos') IS NOT NULL
+                    BEGIN
+                        DROP TABLE #MapaDispositivos;
+                    END;
+
+                    ;WITH Equipos AS
+                    (
+                        SELECT
+                            [DispositivoConexionId],
+                            [CantidadSesiones],
+                            [FechaRegistroUtc],
+
+                            FIRST_VALUE(
+                                [DispositivoConexionId])
+                            OVER
+                            (
+                                PARTITION BY
+                                    [UsuarioId],
+                                    LTRIM(RTRIM([Plataforma])),
+                                    LTRIM(RTRIM([TipoDispositivo])),
+                                    LTRIM(RTRIM([NombreDispositivo])),
+                                    LTRIM(RTRIM([SistemaOperativo]))
+                                ORDER BY
+                                    [UltimoLatidoUtc] DESC,
+                                    [DispositivoConexionId] DESC
+                            ) AS [PrincipalId],
+
+                            COUNT(1)
+                            OVER
+                            (
+                                PARTITION BY
+                                    [UsuarioId],
+                                    LTRIM(RTRIM([Plataforma])),
+                                    LTRIM(RTRIM([TipoDispositivo])),
+                                    LTRIM(RTRIM([NombreDispositivo])),
+                                    LTRIM(RTRIM([SistemaOperativo]))
+                            ) AS [CantidadCoincidencias]
+                        FROM [dbo].[dispositivoConexion]
+                        WHERE
+                            [Activo] = 1
+                            AND NULLIF(
+                                LTRIM(RTRIM([NombreDispositivo])),
+                                N'') IS NOT NULL
+                    )
+                    SELECT
+                        [DispositivoConexionId],
+                        [PrincipalId],
+                        [CantidadSesiones],
+                        [FechaRegistroUtc]
+                    INTO #MapaDispositivos
+                    FROM Equipos
+                    WHERE [CantidadCoincidencias] > 1;
+
+                    IF EXISTS
+                    (
+                        SELECT 1
+                        FROM #MapaDispositivos
+                    )
+                    BEGIN
+                        UPDATE Principal
+                        SET
+                            [CantidadSesiones] =
+                                CASE
+                                    WHEN Resumen.[SesionesMaximas] < 1
+                                        THEN 1
+                                    ELSE Resumen.[SesionesMaximas]
+                                END,
+
+                            [FechaRegistroUtc] =
+                                Resumen.[PrimeraFecha]
+                        FROM [dbo].[dispositivoConexion] AS Principal
+                        INNER JOIN
+                        (
+                            SELECT
+                                [PrincipalId],
+                                MAX(
+                                    CASE
+                                        WHEN [CantidadSesiones] < 1
+                                            THEN 1
+                                        ELSE [CantidadSesiones]
+                                    END) AS [SesionesMaximas],
+                                MIN([FechaRegistroUtc]) AS [PrimeraFecha]
+                            FROM #MapaDispositivos
+                            GROUP BY [PrincipalId]
+                        ) AS Resumen
+                            ON Resumen.[PrincipalId] =
+                               Principal.[DispositivoConexionId];
+
+                        DELETE Duplicado
+                        FROM [dbo].[dispositivoConexion] AS Duplicado
+                        INNER JOIN #MapaDispositivos AS Mapa
+                            ON Mapa.[DispositivoConexionId] =
+                               Duplicado.[DispositivoConexionId]
+                        WHERE
+                            Mapa.[DispositivoConexionId] <>
+                            Mapa.[PrincipalId];
+                    END;
+
+                    DROP TABLE #MapaDispositivos;
+                END;
                 """;
 
             const string sqlIndices = """
@@ -169,28 +312,34 @@ namespace CONATRADEC_API.Infrastructure
                 (
                     SELECT 1
                     FROM sys.indexes
-                    WHERE [name] = N'UX_dispositivoConexion_instalacionId'
+                    WHERE [name] =
+                        N'UX_dispositivoConexion_instalacionId'
                       AND [object_id] =
-                          OBJECT_ID(N'[dbo].[dispositivoConexion]')
+                          OBJECT_ID(
+                            N'[dbo].[dispositivoConexion]')
                 )
                 BEGIN
                     CREATE UNIQUE INDEX
                         [UX_dispositivoConexion_instalacionId]
-                    ON [dbo].[dispositivoConexion]([InstalacionId]);
+                    ON [dbo].[dispositivoConexion]
+                       ([InstalacionId]);
                 END;
 
                 IF NOT EXISTS
                 (
                     SELECT 1
                     FROM sys.indexes
-                    WHERE [name] = N'IX_dispositivoConexion_ultimoLatidoUtc'
+                    WHERE [name] =
+                        N'IX_dispositivoConexion_ultimoLatidoUtc'
                       AND [object_id] =
-                          OBJECT_ID(N'[dbo].[dispositivoConexion]')
+                          OBJECT_ID(
+                            N'[dbo].[dispositivoConexion]')
                 )
                 BEGIN
                     CREATE INDEX
                         [IX_dispositivoConexion_ultimoLatidoUtc]
-                    ON [dbo].[dispositivoConexion]([UltimoLatidoUtc]);
+                    ON [dbo].[dispositivoConexion]
+                       ([UltimoLatidoUtc]);
                 END;
 
                 IF NOT EXISTS
@@ -200,7 +349,8 @@ namespace CONATRADEC_API.Infrastructure
                     WHERE [name] =
                         N'IX_dispositivoConexion_usuario_ultimoLatido'
                       AND [object_id] =
-                          OBJECT_ID(N'[dbo].[dispositivoConexion]')
+                          OBJECT_ID(
+                            N'[dbo].[dispositivoConexion]')
                 )
                 BEGIN
                     CREATE INDEX
@@ -216,12 +366,14 @@ namespace CONATRADEC_API.Infrastructure
                     WHERE [name] =
                         N'IX_dispositivoConexion_fechaUbicacionUtc'
                       AND [object_id] =
-                          OBJECT_ID(N'[dbo].[dispositivoConexion]')
+                          OBJECT_ID(
+                            N'[dbo].[dispositivoConexion]')
                 )
                 BEGIN
                     CREATE INDEX
                         [IX_dispositivoConexion_fechaUbicacionUtc]
-                    ON [dbo].[dispositivoConexion]([FechaUbicacionUtc])
+                    ON [dbo].[dispositivoConexion]
+                       ([FechaUbicacionUtc])
                     WHERE [FechaUbicacionUtc] IS NOT NULL;
                 END;
                 """;
@@ -231,22 +383,31 @@ namespace CONATRADEC_API.Infrastructure
                 cancellationToken);
 
             await dispositivosDb.Database.ExecuteSqlRawAsync(
+                sqlConsolidacion,
+                cancellationToken);
+
+            await dispositivosDb.Database.ExecuteSqlRawAsync(
                 sqlIndices,
                 cancellationToken);
 
-            await CrearPermisoAdministrativoAsync(cancellationToken);
+            await CrearPermisoAdministrativoAsync(
+                cancellationToken);
 
             logger.LogInformation(
-                "Módulo de dispositivos y ubicación inicializado correctamente.");
+                "Módulo de dispositivos, sesiones y ubicación " +
+                "inicializado correctamente.");
         }
 
         private async Task CrearPermisoAdministrativoAsync(
             CancellationToken cancellationToken)
         {
-            Interfaz? interfaz = await db.Interfaz
-                .FirstOrDefaultAsync(
-                    x => x.nombreInterfaz == CodigoInterfaz,
-                    cancellationToken);
+            Interfaz? interfaz =
+                await db.Interfaz
+                    .FirstOrDefaultAsync(
+                        x =>
+                            x.nombreInterfaz ==
+                            CodigoInterfaz,
+                        cancellationToken);
 
             bool guardar = false;
 
@@ -254,13 +415,22 @@ namespace CONATRADEC_API.Infrastructure
             {
                 interfaz = new Interfaz
                 {
-                    nombreInterfaz = CodigoInterfaz,
-                    nombreAmigableInterfaz = NombreAmigable,
-                    descripcionInterfaz = Descripcion,
-                    activo = true
+                    nombreInterfaz =
+                        CodigoInterfaz,
+
+                    nombreAmigableInterfaz =
+                        NombreAmigable,
+
+                    descripcionInterfaz =
+                        Descripcion,
+
+                    activo =
+                        true
                 };
 
-                db.Interfaz.Add(interfaz);
+                db.Interfaz.Add(
+                    interfaz);
+
                 guardar = true;
             }
             else
@@ -270,7 +440,9 @@ namespace CONATRADEC_API.Infrastructure
                         NombreAmigable,
                         StringComparison.Ordinal))
                 {
-                    interfaz.nombreAmigableInterfaz = NombreAmigable;
+                    interfaz.nombreAmigableInterfaz =
+                        NombreAmigable;
+
                     guardar = true;
                 }
 
@@ -279,7 +451,9 @@ namespace CONATRADEC_API.Infrastructure
                         Descripcion,
                         StringComparison.Ordinal))
                 {
-                    interfaz.descripcionInterfaz = Descripcion;
+                    interfaz.descripcionInterfaz =
+                        Descripcion;
+
                     guardar = true;
                 }
 
@@ -291,39 +465,65 @@ namespace CONATRADEC_API.Infrastructure
             }
 
             if (guardar)
-                await db.SaveChangesAsync(cancellationToken);
-
-            List<int> rolesAdministradores = await db.Roles
-                .AsNoTracking()
-                .Where(x =>
-                    x.activo &&
-                    EF.Functions.Like(x.nombreRol, "%ADMIN%"))
-                .Select(x => x.rolId)
-                .ToListAsync(cancellationToken);
-
-            foreach (int rolId in rolesAdministradores)
             {
-                bool existe = await db.RolInterfaz.AnyAsync(
-                    x =>
-                        x.rolId == rolId &&
-                        x.interfazId == interfaz.interfazId,
+                await db.SaveChangesAsync(
                     cancellationToken);
+            }
+
+            List<int> rolesAdministradores =
+                await db.Roles
+                    .AsNoTracking()
+                    .Where(x =>
+                        x.activo &&
+                        EF.Functions.Like(
+                            x.nombreRol,
+                            "%ADMIN%"))
+                    .Select(
+                        x => x.rolId)
+                    .ToListAsync(
+                        cancellationToken);
+
+            foreach (
+                int rolId
+                in rolesAdministradores)
+            {
+                bool existe =
+                    await db.RolInterfaz
+                        .AnyAsync(
+                            x =>
+                                x.rolId == rolId &&
+                                x.interfazId ==
+                                    interfaz.interfazId,
+                            cancellationToken);
 
                 if (existe)
                     continue;
 
-                db.RolInterfaz.Add(new RolInterfaz
-                {
-                    rolId = rolId,
-                    interfazId = interfaz.interfazId,
-                    leer = true,
-                    agregar = true,
-                    actualizar = true,
-                    eliminar = true
-                });
+                db.RolInterfaz.Add(
+                    new RolInterfaz
+                    {
+                        rolId =
+                            rolId,
+
+                        interfazId =
+                            interfaz.interfazId,
+
+                        leer =
+                            true,
+
+                        agregar =
+                            true,
+
+                        actualizar =
+                            true,
+
+                        eliminar =
+                            true
+                    });
             }
 
-            await db.SaveChangesAsync(cancellationToken);
+            await db.SaveChangesAsync(
+                cancellationToken);
         }
     }
 }

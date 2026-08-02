@@ -5,10 +5,8 @@ using Microsoft.EntityFrameworkCore;
 namespace CONATRADEC_API.Services
 {
     /// <summary>
-    /// Registra y actualiza el estado reportado por la app MAUI.
-    /// El reloj del servidor determina el último latido. La fecha de ubicación
-    /// procede del dispositivo y únicamente se acepta si no reemplaza un dato
-    /// más reciente guardado previamente.
+    /// Registra y actualiza el último estado conocido de cada dispositivo.
+    /// Un mismo equipo conserva un registro y acumula sesiones reales.
     /// </summary>
     public sealed class DispositivoConexionService
     {
@@ -71,18 +69,40 @@ namespace CONATRADEC_API.Services
 
             DateTime ahoraUtc = DateTime.UtcNow;
 
-            DispositivoConexion? dispositivo =
-                await dispositivosDb.DispositivosConexion
-                    .FirstOrDefaultAsync(
-                        x => x.InstalacionId == instalacionId,
-                        cancellationToken);
+            string plataforma =
+                Limitar(request.Plataforma, 30);
 
-            bool esNuevo = dispositivo == null;
-            bool nuevaSesion = esNuevo ||
-                !string.Equals(
-                    dispositivo!.SesionId,
-                    sesionId,
-                    StringComparison.Ordinal);
+            string tipoDispositivo =
+                Limitar(request.TipoDispositivo, 30);
+
+            string fabricante =
+                Limitar(request.Fabricante, 100);
+
+            string modelo =
+                Limitar(request.Modelo, 150);
+
+            string nombreDispositivo =
+                Limitar(
+                    request.NombreDispositivo,
+                    150);
+
+            string sistemaOperativo =
+                Limitar(
+                    request.SistemaOperativo,
+                    100);
+
+            DispositivoConexion? dispositivo =
+                await BuscarYConsolidarDispositivoAsync(
+                    usuario.UsuarioId,
+                    instalacionId,
+                    plataforma,
+                    tipoDispositivo,
+                    nombreDispositivo,
+                    sistemaOperativo,
+                    cancellationToken);
+
+            bool esNuevo =
+                dispositivo == null;
 
             if (dispositivo == null)
             {
@@ -95,71 +115,174 @@ namespace CONATRADEC_API.Services
                     Activo = true
                 };
 
-                dispositivosDb.DispositivosConexion.Add(dispositivo);
+                dispositivosDb.DispositivosConexion.Add(
+                    dispositivo);
             }
-            else if (nuevaSesion)
+
+            bool mismaSesion =
+                string.Equals(
+                    dispositivo.SesionId,
+                    sesionId,
+                    StringComparison.Ordinal);
+
+            bool sesionAnteriorAunActiva =
+                !esNuevo &&
+                dispositivo.ConectadoReportado &&
+                dispositivo.UltimoLatidoUtc >=
+                    ahoraUtc.AddMinutes(
+                        -MinutosToleranciaPredeterminados);
+
+            /*
+             * Antes, dos pestañas con identificadores distintos podían
+             * alternarse cada 45 segundos e incrementar el contador. Ahora
+             * una sesión nueva se contabiliza únicamente si la conexión
+             * anterior ya no estaba activa.
+             */
+            bool nuevaSesion =
+                esNuevo ||
+                (!mismaSesion &&
+                 !sesionAnteriorAunActiva);
+
+            if (!esNuevo &&
+                nuevaSesion)
             {
-                dispositivo.FechaInicioSesionUtc = ahoraUtc;
+                dispositivo.FechaInicioSesionUtc =
+                    ahoraUtc;
+
                 dispositivo.CantidadSesiones =
-                    Math.Max(0, dispositivo.CantidadSesiones) + 1;
+                    Math.Max(
+                        1,
+                        dispositivo.CantidadSesiones) + 1;
             }
 
-            dispositivo.SesionId = sesionId;
-            dispositivo.UsuarioId = usuario.UsuarioId;
-            dispositivo.UsuarioNombre = PreferirTexto(
-                usuario.nombreCompletoUsuario,
-                usuario.nombreUsuario,
-                150);
-            dispositivo.CorreoUsuario = Limitar(usuario.correoUsuario, 150);
-            dispositivo.RolNombre = Limitar(usuario.RolNombre, 100);
-            dispositivo.Plataforma = Limitar(request.Plataforma, 30);
-            dispositivo.TipoDispositivo = Limitar(request.TipoDispositivo, 30);
-            dispositivo.Fabricante = Limitar(request.Fabricante, 100);
-            dispositivo.Modelo = Limitar(request.Modelo, 150);
-            dispositivo.NombreDispositivo = Limitar(
-                request.NombreDispositivo,
-                150);
-            dispositivo.SistemaOperativo = Limitar(
-                request.SistemaOperativo,
-                100);
-            dispositivo.VersionSistema = Limitar(
-                request.VersionSistema,
-                50);
-            dispositivo.VersionApp = Limitar(request.VersionApp, 50);
-            dispositivo.BuildApp = Limitar(request.BuildApp, 50);
-            dispositivo.Idioma = Limitar(request.Idioma, 20);
-            dispositivo.TipoConexion = Limitar(request.TipoConexion, 100);
-            dispositivo.PaginaActual = Limitar(request.PaginaActual, 500);
-            dispositivo.DireccionIp = Limitar(
-                ObtenerDireccionIp(httpContext),
-                100);
-            dispositivo.UserAgent = Limitar(
-                httpContext.Request.Headers["User-Agent"].ToString(),
-                500);
+            dispositivo.InstalacionId =
+                instalacionId;
 
-            bool ubicacionActualizada = ActualizarUbicacion(
-                dispositivo,
-                request,
-                ahoraUtc);
+            dispositivo.SesionId =
+                sesionId;
 
-            dispositivo.UltimoLatidoUtc = ahoraUtc;
-            dispositivo.FechaDesconexionUtc = null;
-            dispositivo.ConectadoReportado = true;
-            dispositivo.Activo = true;
+            dispositivo.UsuarioId =
+                usuario.UsuarioId;
 
-            await dispositivosDb.SaveChangesAsync(cancellationToken);
+            dispositivo.UsuarioNombre =
+                PreferirTexto(
+                    usuario.nombreCompletoUsuario,
+                    usuario.nombreUsuario,
+                    150);
+
+            dispositivo.CorreoUsuario =
+                Limitar(
+                    usuario.correoUsuario,
+                    150);
+
+            dispositivo.RolNombre =
+                Limitar(
+                    usuario.RolNombre,
+                    100);
+
+            dispositivo.Plataforma =
+                plataforma;
+
+            dispositivo.TipoDispositivo =
+                tipoDispositivo;
+
+            dispositivo.Fabricante =
+                fabricante;
+
+            dispositivo.Modelo =
+                modelo;
+
+            dispositivo.NombreDispositivo =
+                nombreDispositivo;
+
+            dispositivo.SistemaOperativo =
+                sistemaOperativo;
+
+            dispositivo.VersionSistema =
+                Limitar(
+                    request.VersionSistema,
+                    50);
+
+            dispositivo.VersionApp =
+                Limitar(
+                    request.VersionApp,
+                    50);
+
+            dispositivo.BuildApp =
+                Limitar(
+                    request.BuildApp,
+                    50);
+
+            dispositivo.Idioma =
+                Limitar(
+                    request.Idioma,
+                    20);
+
+            dispositivo.TipoConexion =
+                Limitar(
+                    request.TipoConexion,
+                    100);
+
+            dispositivo.PaginaActual =
+                Limitar(
+                    request.PaginaActual,
+                    500);
+
+            dispositivo.DireccionIp =
+                Limitar(
+                    ObtenerDireccionIp(
+                        httpContext),
+                    100);
+
+            dispositivo.UserAgent =
+                Limitar(
+                    httpContext
+                        .Request
+                        .Headers["User-Agent"]
+                        .ToString(),
+                    500);
+
+            bool ubicacionActualizada =
+                ActualizarUbicacion(
+                    dispositivo,
+                    request,
+                    ahoraUtc);
+
+            dispositivo.UltimoLatidoUtc =
+                ahoraUtc;
+
+            dispositivo.FechaDesconexionUtc =
+                null;
+
+            dispositivo.ConectadoReportado =
+                true;
+
+            dispositivo.Activo =
+                true;
+
+            await dispositivosDb.SaveChangesAsync(
+                cancellationToken);
 
             return new ReportarDispositivoConexionResponse
             {
                 Success = true,
+
                 Message = esNuevo
                     ? "El dispositivo fue registrado correctamente."
                     : "La conexión del dispositivo fue actualizada.",
-                DispositivoConexionId = dispositivo.DispositivoConexionId,
-                UltimoLatidoUtc = ahoraUtc,
-                ConsideradoConectadoHastaUtc = ahoraUtc.AddMinutes(
-                    MinutosToleranciaPredeterminados),
-                UbicacionActualizada = ubicacionActualizada
+
+                DispositivoConexionId =
+                    dispositivo.DispositivoConexionId,
+
+                UltimoLatidoUtc =
+                    ahoraUtc,
+
+                ConsideradoConectadoHastaUtc =
+                    ahoraUtc.AddMinutes(
+                        MinutosToleranciaPredeterminados),
+
+                UbicacionActualizada =
+                    ubicacionActualizada
             };
         }
 
@@ -193,8 +316,10 @@ namespace CONATRADEC_API.Services
             if (dispositivo == null)
                 return false;
 
-            // Una sesión anterior no debe desconectar una sesión nueva que ya
-            // haya iniciado en la misma instalación.
+            /*
+             * Una sesión anterior no debe desconectar una sesión nueva que ya
+             * haya iniciado en la misma instalación.
+             */
             if (!string.Equals(
                     dispositivo.SesionId,
                     sesionId,
@@ -204,12 +329,151 @@ namespace CONATRADEC_API.Services
             }
 
             DateTime ahoraUtc = DateTime.UtcNow;
-            dispositivo.ConectadoReportado = false;
-            dispositivo.FechaDesconexionUtc = ahoraUtc;
-            dispositivo.UltimoLatidoUtc = ahoraUtc;
 
-            await dispositivosDb.SaveChangesAsync(cancellationToken);
+            dispositivo.ConectadoReportado =
+                false;
+
+            dispositivo.FechaDesconexionUtc =
+                ahoraUtc;
+
+            dispositivo.UltimoLatidoUtc =
+                ahoraUtc;
+
+            await dispositivosDb.SaveChangesAsync(
+                cancellationToken);
+
             return true;
+        }
+
+        private async Task<DispositivoConexion?>
+            BuscarYConsolidarDispositivoAsync(
+                int usuarioId,
+                string instalacionId,
+                string plataforma,
+                string tipoDispositivo,
+                string nombreDispositivo,
+                string sistemaOperativo,
+                CancellationToken cancellationToken)
+        {
+            bool puedeCompararEquipo =
+                !string.IsNullOrWhiteSpace(
+                    nombreDispositivo);
+
+            List<DispositivoConexion> candidatos =
+                await dispositivosDb.DispositivosConexion
+                    .Where(x =>
+                        x.InstalacionId == instalacionId ||
+                        (
+                            puedeCompararEquipo &&
+                            x.UsuarioId == usuarioId &&
+                            x.Plataforma == plataforma &&
+                            x.TipoDispositivo ==
+                                tipoDispositivo &&
+                            x.NombreDispositivo ==
+                                nombreDispositivo &&
+                            x.SistemaOperativo ==
+                                sistemaOperativo
+                        ))
+                    .OrderByDescending(
+                        x => x.UltimoLatidoUtc)
+                    .ThenByDescending(
+                        x => x.DispositivoConexionId)
+                    .ToListAsync(
+                        cancellationToken);
+
+            if (candidatos.Count == 0)
+                return null;
+
+            DispositivoConexion principal =
+                candidatos.FirstOrDefault(
+                    x => x.InstalacionId ==
+                         instalacionId) ??
+                candidatos[0];
+
+            if (candidatos.Count == 1)
+            {
+                principal.InstalacionId =
+                    instalacionId;
+
+                return principal;
+            }
+
+            int sesionesConsolidadas =
+                candidatos.Sum(
+                    x => Math.Max(
+                        1,
+                        x.CantidadSesiones));
+
+            DateTime primeraFecha =
+                candidatos.Min(
+                    x => x.FechaRegistroUtc);
+
+            DispositivoConexion? ubicacionMasReciente =
+                candidatos
+                    .Where(
+                        x => x.FechaUbicacionUtc.HasValue)
+                    .OrderByDescending(
+                        x => x.FechaUbicacionUtc)
+                    .FirstOrDefault();
+
+            principal.CantidadSesiones =
+                Math.Max(
+                    1,
+                    sesionesConsolidadas);
+
+            principal.FechaRegistroUtc =
+                primeraFecha;
+
+            if (ubicacionMasReciente != null &&
+                ubicacionMasReciente != principal)
+            {
+                CopiarUbicacion(
+                    ubicacionMasReciente,
+                    principal);
+            }
+
+            foreach (
+                DispositivoConexion duplicado
+                in candidatos)
+            {
+                if (duplicado == principal)
+                    continue;
+
+                dispositivosDb
+                    .DispositivosConexion
+                    .Remove(duplicado);
+            }
+
+            principal.InstalacionId =
+                instalacionId;
+
+            return principal;
+        }
+
+        private static void CopiarUbicacion(
+            DispositivoConexion origen,
+            DispositivoConexion destino)
+        {
+            destino.Latitud =
+                origen.Latitud;
+
+            destino.Longitud =
+                origen.Longitud;
+
+            destino.PrecisionMetros =
+                origen.PrecisionMetros;
+
+            destino.FechaUbicacionUtc =
+                origen.FechaUbicacionUtc;
+
+            destino.OrigenUbicacion =
+                origen.OrigenUbicacion;
+
+            destino.EstadoPermisoUbicacion =
+                origen.EstadoPermisoUbicacion;
+
+            destino.UbicacionSimulada =
+                origen.UbicacionSimulada;
         }
 
         private static bool ActualizarUbicacion(
@@ -217,18 +481,28 @@ namespace CONATRADEC_API.Services
             ReportarDispositivoConexionRequest request,
             DateTime ahoraUtc)
         {
-            string estadoPermiso = Limitar(
-                request.EstadoPermisoUbicacion,
-                30);
+            string estadoPermiso =
+                Limitar(
+                    request.EstadoPermisoUbicacion,
+                    30);
 
-            if (!string.IsNullOrWhiteSpace(estadoPermiso))
+            if (!string.IsNullOrWhiteSpace(
+                    estadoPermiso))
             {
-                dispositivo.EstadoPermisoUbicacion = estadoPermiso;
+                dispositivo.EstadoPermisoUbicacion =
+                    estadoPermiso;
             }
 
-            string origen = Limitar(request.OrigenUbicacion, 30);
+            string origen =
+                Limitar(
+                    request.OrigenUbicacion,
+                    30);
+
             if (!string.IsNullOrWhiteSpace(origen))
-                dispositivo.OrigenUbicacion = origen;
+            {
+                dispositivo.OrigenUbicacion =
+                    origen;
+            }
 
             if (!request.Latitud.HasValue ||
                 !request.Longitud.HasValue)
@@ -236,33 +510,53 @@ namespace CONATRADEC_API.Services
                 return false;
             }
 
-            DateTime fechaUbicacionUtc = request.FechaUbicacionUtc.HasValue
-                ? NormalizarFechaUtc(request.FechaUbicacionUtc.Value)
-                : ahoraUtc;
+            DateTime fechaUbicacionUtc =
+                request.FechaUbicacionUtc.HasValue
+                    ? NormalizarFechaUtc(
+                        request.FechaUbicacionUtc.Value)
+                    : ahoraUtc;
 
-            // Evita aceptar fechas futuras causadas por un reloj incorrecto.
-            if (fechaUbicacionUtc > ahoraUtc.AddMinutes(5))
-                fechaUbicacionUtc = ahoraUtc;
+            /*
+             * Evita aceptar fechas futuras causadas por un reloj incorrecto.
+             */
+            if (fechaUbicacionUtc >
+                ahoraUtc.AddMinutes(5))
+            {
+                fechaUbicacionUtc =
+                    ahoraUtc;
+            }
 
             if (dispositivo.FechaUbicacionUtc.HasValue &&
-                fechaUbicacionUtc < dispositivo.FechaUbicacionUtc.Value)
+                fechaUbicacionUtc <
+                    dispositivo.FechaUbicacionUtc.Value)
             {
                 return false;
             }
 
-            dispositivo.Latitud = ConvertirCoordenada(
-                request.Latitud.Value,
-                6);
-            dispositivo.Longitud = ConvertirCoordenada(
-                request.Longitud.Value,
-                6);
-            dispositivo.PrecisionMetros = request.PrecisionMetros.HasValue
-                ? ConvertirCoordenada(
-                    Math.Max(0, request.PrecisionMetros.Value),
-                    2)
-                : null;
-            dispositivo.FechaUbicacionUtc = fechaUbicacionUtc;
-            dispositivo.UbicacionSimulada = request.UbicacionSimulada;
+            dispositivo.Latitud =
+                ConvertirCoordenada(
+                    request.Latitud.Value,
+                    6);
+
+            dispositivo.Longitud =
+                ConvertirCoordenada(
+                    request.Longitud.Value,
+                    6);
+
+            dispositivo.PrecisionMetros =
+                request.PrecisionMetros.HasValue
+                    ? ConvertirCoordenada(
+                        Math.Max(
+                            0,
+                            request.PrecisionMetros.Value),
+                        2)
+                    : null;
+
+            dispositivo.FechaUbicacionUtc =
+                fechaUbicacionUtc;
+
+            dispositivo.UbicacionSimulada =
+                request.UbicacionSimulada;
 
             return true;
         }
@@ -270,8 +564,11 @@ namespace CONATRADEC_API.Services
         private static void ValidarUbicacion(
             ReportarDispositivoConexionRequest request)
         {
-            bool tieneLatitud = request.Latitud.HasValue;
-            bool tieneLongitud = request.Longitud.HasValue;
+            bool tieneLatitud =
+                request.Latitud.HasValue;
+
+            bool tieneLongitud =
+                request.Longitud.HasValue;
 
             if (tieneLatitud != tieneLongitud)
             {
@@ -295,13 +592,21 @@ namespace CONATRADEC_API.Services
             }
         }
 
-        private static DateTime NormalizarFechaUtc(DateTime fecha)
+        private static DateTime NormalizarFechaUtc(
+            DateTime fecha)
         {
             return fecha.Kind switch
             {
-                DateTimeKind.Utc => fecha,
-                DateTimeKind.Local => fecha.ToUniversalTime(),
-                _ => DateTime.SpecifyKind(fecha, DateTimeKind.Utc)
+                DateTimeKind.Utc =>
+                    fecha,
+
+                DateTimeKind.Local =>
+                    fecha.ToUniversalTime(),
+
+                _ =>
+                    DateTime.SpecifyKind(
+                        fecha,
+                        DateTimeKind.Utc)
             };
         }
 
@@ -319,8 +624,13 @@ namespace CONATRADEC_API.Services
             string? valor,
             string mensajeError)
         {
-            if (!Guid.TryParse(valor, out Guid guid))
-                throw new ArgumentException(mensajeError);
+            if (!Guid.TryParse(
+                    valor,
+                    out Guid guid))
+            {
+                throw new ArgumentException(
+                    mensajeError);
+            }
 
             return guid.ToString("N");
         }
@@ -330,35 +640,57 @@ namespace CONATRADEC_API.Services
             string? alternativo,
             int maximo)
         {
-            string valor = !string.IsNullOrWhiteSpace(principal)
-                ? principal
-                : alternativo ?? string.Empty;
+            string valor =
+                !string.IsNullOrWhiteSpace(
+                    principal)
+                    ? principal
+                    : alternativo ??
+                      string.Empty;
 
-            return Limitar(valor, maximo);
+            return Limitar(
+                valor,
+                maximo);
         }
 
-        private static string Limitar(string? valor, int maximo)
+        private static string Limitar(
+            string? valor,
+            int maximo)
         {
-            string texto = valor?.Trim() ?? string.Empty;
+            string texto =
+                valor?.Trim() ??
+                string.Empty;
+
             return texto.Length <= maximo
                 ? texto
                 : texto[..maximo];
         }
 
-        private static string ObtenerDireccionIp(HttpContext context)
+        private static string ObtenerDireccionIp(
+            HttpContext context)
         {
-            string forwardedFor = context.Request.Headers[
-                "X-Forwarded-For"].FirstOrDefault() ?? string.Empty;
+            string forwardedFor =
+                context.Request.Headers[
+                    "X-Forwarded-For"]
+                    .FirstOrDefault() ??
+                string.Empty;
 
-            if (!string.IsNullOrWhiteSpace(forwardedFor))
+            if (!string.IsNullOrWhiteSpace(
+                    forwardedFor))
             {
                 return forwardedFor
-                    .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                    .Split(
+                        ',',
+                        StringSplitOptions
+                            .RemoveEmptyEntries)
                     .FirstOrDefault()?
-                    .Trim() ?? string.Empty;
+                    .Trim() ??
+                    string.Empty;
             }
 
-            return context.Connection.RemoteIpAddress?.ToString() ??
+            return context
+                    .Connection
+                    .RemoteIpAddress?
+                    .ToString() ??
                 string.Empty;
         }
     }

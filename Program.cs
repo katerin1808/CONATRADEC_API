@@ -31,11 +31,22 @@ builder.WebHost.ConfigureKestrel(options =>
     options.Limits.MaxRequestBodySize = tamanoMaximoActualizacion;
 });
 
+builder.Services.AddScoped<
+    AnalisisEdicionPropietarioActionFilter>();
+
 builder.Services.AddScoped<AnalisisHistorialActionFilter>();
 
 builder.Services.AddControllers(options =>
 {
     options.Filters.Add<ApiErrorResponseFilter>();
+
+    /*
+     * Primero se valida que la edición pertenezca al usuario propietario.
+     * Después se aplican concurrencia, versiones e historial.
+     */
+    options.Filters.AddService<
+        AnalisisEdicionPropietarioActionFilter>();
+
     options.Filters.AddService<AnalisisHistorialActionFilter>();
 });
 
