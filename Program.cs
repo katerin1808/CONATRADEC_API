@@ -10,7 +10,6 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Server.IIS;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.FileProviders;
 using QuestPDF.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -40,7 +39,6 @@ builder.Services.AddControllers(options =>
     options.Filters.AddService<AnalisisHistorialActionFilter>();
 });
 
-// JWT, expiración absoluta y control de inactividad de las sesiones.
 builder.Services.AddConatradecJwt(
     builder.Configuration);
 
@@ -69,6 +67,10 @@ builder.Services.AddScoped<AnalisisReporteHistoricoService>();
 builder.Services.AddSingleton<AnalisisEdicionLockService>();
 builder.Services.AddScoped<AnalisisEdicionDatabaseLockService>();
 builder.Services.AddHostedService<AnalisisHistorialBackfillHostedService>();
+
+builder.Services.AddConatradecImageStorage(
+    builder.Configuration);
+
 builder.Services.AddScoped<ImageService>();
 
 builder.Services.AddScoped<AnalisisSueloDatabaseInitializer>();
@@ -85,7 +87,6 @@ builder.Services.AddScoped<DispositivosConexionDatabaseInitializer>();
 builder.Services.AddScoped<UmbralesAlertasService>();
 builder.Services.AddScoped<CapasSueloMapaService>();
 
-// Centro Geoespacial: capas climáticas con caché y proveedor configurable.
 builder.Services.AddMemoryCache(options =>
 {
     options.SizeLimit = 256;
@@ -116,15 +117,12 @@ builder.Services.AddHttpClient<ClimaMapaService>(
     });
 
 builder.Services.AddScoped<AlertasAgricolasDatabaseInitializer>();
-
-// Módulo de publicación y descarga de versiones Android/Windows.
 builder.Services.AddScoped<ActualizacionesDatabaseInitializer>();
 
 builder.Services.AddScoped<AuditRequestContext>();
 builder.Services.AddScoped<AuditSaveChangesInterceptor>();
 builder.Services.AddScoped<AuditTransactionInterceptor>();
 
-// Seguridad de usuarios y control de vigencia de sesiones.
 builder.Services.AddScoped<SessionVersionSaveChangesInterceptor>();
 builder.Services.AddScoped<SessionSecurityDatabaseInitializer>();
 
@@ -206,76 +204,9 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-var rutaRecursos = Path.Combine(
-    Directory.GetCurrentDirectory(),
-    "resources",
-    "uploads",
-    "users",
-    "img");
-
-Directory.CreateDirectory(rutaRecursos);
-
-app.UseStaticFiles(new StaticFileOptions
-{
-    FileProvider = new PhysicalFileProvider(rutaRecursos),
-    RequestPath = "/resources/uploads/users/img"
-});
-
-var rutaTerrenos = Path.Combine(
-    Directory.GetCurrentDirectory(),
-    "resources",
-    "uploads",
-    "terrenos");
-
-Directory.CreateDirectory(rutaTerrenos);
-
-app.UseStaticFiles(new StaticFileOptions
-{
-    FileProvider = new PhysicalFileProvider(rutaTerrenos),
-    RequestPath = "/resources/uploads/terrenos"
-});
-
-var rutaAlbumBotanico = Path.Combine(
-    Directory.GetCurrentDirectory(),
-    "resources",
-    "uploads",
-    "album-botanico");
-
-Directory.CreateDirectory(rutaAlbumBotanico);
-
-app.UseStaticFiles(new StaticFileOptions
-{
-    FileProvider = new PhysicalFileProvider(rutaAlbumBotanico),
-    RequestPath = "/resources/uploads/album-botanico"
-});
-
-var rutaCategoriasAlbum = Path.Combine(
-    Directory.GetCurrentDirectory(),
-    "resources",
-    "uploads",
-    "categorias-album");
-
-Directory.CreateDirectory(rutaCategoriasAlbum);
-
-app.UseStaticFiles(new StaticFileOptions
-{
-    FileProvider = new PhysicalFileProvider(rutaCategoriasAlbum),
-    RequestPath = "/resources/uploads/categorias-album"
-});
-
-var rutaNoticias = Path.Combine(
-    Directory.GetCurrentDirectory(),
-    "resources",
-    "uploads",
-    "noticias");
-
-Directory.CreateDirectory(rutaNoticias);
-
-app.UseStaticFiles(new StaticFileOptions
-{
-    FileProvider = new PhysicalFileProvider(rutaNoticias),
-    RequestPath = "/resources/uploads/noticias"
-});
+// Sirve las mismas URLs públicas desde una carpeta física persistente
+// configurada fuera del directorio de publicación.
+app.UseConatradecImageStorage();
 
 app.UseRouting();
 

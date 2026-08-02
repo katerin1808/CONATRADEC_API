@@ -1,0 +1,65 @@
+using CONATRADEC_API.Services;
+using Microsoft.Extensions.FileProviders;
+
+namespace CONATRADEC_API.Infrastructure
+{
+    public static class ImageStorageApplicationExtensions
+    {
+        private static readonly (string Carpeta, string RequestPath)[]
+            PublicMappings =
+            [
+                ("users/img", "/resources/uploads/users/img"),
+                ("terrenos", "/resources/uploads/terrenos"),
+                ("album-botanico", "/resources/uploads/album-botanico"),
+                ("categorias-album", "/resources/uploads/categorias-album"),
+                ("noticias", "/resources/uploads/noticias")
+            ];
+
+        public static IServiceCollection AddConatradecImageStorage(
+            this IServiceCollection services,
+            IConfiguration configuration)
+        {
+            services.Configure<ImageStorageOptions>(
+                configuration.GetSection(
+                    ImageStorageOptions.Seccion));
+
+            services.AddSingleton<ImageStoragePathService>();
+
+            return services;
+        }
+
+        public static WebApplication UseConatradecImageStorage(
+            this WebApplication app)
+        {
+            ImageStoragePathService storage =
+                app.Services.GetRequiredService<
+                    ImageStoragePathService>();
+
+            storage.Inicializar();
+
+            foreach ((string carpeta, string requestPath)
+                     in PublicMappings)
+            {
+                app.UseStaticFiles(
+                    new StaticFileOptions
+                    {
+                        FileProvider = new PhysicalFileProvider(
+                            storage.ObtenerCarpeta(carpeta)),
+                        RequestPath = requestPath,
+                        OnPrepareResponse = context =>
+                        {
+                            context.Context.Response.Headers[
+                                "X-Content-Type-Options"] =
+                                "nosniff";
+
+                            context.Context.Response.Headers[
+                                "Cache-Control"] =
+                                "public,max-age=604800";
+                        }
+                    });
+            }
+
+            return app;
+        }
+    }
+}

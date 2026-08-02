@@ -16,7 +16,7 @@ namespace CONATRADEC_API.Services
 
     public class ImageService
     {
-        private readonly IWebHostEnvironment environment;
+        private readonly ImageStoragePathService storage;
 
         private static readonly ConcurrentDictionary<string, SemaphoreSlim>
             BloqueosPorMiniatura =
@@ -25,9 +25,9 @@ namespace CONATRADEC_API.Services
         private static readonly SemaphoreSlim ProcesamientoMiniaturas =
             new(initialCount: 2, maxCount: 2);
 
-        public ImageService(IWebHostEnvironment environment)
+        public ImageService(ImageStoragePathService storage)
         {
-            this.environment = environment;
+            this.storage = storage;
         }
 
         public async Task<string> GuardarImagenWebpAsync(
@@ -46,13 +46,8 @@ namespace CONATRADEC_API.Services
                 .Replace('\\', '/')
                 .Trim('/');
 
-            string rutaCarpeta = Path.Combine(
-                environment.ContentRootPath,
-                "resources",
-                "uploads",
-                carpetaNormalizada.Replace(
-                    '/',
-                    Path.DirectorySeparatorChar));
+            string rutaCarpeta =
+                storage.ObtenerCarpeta(carpetaNormalizada);
 
             Directory.CreateDirectory(rutaCarpeta);
 
@@ -94,8 +89,6 @@ namespace CONATRADEC_API.Services
                 $"/resources/uploads/{carpetaNormalizada}/" +
                 nombreArchivo;
 
-            // Precalienta las miniaturas más utilizadas. Un fallo aquí no
-            // invalida la imagen original, que ya quedó guardada.
             try
             {
                 if (carpetaNormalizada.StartsWith(
@@ -147,7 +140,7 @@ namespace CONATRADEC_API.Services
                 NormalizarRutaRelativa(rutaRelativa);
 
             string rutaOriginal =
-                ResolverRutaFisicaSegura(rutaNormalizada);
+                storage.ResolverRutaPublica(rutaNormalizada);
 
             if (!File.Exists(rutaOriginal))
                 return null;
@@ -155,12 +148,9 @@ namespace CONATRADEC_API.Services
             string hashRuta = CalcularHashRuta(
                 rutaNormalizada);
 
-            string carpetaMiniaturas = Path.Combine(
-                environment.ContentRootPath,
-                "resources",
-                "uploads",
-                ".miniaturas",
-                $"{ancho}x{alto}-q{calidad}");
+            string carpetaMiniaturas =
+                storage.ObtenerCarpeta(
+                    $".miniaturas/{ancho}x{alto}-q{calidad}");
 
             Directory.CreateDirectory(carpetaMiniaturas);
 
@@ -241,7 +231,7 @@ namespace CONATRADEC_API.Services
                     NormalizarRutaRelativa(rutaRelativa);
 
                 rutaFisica =
-                    ResolverRutaFisicaSegura(rutaNormalizada);
+                    storage.ResolverRutaPublica(rutaNormalizada);
             }
             catch
             {
@@ -254,6 +244,9 @@ namespace CONATRADEC_API.Services
             EliminarMiniaturasAsociadas(
                 rutaNormalizada);
         }
+
+        public bool ImagenExiste(string? rutaOUrl) =>
+            storage.ArchivoExiste(rutaOUrl);
 
         private async Task GenerarMiniaturaAsync(
             string rutaOriginal,
@@ -323,39 +316,6 @@ namespace CONATRADEC_API.Services
                     }
                 }
             }
-        }
-
-        private string ResolverRutaFisicaSegura(
-            string rutaNormalizada)
-        {
-            string raizPermitida = Path.GetFullPath(
-                Path.Combine(
-                    environment.ContentRootPath,
-                    "resources",
-                    "uploads"));
-
-            string rutaFisica = Path.GetFullPath(
-                Path.Combine(
-                    environment.ContentRootPath,
-                    rutaNormalizada.Replace(
-                        '/',
-                        Path.DirectorySeparatorChar)));
-
-            string prefijoPermitido =
-                raizPermitida.TrimEnd(
-                    Path.DirectorySeparatorChar,
-                    Path.AltDirectorySeparatorChar) +
-                Path.DirectorySeparatorChar;
-
-            if (!rutaFisica.StartsWith(
-                    prefijoPermitido,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                throw new ArgumentException(
-                    "La ruta de la imagen no es válida.");
-            }
-
-            return rutaFisica;
         }
 
         private static string NormalizarRutaRelativa(
@@ -465,11 +425,8 @@ namespace CONATRADEC_API.Services
         private void EliminarMiniaturasAsociadas(
             string rutaNormalizada)
         {
-            string raizMiniaturas = Path.Combine(
-                environment.ContentRootPath,
-                "resources",
-                "uploads",
-                ".miniaturas");
+            string raizMiniaturas =
+                storage.ObtenerCarpeta(".miniaturas");
 
             if (!Directory.Exists(raizMiniaturas))
                 return;

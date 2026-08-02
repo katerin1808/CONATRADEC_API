@@ -24,18 +24,18 @@ namespace CONATRADEC_API.Controllers
         private readonly DBContext db;
         private readonly ImageService imageService;
         private readonly PermisoApiService permisos;
-        private readonly IWebHostEnvironment environment;
+        private readonly ImageStoragePathService imageStorage;
 
         public AdministracionFotosTerrenoController(
             DBContext db,
             ImageService imageService,
             PermisoApiService permisos,
-            IWebHostEnvironment environment)
+            ImageStoragePathService imageStorage)
         {
             this.db = db;
             this.imageService = imageService;
             this.permisos = permisos;
-            this.environment = environment;
+            this.imageStorage = imageStorage;
         }
 
         [HttpGet]
@@ -732,32 +732,7 @@ namespace CONATRADEC_API.Controllers
                     out _);
             }
 
-            string ruta = rutaLocal.TrimStart('/');
-
-            string raiz = Path.GetFullPath(
-                Path.Combine(
-                    environment.ContentRootPath,
-                    "resources",
-                    "uploads",
-                    "terrenos"));
-
-            string rutaFisica = Path.GetFullPath(
-                Path.Combine(
-                    environment.ContentRootPath,
-                    ruta.Replace(
-                        '/',
-                        Path.DirectorySeparatorChar)));
-
-            string prefijoSeguro =
-                raiz.TrimEnd(
-                    Path.DirectorySeparatorChar,
-                    Path.AltDirectorySeparatorChar) +
-                Path.DirectorySeparatorChar;
-
-            return rutaFisica.StartsWith(
-                       prefijoSeguro,
-                       StringComparison.OrdinalIgnoreCase) &&
-                   System.IO.File.Exists(rutaFisica);
+            return imageStorage.ArchivoExiste(rutaLocal);
         }
 
         private string ConstruirUrlVisible(string? url)
