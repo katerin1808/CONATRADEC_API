@@ -1,4 +1,4 @@
-using CONATRADEC_API.DTOs;
+﻿using CONATRADEC_API.DTOs;
 using CONATRADEC_API.Infrastructure;
 using CONATRADEC_API.Models;
 using CONATRADEC_API.Services;
@@ -815,6 +815,21 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
+            bool tieneClasificacionesSinRevisar = diagnostico.Imagenes.Any(item =>
+                item.ResultadoIA != null &&
+                DiagnosticoIAFlujo.ClasificacionAlbum.EstaPendiente(
+                    item.ResultadoIA.EstadoClasificacionAlbum));
+
+            if (tieneClasificacionesSinRevisar)
+            {
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        "Antes de enviar el caso, clasifique cada fotografía con una ficha existente o registre una propuesta para el aprobador."
+                });
+            }
+
             analisis.EstadoRegistro =
                 DiagnosticoIAFlujo.EstadoAnalisisHumano.Enviado;
             analisis.FechaEnvioUtc = DateTime.UtcNow;
@@ -917,6 +932,25 @@ namespace CONATRADEC_API.Controllers
                 {
                     success = false,
                     message = "La decisión de aprobación no es válida."
+                });
+            }
+
+            bool esDecisionPositiva = decision is
+                DiagnosticoIAFlujo.DecisionAprobacion.AprobarSinCambios or
+                DiagnosticoIAFlujo.DecisionAprobacion.AprobarConCorreccion;
+
+            if (esDecisionPositiva && diagnostico.Imagenes.Any(item =>
+                    item.ResultadoIA != null &&
+                    (DiagnosticoIAFlujo.ClasificacionAlbum.EstaPendiente(
+                        item.ResultadoIA.EstadoClasificacionAlbum) ||
+                     DiagnosticoIAFlujo.ClasificacionAlbum.EstaPropuesta(
+                        item.ResultadoIA.EstadoClasificacionAlbum))))
+            {
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        "Para aprobar el caso debe resolver todas las clasificaciones pendientes. Puede seleccionar una ficha existente o autorizar la creación de la propuesta del analizador."
                 });
             }
 
@@ -1040,23 +1074,20 @@ namespace CONATRADEC_API.Controllers
         {
             int? usuarioId = ObtenerUsuarioId();
 
-            IActionResult? accesoAprobador = await ValidarPermisoAsync(
+            bool puedeAnalizar = await TienePermisoAsync(
+                usuarioId,
+                DiagnosticoIAFlujo.InterfazAnalizador,
+                TipoPermisoApi.Leer,
+                cancellationToken);
+
+            bool puedeAprobar = await TienePermisoAsync(
                 usuarioId,
                 DiagnosticoIAFlujo.InterfazAprobador,
                 TipoPermisoApi.Leer,
                 cancellationToken);
 
-            if (accesoAprobador != null)
-                return accesoAprobador;
-
-            IActionResult? accesoAlbum = await ValidarPermisoAsync(
-                usuarioId,
-                DiagnosticoIAFlujo.InterfazAlbum,
-                TipoPermisoApi.Leer,
-                cancellationToken);
-
-            if (accesoAlbum != null)
-                return accesoAlbum;
+            if (!puedeAnalizar && !puedeAprobar)
+                return Forbid();
 
             List<DiagnosticoIAAlbumCategoriaDto> categorias =
                 await diagnosticoDb.CategoriasAlbum
@@ -1071,9 +1102,16 @@ namespace CONATRADEC_API.Controllers
                     })
                     .ToListAsync(cancellationToken);
 
+            HashSet<int> categoriasActivas = categorias
+                .Select(item => item.CategoriaAlbumBotanicoId)
+                .ToHashSet();
+
             var registrosQuery = diagnosticoDb.RegistrosAlbum
                 .AsNoTracking()
-                .Where(item => item.Activo);
+                .Where(item =>
+                    item.Activo &&
+                    categoriasActivas.Contains(
+                        item.CategoriaAlbumBotanicoId));
 
             if (categoriaId is > 0)
             {

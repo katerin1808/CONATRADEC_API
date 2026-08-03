@@ -33,6 +33,15 @@ namespace CONATRADEC_API.Security
         /// reporte actividad real, la fecha se persiste como máximo una vez
         /// dentro de este intervalo por sesión.
         /// </summary>
-        public int ActivityUpdateSeconds { get; set; } = 20;
+        public int ActivityUpdateSeconds { get; set; } = 60;
+
+        /// <summary>
+        /// Tiempo máximo durante el cual una sesión validada puede reutilizarse
+        /// desde la caché local del proceso antes de consultar nuevamente SQL.
+        ///
+        /// SQL Server continúa siendo la fuente definitiva. Esta caché solo
+        /// reduce la presión causada por múltiples solicitudes consecutivas.
+        /// </summary>
+        public int SessionCacheSeconds { get; set; } = 15;
     }
 }

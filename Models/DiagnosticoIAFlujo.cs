@@ -144,6 +144,21 @@ namespace CONATRADEC_API.Models
             public const string NoAplica = "NO_APLICA";
             public const string ResueltaAutomatica =
                 "RESUELTA_AUTOMATICA";
+
+            // Estados actuales del flujo humano.
+            public const string PendienteAnalizador =
+                "PENDIENTE_ANALIZADOR";
+            public const string ResueltaPorAnalizador =
+                "RESUELTA_POR_ANALIZADOR";
+            public const string PropuestaAnalizador =
+                "PROPUESTA_ANALIZADOR";
+            public const string ResueltaPorAprobador =
+                "RESUELTA_POR_APROBADOR";
+            public const string CreadaPorAprobador =
+                "CREADA_POR_APROBADOR";
+
+            // Estados históricos. Se conservan para leer registros creados
+            // con versiones anteriores sin alterar su trazabilidad.
             public const string PendienteDecisionTecnico =
                 "PENDIENTE_DECISION_TECNICO";
             public const string ResueltaPorTecnico =
@@ -152,13 +167,17 @@ namespace CONATRADEC_API.Models
                 "CREADA_DESDE_INSPECCION";
 
             public static bool EstaPendiente(string? estado) =>
-                string.Equals(
-                    estado,
-                    PendienteDecisionTecnico,
-                    StringComparison.OrdinalIgnoreCase);
+                string.Equals(estado, PendienteAnalizador, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(estado, PendienteDecisionTecnico, StringComparison.OrdinalIgnoreCase);
+
+            public static bool EstaPropuesta(string? estado) =>
+                string.Equals(estado, PropuestaAnalizador, StringComparison.OrdinalIgnoreCase);
 
             public static bool EstaResuelta(string? estado) =>
                 string.Equals(estado, ResueltaAutomatica, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(estado, ResueltaPorAnalizador, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(estado, ResueltaPorAprobador, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(estado, CreadaPorAprobador, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(estado, ResueltaPorTecnico, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(estado, CreadaDesdeInspeccion, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(estado, NoAplica, StringComparison.OrdinalIgnoreCase);

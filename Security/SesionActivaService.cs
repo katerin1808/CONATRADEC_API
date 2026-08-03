@@ -1,6 +1,7 @@
 using CONATRADEC_API.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using System.Collections.Concurrent;
 using System.Data;
 using System.Data.Common;
 
@@ -17,15 +18,21 @@ namespace CONATRADEC_API.Security
     }
 
     /// <summary>
-    /// Mantiene las sesiones activas en SQL Server.
+    /// Mantiene las sesiones activas en SQL Server y utiliza una caché local
+    /// de corta duración para evitar una consulta SQL en cada solicitud.
     ///
-    /// A diferencia del registro anterior en memoria, las sesiones sobreviven
-    /// a reciclajes de IIS y pueden ser consultadas por varias instancias del
-    /// backend que utilicen la misma base de datos.
+    /// SQL Server continúa siendo la fuente definitiva. La caché únicamente
+    /// conserva validaciones recientes y se descarta automáticamente.
     /// </summary>
     public sealed class SesionActivaService
     {
-        private static long registrosCreados;
+        private static readonly ConcurrentDictionary<
+            string,
+            SesionCacheEntry> cacheSesiones =
+                new(StringComparer.Ordinal);
+
+        private static long sesionesRegistradas;
+        private static long validacionesRealizadas;
 
         private readonly DBContext db;
         private readonly IOptions<JwtOptions> options;
@@ -132,9 +139,23 @@ namespace CONATRADEC_API.Security
                 },
                 cancellationToken);
 
-            if (Interlocked.Increment(ref registrosCreados) % 100 == 0)
+            GuardarEnCache(
+                sesionId,
+                new SesionPersistida(
+                    UsuarioId: usuarioId,
+                    VersionSesion: versionSesion,
+                    UltimaActividadUtc: ahoraUtc,
+                    ExpiraUtc: expiraUtc,
+                    Revocada: false,
+                    UsuarioActivo: true,
+                    VersionUsuario: versionSesion),
+                ahoraUtc);
+
+            if (Interlocked.Increment(
+                    ref sesionesRegistradas) % 100 == 0)
             {
                 await LimpiarExpiradasAsync(cancellationToken);
+                LimpiarCacheVencida(ahoraUtc);
             }
         }
 
@@ -153,33 +174,50 @@ namespace CONATRADEC_API.Security
                     nameof(sesionId));
             }
 
+            DateTime ahoraUtc = DateTime.UtcNow;
+
             SesionPersistida? sesion =
-                await ObtenerAsync(
+                await ObtenerConCacheAsync(
                     sesionId,
+                    ahoraUtc,
                     cancellationToken);
 
             if (sesion == null)
                 return EstadoSesionToken.NoRegistrada;
 
             if (sesion.Revocada)
-                return EstadoSesionToken.Revocada;
-
-            if (sesion.UsuarioId != usuarioId ||
-                sesion.VersionSesion != versionSesion)
             {
-                await RevocarAsync(
+                cacheSesiones.TryRemove(sesionId, out _);
+                return EstadoSesionToken.Revocada;
+            }
+
+            /*
+             * Esta consulta ya contiene el estado y la versión actual del
+             * usuario. Por eso VersionSesionMiddleware no necesita consultar
+             * dbo.usuario nuevamente en todas las solicitudes.
+             */
+            if (!sesion.UsuarioActivo ||
+                sesion.UsuarioId != usuarioId ||
+                sesion.VersionSesion != versionSesion ||
+                sesion.VersionUsuario != versionSesion)
+            {
+                cacheSesiones.TryRemove(sesionId, out _);
+
+                await RevocarEnBaseAsync(
                     sesionId,
-                    "IDENTIDAD_NO_COINCIDE",
+                    sesion.UsuarioActivo
+                        ? "IDENTIDAD_O_VERSION_NO_COINCIDE"
+                        : "USUARIO_INACTIVO",
                     CancellationToken.None);
 
                 return EstadoSesionToken.NoCoincide;
             }
 
-            DateTime ahoraUtc = DateTime.UtcNow;
-
             if (ahoraUtc >= sesion.ExpiraUtc)
             {
-                await RevocarAsync(
+                cacheSesiones.TryRemove(sesionId, out _);
+
+                await RevocarEnBaseAsync(
                     sesionId,
                     "TOKEN_EXPIRADO",
                     CancellationToken.None);
@@ -196,7 +234,9 @@ namespace CONATRADEC_API.Security
             if (ahoraUtc - sesion.UltimaActividadUtc >=
                 TimeSpan.FromMinutes(minutosInactividad))
             {
-                await RevocarAsync(
+                cacheSesiones.TryRemove(sesionId, out _);
+
+                await RevocarEnBaseAsync(
                     sesionId,
                     "INACTIVIDAD",
                     CancellationToken.None);
@@ -209,7 +249,7 @@ namespace CONATRADEC_API.Security
                 int segundosActualizacion =
                     Math.Clamp(
                         options.Value.ActivityUpdateSeconds,
-                        5,
+                        15,
                         300);
 
                 if (ahoraUtc - sesion.UltimaActividadUtc >=
@@ -220,7 +260,23 @@ namespace CONATRADEC_API.Security
                         ahoraUtc,
                         segundosActualizacion,
                         cancellationToken);
+
+                    sesion = sesion with
+                    {
+                        UltimaActividadUtc = ahoraUtc
+                    };
+
+                    GuardarEnCache(
+                        sesionId,
+                        sesion,
+                        ahoraUtc);
                 }
+            }
+
+            if (Interlocked.Increment(
+                    ref validacionesRealizadas) % 1000 == 0)
+            {
+                LimpiarCacheVencida(ahoraUtc);
             }
 
             return EstadoSesionToken.Valida;
@@ -242,50 +298,50 @@ namespace CONATRADEC_API.Security
             if (string.IsNullOrWhiteSpace(sesionId))
                 return;
 
-            DateTime ahoraUtc = DateTime.UtcNow;
+            cacheSesiones.TryRemove(sesionId, out _);
 
-            const string sql = """
-                UPDATE [dbo].[sesionActiva]
-                   SET [Revocada] = 1,
-                       [FechaRevocacionUtc] =
-                           COALESCE([FechaRevocacionUtc], @AhoraUtc),
-                       [MotivoRevocacion] =
-                           COALESCE([MotivoRevocacion], @Motivo),
-                       [UltimaActualizacionUtc] = @AhoraUtc
-                 WHERE [SesionId] = @SesionId
-                   AND [Revocada] = 0;
-                """;
-
-            await EjecutarAsync(
-                sql,
-                command =>
-                {
-                    AgregarParametro(
-                        command,
-                        "@SesionId",
-                        DbType.String,
-                        sesionId,
-                        64);
-
-                    AgregarParametro(
-                        command,
-                        "@Motivo",
-                        DbType.String,
-                        NormalizarMotivo(motivo),
-                        100);
-
-                    AgregarParametro(
-                        command,
-                        "@AhoraUtc",
-                        DbType.DateTime2,
-                        ahoraUtc);
-                },
+            await RevocarEnBaseAsync(
+                sesionId,
+                motivo,
                 cancellationToken);
         }
 
-        private async Task<SesionPersistida?> ObtenerAsync(
-            string sesionId,
-            CancellationToken cancellationToken)
+        private async Task<SesionPersistida?>
+            ObtenerConCacheAsync(
+                string sesionId,
+                DateTime ahoraUtc,
+                CancellationToken cancellationToken)
+        {
+            if (cacheSesiones.TryGetValue(
+                    sesionId,
+                    out SesionCacheEntry? cache) &&
+                ahoraUtc < cache.VigenteHastaUtc)
+            {
+                return cache.Sesion;
+            }
+
+            cacheSesiones.TryRemove(sesionId, out _);
+
+            SesionPersistida? sesion =
+                await ObtenerDesdeBaseAsync(
+                    sesionId,
+                    cancellationToken);
+
+            if (sesion != null)
+            {
+                GuardarEnCache(
+                    sesionId,
+                    sesion,
+                    ahoraUtc);
+            }
+
+            return sesion;
+        }
+
+        private async Task<SesionPersistida?>
+            ObtenerDesdeBaseAsync(
+                string sesionId,
+                CancellationToken cancellationToken)
         {
             DbConnection connection =
                 db.Database.GetDbConnection();
@@ -301,15 +357,25 @@ namespace CONATRADEC_API.Security
                 await using DbCommand command =
                     connection.CreateCommand();
 
+                /*
+                 * En una sola consulta se valida:
+                 * - la sesión persistida;
+                 * - el usuario activo;
+                 * - la versión actual del usuario.
+                 */
                 command.CommandText = """
                     SELECT TOP (1)
-                           [UsuarioId],
-                           [VersionSesion],
-                           [UltimaActividadUtc],
-                           [ExpiraUtc],
-                           [Revocada]
-                      FROM [dbo].[sesionActiva]
-                     WHERE [SesionId] = @SesionId;
+                           s.[UsuarioId],
+                           s.[VersionSesion],
+                           s.[UltimaActividadUtc],
+                           s.[ExpiraUtc],
+                           s.[Revocada],
+                           u.[activo],
+                           u.[versionSesion]
+                      FROM [dbo].[sesionActiva] AS s
+                      INNER JOIN [dbo].[usuario] AS u
+                              ON u.[UsuarioId] = s.[UsuarioId]
+                     WHERE s.[SesionId] = @SesionId;
                     """;
 
                 AgregarParametro(
@@ -320,7 +386,8 @@ namespace CONATRADEC_API.Security
                     64);
 
                 await using DbDataReader reader =
-                    await command.ExecuteReaderAsync(cancellationToken);
+                    await command.ExecuteReaderAsync(
+                        cancellationToken);
 
                 if (!await reader.ReadAsync(cancellationToken))
                     return null;
@@ -335,7 +402,11 @@ namespace CONATRADEC_API.Security
                     ExpiraUtc:
                         AsegurarUtc(reader.GetDateTime(3)),
                     Revocada:
-                        reader.GetBoolean(4));
+                        reader.GetBoolean(4),
+                    UsuarioActivo:
+                        reader.GetBoolean(5),
+                    VersionUsuario:
+                        reader.GetInt32(6));
             }
             finally
             {
@@ -391,6 +462,94 @@ namespace CONATRADEC_API.Security
                 cancellationToken);
         }
 
+        private async Task RevocarEnBaseAsync(
+            string sesionId,
+            string motivo,
+            CancellationToken cancellationToken)
+        {
+            DateTime ahoraUtc = DateTime.UtcNow;
+
+            const string sql = """
+                UPDATE [dbo].[sesionActiva]
+                   SET [Revocada] = 1,
+                       [FechaRevocacionUtc] =
+                           COALESCE([FechaRevocacionUtc], @AhoraUtc),
+                       [MotivoRevocacion] =
+                           COALESCE([MotivoRevocacion], @Motivo),
+                       [UltimaActualizacionUtc] = @AhoraUtc
+                 WHERE [SesionId] = @SesionId
+                   AND [Revocada] = 0;
+                """;
+
+            await EjecutarAsync(
+                sql,
+                command =>
+                {
+                    AgregarParametro(
+                        command,
+                        "@SesionId",
+                        DbType.String,
+                        sesionId,
+                        64);
+
+                    AgregarParametro(
+                        command,
+                        "@Motivo",
+                        DbType.String,
+                        NormalizarMotivo(motivo),
+                        100);
+
+                    AgregarParametro(
+                        command,
+                        "@AhoraUtc",
+                        DbType.DateTime2,
+                        ahoraUtc);
+                },
+                cancellationToken);
+        }
+
+        private void GuardarEnCache(
+            string sesionId,
+            SesionPersistida sesion,
+            DateTime ahoraUtc)
+        {
+            int segundosCache =
+                Math.Clamp(
+                    options.Value.SessionCacheSeconds,
+                    2,
+                    60);
+
+            DateTime vigenteHastaUtc =
+                ahoraUtc.AddSeconds(segundosCache);
+
+            if (vigenteHastaUtc > sesion.ExpiraUtc)
+                vigenteHastaUtc = sesion.ExpiraUtc;
+
+            cacheSesiones[sesionId] =
+                new SesionCacheEntry(
+                    sesion,
+                    vigenteHastaUtc);
+        }
+
+        private static void LimpiarCacheVencida(
+            DateTime ahoraUtc)
+        {
+            foreach (KeyValuePair<
+                         string,
+                         SesionCacheEntry> item
+                     in cacheSesiones)
+            {
+                if (ahoraUtc >= item.Value.VigenteHastaUtc ||
+                    ahoraUtc >= item.Value.Sesion.ExpiraUtc ||
+                    item.Value.Sesion.Revocada)
+                {
+                    cacheSesiones.TryRemove(
+                        item.Key,
+                        out _);
+                }
+            }
+        }
+
         private async Task LimpiarExpiradasAsync(
             CancellationToken cancellationToken)
         {
@@ -434,7 +593,8 @@ namespace CONATRADEC_API.Security
                 command.CommandText = sql;
                 configure?.Invoke(command);
 
-                await command.ExecuteNonQueryAsync(cancellationToken);
+                await command.ExecuteNonQueryAsync(
+                    cancellationToken);
             }
             finally
             {
@@ -492,6 +652,12 @@ namespace CONATRADEC_API.Security
             int VersionSesion,
             DateTime UltimaActividadUtc,
             DateTime ExpiraUtc,
-            bool Revocada);
+            bool Revocada,
+            bool UsuarioActivo,
+            int VersionUsuario);
+
+        private sealed record SesionCacheEntry(
+            SesionPersistida Sesion,
+            DateTime VigenteHastaUtc);
     }
 }

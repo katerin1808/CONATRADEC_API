@@ -70,20 +70,6 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
-            if (diagnostico.Imagenes.Any(item =>
-                    item.ResultadoIA != null &&
-                    item.ResultadoIA.RequiereDecisionClasificacion &&
-                    DiagnosticoIAFlujo.ClasificacionAlbum.EstaPendiente(
-                        item.ResultadoIA.EstadoClasificacionAlbum)))
-            {
-                return Conflict(new
-                {
-                    success = false,
-                    message =
-                        "Antes de enviar al analizador debe resolver las clasificaciones del Álbum Botánico que Gemini dejó pendientes."
-                });
-            }
-
             if (diagnostico.RevisionesIA.Any(item =>
                     item.Estado == "ANALIZANDO"))
             {

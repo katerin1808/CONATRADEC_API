@@ -6,23 +6,17 @@ using Microsoft.EntityFrameworkCore;
 
 [ApiController]
 [Route("api/analisis-suelo")]
-public class AnalisisSueloController :
-    ControllerBase
+public class AnalisisSueloController : ControllerBase
 {
     private readonly DBContext _db;
-
-    private readonly
-        AnalisisSueloCalculoService
-        _calculoService;
+    private readonly AnalisisSueloCalculoService _calculoService;
 
     public AnalisisSueloController(
         DBContext db,
-        AnalisisSueloCalculoService
-            calculoService)
+        AnalisisSueloCalculoService calculoService)
     {
         _db = db;
-        _calculoService =
-            calculoService;
+        _calculoService = calculoService;
     }
 
     // =============================================================
@@ -30,24 +24,20 @@ public class AnalisisSueloController :
     // =============================================================
     [HttpPost("calcular")]
     public async Task<IActionResult> Calcular(
-        [FromBody]
-        AnalisisSueloCalculoRequestDto dto)
+        [FromBody] AnalisisSueloCalculoRequestDto dto)
     {
         try
         {
             if (!ModelState.IsValid)
                 return BadRequest(ModelState);
 
-            AnalisisSueloCalculoResponseDto
-                resultado =
-                    await _calculoService
-                        .CalcularAsync(dto);
+            AnalisisSueloCalculoResponseDto resultado =
+                await _calculoService.CalcularAsync(dto);
 
             return Ok(new
             {
                 success = true,
-                message =
-                    "Cálculo realizado correctamente.",
+                message = "Cálculo realizado correctamente.",
                 data = resultado
             });
         }
@@ -67,25 +57,19 @@ public class AnalisisSueloController :
     // El flujo completo utiliza /api/guardar-todo.
     // =============================================================
     [HttpPost("guardar-calculo")]
-    public async Task<IActionResult>
-        GuardarCalculo(
-            [FromBody]
-            AnalisisSueloGuardarRequestDto dto)
+    public async Task<IActionResult> GuardarCalculo(
+        [FromBody] AnalisisSueloGuardarRequestDto dto)
     {
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
-        string identificador =
-            dto.identificadorAnalisisSuelo
-                .Trim()
-                .ToUpperInvariant();
+        string identificador = dto.identificadorAnalisisSuelo
+            .Trim()
+            .ToUpperInvariant();
 
-        bool existeIdentificador =
-            await _db.AnalisisSuelos
-                .AnyAsync(x =>
-                    x
-                        .identificadorAnalisisSuelo ==
-                    identificador);
+        bool existeIdentificador = await _db.AnalisisSuelos
+            .AnyAsync(x =>
+                x.identificadorAnalisisSuelo == identificador);
 
         if (existeIdentificador)
         {
@@ -97,12 +81,10 @@ public class AnalisisSueloController :
             });
         }
 
-        bool terrenoExiste =
-            await _db.Terreno
-                .AnyAsync(x =>
-                    x.terrenoId ==
-                        dto.terrenoId &&
-                    x.activo);
+        bool terrenoExiste = await _db.Terreno
+            .AnyAsync(x =>
+                x.terrenoId == dto.terrenoId &&
+                x.activo);
 
         if (!terrenoExiste)
         {
@@ -115,131 +97,92 @@ public class AnalisisSueloController :
         }
 
         await using var transaccion =
-            await _db.Database
-                .BeginTransactionAsync();
+            await _db.Database.BeginTransactionAsync();
 
         try
         {
-            AnalisisSueloCalculoResponseDto
-                resultado =
-                    await _calculoService
-                        .CalcularAsync(dto);
+            AnalisisSueloCalculoResponseDto resultado =
+                await _calculoService.CalcularAsync(dto);
 
-            AnalisisSuelo analisis =
-                new()
-                {
-                    fechaAnalisisSuelo =
-                        dto.fechaAnalisisSuelo,
-                    fechaCreacionAnalisisSuelo =
-                        DateTime.Now,
-                    laboratorioAnalasisSuelo =
-                        dto
-                            .laboratorioAnalasisSuelo
-                            .Trim()
-                            .ToUpperInvariant(),
-                    identificadorAnalisisSuelo =
-                        identificador,
-                    activo = true
-                };
+            AnalisisSuelo analisis = new()
+            {
+                fechaAnalisisSuelo = dto.fechaAnalisisSuelo,
+                fechaCreacionAnalisisSuelo = DateTime.Now,
+                laboratorioAnalasisSuelo = dto
+                    .laboratorioAnalasisSuelo
+                    .Trim()
+                    .ToUpperInvariant(),
+                identificadorAnalisisSuelo = identificador,
+                activo = true
+            };
 
-            _db.AnalisisSuelos.Add(
-                analisis);
-
+            _db.AnalisisSuelos.Add(analisis);
             await _db.SaveChangesAsync();
 
-            _db.AnalisisSueloElementos
-                .AddRange(
-                    dto.elementosQuimicos
-                        .Select(elemento =>
-                            new
-                                AnalisisSueloElementoQuimico
-                                {
-                                    analisisSueloId =
-                                        analisis
-                                            .analisisSueloId,
-                                    elementoQuimicosId =
-                                        elemento
-                                            .elementoQuimicosId,
-                                    unidadMedidaId =
-                                        elemento
-                                            .unidadMedidaId,
-                                    cantidadElemento =
-                                        Math.Round(
-                                            elemento
-                                                .cantidadElemento,
-                                            4),
-                                    activo = true
-                                }));
+            _db.AnalisisSueloElementos.AddRange(
+                dto.elementosQuimicos.Select(elemento =>
+                    new AnalisisSueloElementoQuimico
+                    {
+                        analisisSueloId =
+                            analisis.analisisSueloId,
+                        elementoQuimicosId =
+                            elemento.elementoQuimicosId,
+                        unidadMedidaId =
+                            elemento.unidadMedidaId,
+                        cantidadElemento = Math.Round(
+                            elemento.cantidadElemento,
+                            4),
+                        activo = true
+                    }));
 
-            AnalisisSueloCalculo calculo =
-                new()
-                {
-                    cantidadQuintalesOro =
-                        Math.Round(
-                            dto
-                                .cantidadQuintalesOro,
-                            4),
-                    tamanoFinca =
-                        Math.Round(
-                            dto.tamanoFinca,
-                            4),
-                    phAnalisisSuelo =
-                        Math.Round(
-                            dto.ph,
-                            4),
-                    materiaOrganica =
-                        Math.Round(
-                            dto.materiaOrganica,
-                            4),
-                    unidadMedidaMateriaOrganicaId =
-                        dto
-                            .unidadMedidaMateriaOrganicaId,
-                    acidezTotal =
-                        Math.Round(
-                            dto.acidezTotal,
-                            4),
-                    recomendacionGeneral =
-                        resultado
-                            .recomendacionGeneral,
-                    observacion =
-                        string.Join(
-                            " | ",
-                            resultado
-                                .observaciones),
-                    fechaCalculo =
-                        DateTime.Now,
-                    activo = true,
-                    analisisSueloId =
-                        analisis
-                            .analisisSueloId,
-                    terrenoId =
-                        dto.terrenoId,
-                    tipoCultivoId =
-                        dto.tipoCultivoId,
-                    tipoAnalisisSueloId =
-                        dto
-                            .tipoAnalisisSueloId,
-                    usuarioId =
-                        dto.usuarioId
-                };
+            AnalisisSueloCalculo calculo = new()
+            {
+                cantidadQuintalesOro = Math.Round(
+                    dto.cantidadQuintalesOro,
+                    4),
+                tamanoFinca = Math.Round(
+                    dto.tamanoFinca,
+                    4),
+                phAnalisisSuelo = Math.Round(
+                    dto.ph,
+                    4),
+                materiaOrganica = Math.Round(
+                    dto.materiaOrganica,
+                    4),
+                unidadMedidaMateriaOrganicaId =
+                    dto.unidadMedidaMateriaOrganicaId,
+                acidezTotal = Math.Round(
+                    dto.acidezTotal,
+                    4),
+                recomendacionGeneral =
+                    resultado.recomendacionGeneral,
+                observacion = string.Join(
+                    " | ",
+                    resultado.observaciones),
+                fechaCalculo = DateTime.Now,
+                activo = true,
+                analisisSueloId =
+                    analisis.analisisSueloId,
+                terrenoId = dto.terrenoId,
+                tipoCultivoId = dto.tipoCultivoId,
+                tipoAnalisisSueloId =
+                    dto.tipoAnalisisSueloId,
+                usuarioId = dto.usuarioId
+            };
 
-            _db.AnalisisSueloCalculos.Add(
-                calculo);
-
+            _db.AnalisisSueloCalculos.Add(calculo);
             await _db.SaveChangesAsync();
 
             UnidadMedida? unidadResultado =
                 await _db.UnidadMedidas
                     .FirstOrDefaultAsync(x =>
                         x.activo &&
-                        x.nombreUnidadMedida
-                            .ToLower() ==
+                        x.nombreUnidadMedida.ToLower() ==
                             "lb/mz");
 
             if (unidadResultado == null)
             {
-                await transaccion
-                    .RollbackAsync();
+                await transaccion.RollbackAsync();
 
                 return BadRequest(new
                 {
@@ -249,50 +192,36 @@ public class AnalisisSueloController :
                 });
             }
 
-            _db
-                .AnalisisSueloCalculoElementoQuimicos
-                .AddRange(
-                    resultado.elementos
-                        .Select(elemento =>
-                            new
-                                AnalisisSueloCalculoElementoQuimico
-                                {
-                                    analisisSueloCalculoId =
-                                        calculo
-                                            .analisisSueloCalculoId,
-                                    elementoQuimicosId =
-                                        elemento
-                                            .elementoQuimicosId,
-                                    unidadMedidaId =
-                                        unidadResultado
-                                            .unidadMedidaId,
-                                    cantidadIngresada =
-                                        Math.Round(
-                                            elemento
-                                                .cantidadIngresada,
-                                            4),
-                                    cantidadConvertidaLbMz =
-                                        RedondearNullable(
-                                            elemento
-                                                .cantidadConvertidaLbMz),
-                                    requerimientoCalculado =
-                                        RedondearNullable(
-                                            elemento
-                                                .requerimientoCalculado),
-                                    clasificacion =
-                                        elemento
-                                            .clasificacion,
-                                    observacion =
-                                        elemento
-                                            .observacion,
-                                    incluirCalculosComplementarios =
-                                        elemento
-                                            .incluirCalculosComplementarios,
-                                    activo = true
-                                }));
+            _db.AnalisisSueloCalculoElementoQuimicos.AddRange(
+                resultado.elementos.Select(elemento =>
+                    new AnalisisSueloCalculoElementoQuimico
+                    {
+                        analisisSueloCalculoId =
+                            calculo.analisisSueloCalculoId,
+                        elementoQuimicosId =
+                            elemento.elementoQuimicosId,
+                        unidadMedidaId =
+                            unidadResultado.unidadMedidaId,
+                        cantidadIngresada = Math.Round(
+                            elemento.cantidadIngresada,
+                            4),
+                        cantidadConvertidaLbMz =
+                            RedondearNullable(
+                                elemento.cantidadConvertidaLbMz),
+                        requerimientoCalculado =
+                            RedondearNullable(
+                                elemento.requerimientoCalculado),
+                        clasificacion =
+                            elemento.clasificacion,
+                        observacion =
+                            elemento.observacion,
+                        incluirCalculosComplementarios =
+                            elemento
+                                .incluirCalculosComplementarios,
+                        activo = true
+                    }));
 
             await _db.SaveChangesAsync();
-
             await transaccion.CommitAsync();
 
             return Ok(new
@@ -303,11 +232,9 @@ public class AnalisisSueloController :
                 data = new
                 {
                     analisisSueloId =
-                        analisis
-                            .analisisSueloId,
+                        analisis.analisisSueloId,
                     analisisSueloCalculoId =
-                        calculo
-                            .analisisSueloCalculoId,
+                        calculo.analisisSueloCalculoId,
                     identificadorAnalisisSuelo =
                         analisis
                             .identificadorAnalisisSuelo,
@@ -325,13 +252,8 @@ public class AnalisisSueloController :
                 message =
                     "Error al guardar el análisis de suelo.",
                 error = ex.Message,
-                innerError =
-                    ex.InnerException?
-                        .Message,
-                detalle =
-                    ex
-                        .GetBaseException()
-                        .Message
+                innerError = ex.InnerException?.Message,
+                detalle = ex.GetBaseException().Message
             });
         }
     }
@@ -340,15 +262,13 @@ public class AnalisisSueloController :
     // OBTENER ANÁLISIS COMPLETO
     // =============================================================
     [HttpGet("{id:int}")]
-    public async Task<IActionResult>
-        ObtenerPorId(int id)
+    public async Task<IActionResult> ObtenerPorId(int id)
     {
         AnalisisSuelo? analisis =
             await _db.AnalisisSuelos
                 .AsNoTracking()
                 .FirstOrDefaultAsync(x =>
-                    x.analisisSueloId ==
-                        id &&
+                    x.analisisSueloId == id &&
                     x.activo);
 
         if (analisis == null)
@@ -365,66 +285,57 @@ public class AnalisisSueloController :
             await _db.AnalisisSueloCalculos
                 .AsNoTracking()
                 .Where(x =>
-                    x.analisisSueloId ==
-                        id &&
+                    x.analisisSueloId == id &&
                     x.activo)
                 .OrderByDescending(x =>
                     x.fechaCalculo)
                 .FirstOrDefaultAsync();
 
-        Terreno? terreno =
+        Terreno? terreno = calculo == null
+            ? null
+            : await _db.Terreno
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x =>
+                    x.terrenoId ==
+                        calculo.terrenoId);
+
+        var propietario = calculo == null
+            ? null
+            : await _db.PropietarioTerrenos
+                .AsNoTracking()
+                .Where(relacion =>
+                    relacion.terrenoId ==
+                        calculo.terrenoId &&
+                    relacion.activo &&
+                    relacion.Propietario.activo)
+                .OrderByDescending(relacion =>
+                    relacion.fechaAsignacionUtc)
+                .Select(relacion => new
+                {
+                    relacion.Propietario.propietarioId,
+                    relacion.Propietario.identificacion,
+                    relacion.Propietario.nombreCompleto,
+                    relacion.Propietario.telefono,
+                    relacion.Propietario.correo,
+                    relacion.Propietario.direccion
+                })
+                .FirstOrDefaultAsync();
+
+        TipoCultivo? tipoCultivo = calculo == null
+            ? null
+            : await _db.TipoCultivos
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x =>
+                    x.tipoCultivoId ==
+                        calculo.tipoCultivoId);
+
+        TipoAnalisisSuelo? tipoAnalisis =
             calculo == null
                 ? null
-                : await _db.Terreno
+                : await _db.TipoAnalisisSuelos
                     .AsNoTracking()
                     .FirstOrDefaultAsync(x =>
-                        x.terrenoId ==
-                            calculo
-                                .terrenoId);
-
-        var propietario =
-            calculo == null
-                ? null
-                : await _db.PropietarioTerrenos
-                    .AsNoTracking()
-                    .Where(relacion =>
-                        relacion.terrenoId ==
-                            calculo.terrenoId &&
-                        relacion.activo &&
-                        relacion.Propietario.activo)
-                    .OrderByDescending(relacion =>
-                        relacion.fechaAsignacionUtc)
-                    .Select(relacion => new
-                    {
-                        relacion.Propietario.propietarioId,
-                        relacion.Propietario.identificacion,
-                        relacion.Propietario.nombreCompleto,
-                        relacion.Propietario.telefono,
-                        relacion.Propietario.correo,
-                        relacion.Propietario.direccion
-                    })
-                    .FirstOrDefaultAsync();
-
-        TipoCultivo? tipoCultivo =
-            calculo == null
-                ? null
-                : await _db.TipoCultivos
-                    .AsNoTracking()
-                    .FirstOrDefaultAsync(x =>
-                        x.tipoCultivoId ==
-                            calculo
-                                .tipoCultivoId);
-
-        TipoAnalisisSuelo?
-            tipoAnalisis =
-                calculo == null
-                    ? null
-                    : await _db
-                        .TipoAnalisisSuelos
-                        .AsNoTracking()
-                        .FirstOrDefaultAsync(x =>
-                            x
-                                .tipoAnalisisSueloId ==
+                        x.tipoAnalisisSueloId ==
                             calculo
                                 .tipoAnalisisSueloId);
 
@@ -432,13 +343,11 @@ public class AnalisisSueloController :
             await _db.AnalisisSueloElementos
                 .AsNoTracking()
                 .Where(x =>
-                    x.analisisSueloId ==
-                        id &&
+                    x.analisisSueloId == id &&
                     x.activo)
                 .Select(x => new
                 {
-                    x
-                        .analisisSueloElementoQuimicoId,
+                    x.analisisSueloElementoQuimicoId,
                     x.elementoQuimicosId,
                     simboloElementoQuimico =
                         x.ElementoQuimico
@@ -466,10 +375,9 @@ public class AnalisisSueloController :
                         .AnalisisSueloCalculoElementoQuimicos
                         .AsNoTracking()
                         .Where(x =>
-                            x
-                                .analisisSueloCalculoId ==
-                            calculo
-                                .analisisSueloCalculoId &&
+                            x.analisisSueloCalculoId ==
+                                calculo
+                                    .analisisSueloCalculoId &&
                             x.activo)
                         .Select(x => new
                         {
@@ -489,11 +397,9 @@ public class AnalisisSueloController :
                             x.requerimientoCalculado,
                             x.unidadMedidaId,
                             nombreUnidadResultado =
-                                x.UnidadMedida ==
-                                    null
+                                x.UnidadMedida == null
                                     ? null
-                                    : x
-                                        .UnidadMedida
+                                    : x.UnidadMedida
                                         .nombreUnidadMedida
                                         .Trim(),
                             x.clasificacion,
@@ -503,8 +409,7 @@ public class AnalisisSueloController :
                             x.activo
                         })
                         .ToListAsync())
-                    .Select(x =>
-                        (object)x)
+                    .Select(x => (object)x)
                     .ToList();
 
         return Ok(new
@@ -527,37 +432,32 @@ public class AnalisisSueloController :
                     analisis.activo
                 },
 
-                terreno =
-                    terreno == null
-                        ? null
-                        : new
-                        {
-                            terreno.terrenoId,
-                            terreno
-                                .codigoTerreno,
-                            propietario,
-                            terreno
-                                .direccionTerreno,
-                            terreno
-                                .extensionManzanaTerreno,
-                            terreno
-                                .cantidadQuintalesOro,
-                            terreno.latitud,
-                            terreno.longitud
-                        },
+                terreno = terreno == null
+                    ? null
+                    : new
+                    {
+                        terreno.terrenoId,
+                        terreno.codigoTerreno,
+                        propietario,
+                        terreno.direccionTerreno,
+                        terreno
+                            .extensionManzanaTerreno,
+                        terreno
+                            .cantidadQuintalesOro,
+                        terreno.latitud,
+                        terreno.longitud
+                    },
 
-                tipoCultivo =
-                    tipoCultivo == null
-                        ? null
-                        : new
-                        {
-                            tipoCultivo
-                                .tipoCultivoId,
-                            tipoCultivo
-                                .nombreTipoCultivo,
-                            tipoCultivo
-                                .descripcionTipoCultivo
-                        },
+                tipoCultivo = tipoCultivo == null
+                    ? null
+                    : new
+                    {
+                        tipoCultivo.tipoCultivoId,
+                        tipoCultivo
+                            .nombreTipoCultivo,
+                        tipoCultivo
+                            .descripcionTipoCultivo
+                    },
 
                 tipoAnalisisSuelo =
                     tipoAnalisis == null
@@ -572,27 +472,24 @@ public class AnalisisSueloController :
                                 .descripcionTipoAnalisisSuelo
                         },
 
-                calculo =
-                    calculo == null
-                        ? null
-                        : new
-                        {
-                            calculo
-                                .analisisSueloCalculoId,
-                            calculo
-                                .cantidadQuintalesOro,
-                            calculo.tamanoFinca,
-                            calculo
-                                .phAnalisisSuelo,
-                            calculo
-                                .materiaOrganica,
-                            calculo.acidezTotal,
-                            calculo
-                                .recomendacionGeneral,
-                            calculo.observacion,
-                            calculo.fechaCalculo,
-                            calculo.usuarioId
-                        },
+                calculo = calculo == null
+                    ? null
+                    : new
+                    {
+                        calculo
+                            .analisisSueloCalculoId,
+                        calculo
+                            .cantidadQuintalesOro,
+                        calculo.tamanoFinca,
+                        calculo.phAnalisisSuelo,
+                        calculo.materiaOrganica,
+                        calculo.acidezTotal,
+                        calculo
+                            .recomendacionGeneral,
+                        calculo.observacion,
+                        calculo.fechaCalculo,
+                        calculo.usuarioId
+                    },
 
                 elementosIngresados,
                 elementosCalculados
@@ -601,120 +498,15 @@ public class AnalisisSueloController :
     }
 
     // =============================================================
-    // LISTAR ANÁLISIS CON RESUMEN
-    // =============================================================
-    [HttpGet("listar")]
-    public async Task<IActionResult> Listar()
-    {
-        List<AnalisisSuelo> analisisLista =
-            await _db.AnalisisSuelos
-                .AsNoTracking()
-                .Where(x => x.activo)
-                .OrderByDescending(x =>
-                    x
-                        .fechaCreacionAnalisisSuelo)
-                .ThenByDescending(x =>
-                    x.analisisSueloId)
-                .ToListAsync();
-
-        List<object> respuesta = new();
-
-        foreach (
-            AnalisisSuelo analisis
-            in analisisLista)
-        {
-            AnalisisSueloCalculo? calculo =
-                await _db.AnalisisSueloCalculos
-                    .AsNoTracking()
-                    .Where(x =>
-                        x.analisisSueloId ==
-                            analisis
-                                .analisisSueloId &&
-                        x.activo)
-                    .OrderByDescending(x =>
-                        x.fechaCalculo)
-                    .FirstOrDefaultAsync();
-
-            int totalElementosIngresados =
-                await _db
-                    .AnalisisSueloElementos
-                    .AsNoTracking()
-                    .CountAsync(x =>
-                        x.analisisSueloId ==
-                            analisis
-                                .analisisSueloId &&
-                        x.activo);
-
-            int totalElementosCalculados =
-                calculo == null
-                    ? 0
-                    : await _db
-                        .AnalisisSueloCalculoElementoQuimicos
-                        .AsNoTracking()
-                        .CountAsync(x =>
-                            x
-                                .analisisSueloCalculoId ==
-                            calculo
-                                .analisisSueloCalculoId &&
-                            x.activo);
-
-            respuesta.Add(new
-            {
-                analisis.analisisSueloId,
-                analisis.fechaAnalisisSuelo,
-                analisis
-                    .fechaCreacionAnalisisSuelo,
-                analisis
-                    .laboratorioAnalasisSuelo,
-                analisis
-                    .identificadorAnalisisSuelo,
-                analisis.activo,
-
-                calculo =
-                    calculo == null
-                        ? null
-                        : new
-                        {
-                            calculo
-                                .analisisSueloCalculoId,
-                            calculo
-                                .cantidadQuintalesOro,
-                            calculo.tamanoFinca,
-                            calculo
-                                .phAnalisisSuelo,
-                            calculo.acidezTotal,
-                            calculo
-                                .recomendacionGeneral,
-                            calculo.fechaCalculo,
-                            calculo.usuarioId
-                        },
-
-                totalElementosIngresados,
-                totalElementosCalculados
-            });
-        }
-
-        return Ok(new
-        {
-            success = true,
-            message =
-                "Listado de análisis de suelo obtenido correctamente.",
-            data = respuesta
-        });
-    }
-
-    // =============================================================
     // DESACTIVAR ANÁLISIS BÁSICO
     // =============================================================
     [HttpPut("desactivar/{id:int}")]
-    public async Task<IActionResult>
-        Desactivar(int id)
+    public async Task<IActionResult> Desactivar(int id)
     {
         AnalisisSuelo? analisis =
             await _db.AnalisisSuelos
                 .FirstOrDefaultAsync(x =>
-                    x.analisisSueloId ==
-                        id &&
+                    x.analisisSueloId == id &&
                     x.activo);
 
         if (analisis == null)
@@ -728,41 +520,32 @@ public class AnalisisSueloController :
         }
 
         await using var transaccion =
-            await _db.Database
-                .BeginTransactionAsync();
+            await _db.Database.BeginTransactionAsync();
 
         try
         {
             analisis.activo = false;
 
-            List<
-                AnalisisSueloElementoQuimico>
+            List<AnalisisSueloElementoQuimico>
                 elementosIngresados =
-                    await _db
-                        .AnalisisSueloElementos
+                    await _db.AnalisisSueloElementos
                         .Where(x =>
-                            x.analisisSueloId ==
-                                id &&
+                            x.analisisSueloId == id &&
                             x.activo)
                         .ToListAsync();
 
-            elementosIngresados
-                .ForEach(x =>
-                    x.activo = false);
+            elementosIngresados.ForEach(x =>
+                x.activo = false);
 
-            List<AnalisisSueloCalculo>
-                calculos =
-                    await _db
-                        .AnalisisSueloCalculos
-                        .Where(x =>
-                            x.analisisSueloId ==
-                                id &&
-                            x.activo)
-                        .ToListAsync();
+            List<AnalisisSueloCalculo> calculos =
+                await _db.AnalisisSueloCalculos
+                    .Where(x =>
+                        x.analisisSueloId == id &&
+                        x.activo)
+                    .ToListAsync();
 
-            foreach (
-                AnalisisSueloCalculo calculo
-                in calculos)
+            foreach (AnalisisSueloCalculo calculo
+                     in calculos)
             {
                 calculo.activo = false;
 
@@ -779,13 +562,11 @@ public class AnalisisSueloController :
                                 x.activo)
                             .ToListAsync();
 
-                elementosCalculados
-                    .ForEach(x =>
-                        x.activo = false);
+                elementosCalculados.ForEach(x =>
+                    x.activo = false);
             }
 
             await _db.SaveChangesAsync();
-
             await transaccion.CommitAsync();
 
             return Ok(new
@@ -813,13 +594,8 @@ public class AnalisisSueloController :
                 message =
                     "Error al desactivar el análisis de suelo.",
                 error = ex.Message,
-                innerError =
-                    ex.InnerException?
-                        .Message,
-                detalle =
-                    ex
-                        .GetBaseException()
-                        .Message
+                innerError = ex.InnerException?.Message,
+                detalle = ex.GetBaseException().Message
             });
         }
     }
@@ -828,21 +604,19 @@ public class AnalisisSueloController :
     // CATÁLOGOS UTILIZADOS POR EL FORMULARIO
     // =============================================================
     [HttpGet("tipo-cultivo/listar")]
-    public async Task<IActionResult>
-        ListarTiposCultivo()
+    public async Task<IActionResult> ListarTiposCultivo()
     {
-        var lista =
-            await _db.TipoCultivos
-                .AsNoTracking()
-                .Where(x => x.activo)
-                .Select(x => new
-                {
-                    x.tipoCultivoId,
-                    x.nombreTipoCultivo,
-                    x.descripcionTipoCultivo,
-                    x.activo
-                })
-                .ToListAsync();
+        var lista = await _db.TipoCultivos
+            .AsNoTracking()
+            .Where(x => x.activo)
+            .Select(x => new
+            {
+                x.tipoCultivoId,
+                x.nombreTipoCultivo,
+                x.descripcionTipoCultivo,
+                x.activo
+            })
+            .ToListAsync();
 
         return Ok(lista);
     }
@@ -851,30 +625,26 @@ public class AnalisisSueloController :
     public async Task<IActionResult>
         ListarTiposAnalisisSuelo()
     {
-        var lista =
-            await _db.TipoAnalisisSuelos
-                .AsNoTracking()
-                .Where(x => x.activo)
-                .Select(x => new
-                {
-                    x.tipoAnalisisSueloId,
-                    x.nombreTipoAnalisisSuelo,
-                    x.descripcionTipoAnalisisSuelo,
-                    x.activo
-                })
-                .ToListAsync();
+        var lista = await _db.TipoAnalisisSuelos
+            .AsNoTracking()
+            .Where(x => x.activo)
+            .Select(x => new
+            {
+                x.tipoAnalisisSueloId,
+                x.nombreTipoAnalisisSuelo,
+                x.descripcionTipoAnalisisSuelo,
+                x.activo
+            })
+            .ToListAsync();
 
         return Ok(lista);
     }
 
-    private static decimal?
-        RedondearNullable(
-            decimal? valor)
+    private static decimal? RedondearNullable(
+        decimal? valor)
     {
         return valor.HasValue
-            ? Math.Round(
-                valor.Value,
-                4)
+            ? Math.Round(valor.Value, 4)
             : null;
     }
 }

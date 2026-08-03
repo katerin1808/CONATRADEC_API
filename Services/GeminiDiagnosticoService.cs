@@ -1807,7 +1807,7 @@ No prescribas productos ni dosis. Devuelve exclusivamente el JSON solicitado.
             resultado.RequiereNuevaClasificacion = true;
             resultado.RequiereDecisionClasificacion = true;
             resultado.EstadoClasificacionAlbum =
-                DiagnosticoIAFlujo.ClasificacionAlbum.PendienteDecisionTecnico;
+                DiagnosticoIAFlujo.ClasificacionAlbum.PendienteAnalizador;
 
             if (string.IsNullOrWhiteSpace(resultado.CategoriaAlbumSugerida))
                 resultado.CategoriaAlbumSugerida = resultado.CategoriaPrincipal.Replace('_', ' ');
