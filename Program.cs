@@ -83,6 +83,8 @@ builder.Services.AddConatradecImageStorage(
     builder.Configuration);
 
 builder.Services.AddScoped<ImageService>();
+builder.Services.AddScoped<GeminiDiagnosticoService>();
+builder.Services.AddScoped<DiagnosticoIADatabaseInitializer>();
 
 builder.Services.AddScoped<AnalisisSueloDatabaseInitializer>();
 builder.Services.AddScoped<AnalisisHistorialDatabaseInitializer>();
@@ -195,6 +197,12 @@ builder.Services.AddDbContext<AlertasAgricolasDbContext>(
     });
 
 builder.Services.AddDbContext<ActualizacionesDbContext>(
+    options =>
+    {
+        options.UseSqlServer(connectionString);
+    });
+
+builder.Services.AddDbContext<DiagnosticoIADbContext>(
     options =>
     {
         options.UseSqlServer(connectionString);
@@ -355,6 +363,12 @@ await using (
             .GetRequiredService<ControlAnalisisDatabaseInitializer>();
 
     await controlAnalisisInitializer.InicializarAsync();
+
+    DiagnosticoIADatabaseInitializer diagnosticoIAInitializer =
+        scope.ServiceProvider
+            .GetRequiredService<DiagnosticoIADatabaseInitializer>();
+
+    await diagnosticoIAInitializer.InicializarAsync();
 
     DispositivosConexionDatabaseInitializer dispositivosInitializer =
         scope.ServiceProvider
