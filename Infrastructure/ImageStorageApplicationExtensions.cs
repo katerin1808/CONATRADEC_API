@@ -12,7 +12,8 @@ namespace CONATRADEC_API.Infrastructure
                 ("terrenos", "/resources/uploads/terrenos"),
                 ("album-botanico", "/resources/uploads/album-botanico"),
                 ("categorias-album", "/resources/uploads/categorias-album"),
-                ("noticias", "/resources/uploads/noticias")
+                ("noticias", "/resources/uploads/noticias"),
+                ("diagnosticos-ia", "/resources/uploads/diagnosticos-ia")
             ];
 
         public static IServiceCollection AddConatradecImageStorage(
@@ -40,11 +41,16 @@ namespace CONATRADEC_API.Infrastructure
             foreach ((string carpeta, string requestPath)
                      in PublicMappings)
             {
+                string rutaFisica =
+                    storage.ObtenerCarpeta(carpeta);
+
+                Directory.CreateDirectory(rutaFisica);
+
                 app.UseStaticFiles(
                     new StaticFileOptions
                     {
                         FileProvider = new PhysicalFileProvider(
-                            storage.ObtenerCarpeta(carpeta)),
+                            rutaFisica),
                         RequestPath = requestPath,
                         OnPrepareResponse = context =>
                         {

@@ -86,6 +86,12 @@ builder.Services.AddScoped<ImageService>();
 builder.Services.AddScoped<GeminiDiagnosticoService>();
 builder.Services.AddScoped<DiagnosticoIADatabaseInitializer>();
 
+// Procesamiento prolongado de Diagnóstico IA fuera de la solicitud HTTP.
+builder.Services.AddSingleton<DiagnosticoIAProcesamientoQueue>();
+builder.Services.AddSingleton<DiagnosticoIAProcesamientoEstadoStore>();
+builder.Services.AddScoped<DiagnosticoIAProcesamientoService>();
+builder.Services.AddHostedService<DiagnosticoIAProcesamientoHostedService>();
+
 builder.Services.AddScoped<AnalisisSueloDatabaseInitializer>();
 builder.Services.AddScoped<AnalisisHistorialDatabaseInitializer>();
 builder.Services.AddScoped<PortalWebDatabaseInitializer>();
