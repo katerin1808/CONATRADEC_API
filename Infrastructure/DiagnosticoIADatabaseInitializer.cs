@@ -126,6 +126,19 @@ BEGIN
         [TipoDiagnostico] NVARCHAR(80) NOT NULL CONSTRAINT [DF_diagIAImgRes_tipo] DEFAULT(N''),
         [SeveridadVisual] NVARCHAR(30) NOT NULL CONSTRAINT [DF_diagIAImgRes_sev] DEFAULT(N'NO_EVALUABLE'),
         [NivelCerteza] NVARCHAR(30) NOT NULL CONSTRAINT [DF_diagIAImgRes_certeza] DEFAULT(N'NO_DETERMINADO'),
+        [CategoriaAlbumBotanicoIdSugerida] INT NULL,
+        [AlbumBotanicoCafeIdSugerido] INT NULL,
+        [CategoriaAlbumSugerida] NVARCHAR(150) NOT NULL CONSTRAINT [DF_diagIAImgRes_catAlbumSug] DEFAULT(N''),
+        [ClasificacionAlbumSugerida] NVARCHAR(200) NOT NULL CONSTRAINT [DF_diagIAImgRes_clasAlbumSug] DEFAULT(N''),
+        [NombreCientificoSugerido] NVARCHAR(200) NOT NULL CONSTRAINT [DF_diagIAImgRes_cientificoSug] DEFAULT(N''),
+        [CoincideCatalogoAlbum] BIT NOT NULL CONSTRAINT [DF_diagIAImgRes_coincideAlbum] DEFAULT(0),
+        [RequiereDecisionClasificacion] BIT NOT NULL CONSTRAINT [DF_diagIAImgRes_reqDecisionAlbum] DEFAULT(0),
+        [MotivoClasificacionAlbum] NVARCHAR(1000) NOT NULL CONSTRAINT [DF_diagIAImgRes_motivoAlbum] DEFAULT(N''),
+        [CategoriaAlbumBotanicoIdSeleccionada] INT NULL,
+        [AlbumBotanicoCafeIdSeleccionado] INT NULL,
+        [CategoriaAlbumSeleccionada] NVARCHAR(150) NOT NULL CONSTRAINT [DF_diagIAImgRes_catAlbumSel] DEFAULT(N''),
+        [ClasificacionAlbumSeleccionada] NVARCHAR(200) NOT NULL CONSTRAINT [DF_diagIAImgRes_clasAlbumSel] DEFAULT(N''),
+        [EstadoClasificacionAlbum] NVARCHAR(40) NOT NULL CONSTRAINT [DF_diagIAImgRes_estadoAlbum] DEFAULT(N'NO_APLICA'),
         [ResumenImagen] NVARCHAR(1600) NOT NULL CONSTRAINT [DF_diagIAImgRes_resumen] DEFAULT(N''),
         [SintomasVisiblesJson] NVARCHAR(MAX) NOT NULL CONSTRAINT [DF_diagIAImgRes_sintomas] DEFAULT(N'[]'),
         [EvidenciasObservadasJson] NVARCHAR(MAX) NOT NULL CONSTRAINT [DF_diagIAImgRes_evidencias] DEFAULT(N'[]'),
@@ -143,6 +156,33 @@ BEGIN
     CREATE UNIQUE INDEX [UX_diagIAImgRes_imagen]
         ON [dbo].[diagnosticoIAImagenResultadoIA]([DiagnosticoIAImagenId]);
 END;
+
+IF COL_LENGTH(N'dbo.diagnosticoIAImagenResultadoIA', N'CategoriaAlbumBotanicoIdSugerida') IS NULL
+    ALTER TABLE [dbo].[diagnosticoIAImagenResultadoIA] ADD [CategoriaAlbumBotanicoIdSugerida] INT NULL;
+IF COL_LENGTH(N'dbo.diagnosticoIAImagenResultadoIA', N'AlbumBotanicoCafeIdSugerido') IS NULL
+    ALTER TABLE [dbo].[diagnosticoIAImagenResultadoIA] ADD [AlbumBotanicoCafeIdSugerido] INT NULL;
+IF COL_LENGTH(N'dbo.diagnosticoIAImagenResultadoIA', N'CategoriaAlbumSugerida') IS NULL
+    ALTER TABLE [dbo].[diagnosticoIAImagenResultadoIA] ADD [CategoriaAlbumSugerida] NVARCHAR(150) NOT NULL CONSTRAINT [DF_diagIAImgRes_catAlbumSug_v2] DEFAULT(N'');
+IF COL_LENGTH(N'dbo.diagnosticoIAImagenResultadoIA', N'ClasificacionAlbumSugerida') IS NULL
+    ALTER TABLE [dbo].[diagnosticoIAImagenResultadoIA] ADD [ClasificacionAlbumSugerida] NVARCHAR(200) NOT NULL CONSTRAINT [DF_diagIAImgRes_clasAlbumSug_v2] DEFAULT(N'');
+IF COL_LENGTH(N'dbo.diagnosticoIAImagenResultadoIA', N'NombreCientificoSugerido') IS NULL
+    ALTER TABLE [dbo].[diagnosticoIAImagenResultadoIA] ADD [NombreCientificoSugerido] NVARCHAR(200) NOT NULL CONSTRAINT [DF_diagIAImgRes_cientificoSug_v2] DEFAULT(N'');
+IF COL_LENGTH(N'dbo.diagnosticoIAImagenResultadoIA', N'CoincideCatalogoAlbum') IS NULL
+    ALTER TABLE [dbo].[diagnosticoIAImagenResultadoIA] ADD [CoincideCatalogoAlbum] BIT NOT NULL CONSTRAINT [DF_diagIAImgRes_coincideAlbum_v2] DEFAULT(0);
+IF COL_LENGTH(N'dbo.diagnosticoIAImagenResultadoIA', N'RequiereDecisionClasificacion') IS NULL
+    ALTER TABLE [dbo].[diagnosticoIAImagenResultadoIA] ADD [RequiereDecisionClasificacion] BIT NOT NULL CONSTRAINT [DF_diagIAImgRes_reqDecisionAlbum_v2] DEFAULT(0);
+IF COL_LENGTH(N'dbo.diagnosticoIAImagenResultadoIA', N'MotivoClasificacionAlbum') IS NULL
+    ALTER TABLE [dbo].[diagnosticoIAImagenResultadoIA] ADD [MotivoClasificacionAlbum] NVARCHAR(1000) NOT NULL CONSTRAINT [DF_diagIAImgRes_motivoAlbum_v2] DEFAULT(N'');
+IF COL_LENGTH(N'dbo.diagnosticoIAImagenResultadoIA', N'CategoriaAlbumBotanicoIdSeleccionada') IS NULL
+    ALTER TABLE [dbo].[diagnosticoIAImagenResultadoIA] ADD [CategoriaAlbumBotanicoIdSeleccionada] INT NULL;
+IF COL_LENGTH(N'dbo.diagnosticoIAImagenResultadoIA', N'AlbumBotanicoCafeIdSeleccionado') IS NULL
+    ALTER TABLE [dbo].[diagnosticoIAImagenResultadoIA] ADD [AlbumBotanicoCafeIdSeleccionado] INT NULL;
+IF COL_LENGTH(N'dbo.diagnosticoIAImagenResultadoIA', N'CategoriaAlbumSeleccionada') IS NULL
+    ALTER TABLE [dbo].[diagnosticoIAImagenResultadoIA] ADD [CategoriaAlbumSeleccionada] NVARCHAR(150) NOT NULL CONSTRAINT [DF_diagIAImgRes_catAlbumSel_v2] DEFAULT(N'');
+IF COL_LENGTH(N'dbo.diagnosticoIAImagenResultadoIA', N'ClasificacionAlbumSeleccionada') IS NULL
+    ALTER TABLE [dbo].[diagnosticoIAImagenResultadoIA] ADD [ClasificacionAlbumSeleccionada] NVARCHAR(200) NOT NULL CONSTRAINT [DF_diagIAImgRes_clasAlbumSel_v2] DEFAULT(N'');
+IF COL_LENGTH(N'dbo.diagnosticoIAImagenResultadoIA', N'EstadoClasificacionAlbum') IS NULL
+    ALTER TABLE [dbo].[diagnosticoIAImagenResultadoIA] ADD [EstadoClasificacionAlbum] NVARCHAR(40) NOT NULL CONSTRAINT [DF_diagIAImgRes_estadoAlbum_v2] DEFAULT(N'NO_APLICA');
 
 IF OBJECT_ID(N'[dbo].[diagnosticoIAValidacion]', N'U') IS NULL
 BEGIN

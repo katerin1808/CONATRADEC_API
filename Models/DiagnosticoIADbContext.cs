@@ -449,6 +449,41 @@ namespace CONATRADEC_API.Models
         public string NivelCerteza { get; set; } =
             DiagnosticoIAFlujo.Certeza.NoDeterminado;
 
+        // Clasificación oficial compartida con el Álbum Botánico.
+        public int? CategoriaAlbumBotanicoIdSugerida { get; set; }
+
+        public int? AlbumBotanicoCafeIdSugerido { get; set; }
+
+        [MaxLength(150)]
+        public string CategoriaAlbumSugerida { get; set; } = string.Empty;
+
+        [MaxLength(200)]
+        public string ClasificacionAlbumSugerida { get; set; } = string.Empty;
+
+        [MaxLength(200)]
+        public string NombreCientificoSugerido { get; set; } = string.Empty;
+
+        public bool CoincideCatalogoAlbum { get; set; }
+
+        public bool RequiereDecisionClasificacion { get; set; }
+
+        [MaxLength(1000)]
+        public string MotivoClasificacionAlbum { get; set; } = string.Empty;
+
+        public int? CategoriaAlbumBotanicoIdSeleccionada { get; set; }
+
+        public int? AlbumBotanicoCafeIdSeleccionado { get; set; }
+
+        [MaxLength(150)]
+        public string CategoriaAlbumSeleccionada { get; set; } = string.Empty;
+
+        [MaxLength(200)]
+        public string ClasificacionAlbumSeleccionada { get; set; } = string.Empty;
+
+        [MaxLength(40)]
+        public string EstadoClasificacionAlbum { get; set; } =
+            DiagnosticoIAFlujo.ClasificacionAlbum.NoAplica;
+
         [MaxLength(1600)]
         public string ResumenImagen { get; set; } = string.Empty;
 
@@ -880,6 +915,15 @@ namespace CONATRADEC_API.Models
         [Column("titulo"), MaxLength(200)]
         public string Titulo { get; set; } =
             string.Empty;
+
+        [Column("nombreCientifico"), MaxLength(200)]
+        public string? NombreCientifico { get; set; }
+
+        [Column("descripcion")]
+        public string Descripcion { get; set; } = string.Empty;
+
+        [Column("sintomas")]
+        public string? Sintomas { get; set; }
 
         [Column("activo")]
         public bool Activo { get; set; }

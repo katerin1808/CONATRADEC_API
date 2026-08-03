@@ -265,26 +265,16 @@ namespace CONATRADEC_API.Controllers
             if (!puedeSolicitar && !puedeAnalizar)
                 return Forbid();
 
-            bool requiereReconstruirResultadosIndividuales =
-                diagnostico.Imagenes.Count > 0 &&
-                diagnostico.Imagenes.Any(imagen =>
-                    imagen.ResultadoIA == null ||
-                    EsResultadoTecnicoIncompleto(
-                        imagen.ResultadoIA));
-
             if (diagnostico.Estado !=
-                    DiagnosticoIAFlujo.Estados.ErrorAnalisis &&
-                !requiereReconstruirResultadosIndividuales)
+                DiagnosticoIAFlujo.Estados.ErrorAnalisis)
             {
                 return BadRequest(new
                 {
                     success = false,
                     message =
-                        "Solo se puede reintentar un diagnóstico con error o con resultados individuales incompletos."
+                        "Solo se puede reintentar un diagnóstico que terminó con error."
                 });
             }
-
-            EliminarResultadosTecnicosIncompletos(diagnostico);
 
             string anterior = diagnostico.Estado;
             diagnostico.Estado = DiagnosticoIAFlujo.Estados.AnalizandoIA;
@@ -1462,10 +1452,6 @@ namespace CONATRADEC_API.Controllers
                         diagnostico.ObservacionUsuario,
                         cancellationToken);
 
-                ValidarResultadoGeminiCompleto(
-                    diagnostico,
-                    resultado);
-
                 AplicarResultadoGemini(diagnostico, resultado);
 
                 string anterior = diagnostico.Estado;
@@ -1497,20 +1483,16 @@ namespace CONATRADEC_API.Controllers
             }
             catch (GeminiApiException ex)
             {
-                string mensajeAmigable =
-                    ResolverMensajeErrorGemini(
-                        ex,
-                        esSegundaRevision: false);
+                (int _, string mensajeAmigable) = MapearErrorGemini(
+                    ex.StatusCode,
+                    false);
 
                 await RegistrarErrorAnalisisAsync(
                     diagnostico,
                     usuarioId,
                     mensajeAmigable);
 
-                return CrearRespuestaErrorGemini(
-                    ex,
-                    false,
-                    diagnostico.DiagnosticoIAId);
+                return CrearRespuestaErrorGemini(ex, false, diagnostico.DiagnosticoIAId);
             }
             catch (InvalidOperationException ex)
             {
@@ -1595,12 +1577,8 @@ namespace CONATRADEC_API.Controllers
             bool esRevision,
             int diagnosticoIAId)
         {
-            (int codigo, string _) = MapearErrorGemini(
+            (int codigo, string mensaje) = MapearErrorGemini(
                 ex.StatusCode,
-                esRevision);
-
-            string mensaje = ResolverMensajeErrorGemini(
-                ex,
                 esRevision);
 
             return StatusCode(
@@ -1609,98 +1587,12 @@ namespace CONATRADEC_API.Controllers
                 {
                     success = false,
                     message = mensaje,
-                    detail = mensaje,
+                    detail = ex.Message,
                     data = new
                     {
                         DiagnosticoIAId = diagnosticoIAId
                     }
                 });
-        }
-
-        private void EliminarResultadosTecnicosIncompletos(
-            DiagnosticoIA diagnostico)
-        {
-            foreach (DiagnosticoIAImagen imagen in diagnostico.Imagenes)
-            {
-                DiagnosticoIAImagenResultadoIA? resultado =
-                    imagen.ResultadoIA;
-
-                if (resultado == null ||
-                    !EsResultadoTecnicoIncompleto(resultado))
-                {
-                    continue;
-                }
-
-                diagnosticoDb.ResultadosImagenIA.Remove(resultado);
-                imagen.ResultadoIA = null;
-            }
-        }
-
-        private static bool EsResultadoTecnicoIncompleto(
-            DiagnosticoIAImagenResultadoIA resultado) =>
-            resultado.ResumenImagen.Contains(
-                "Gemini no devolvió un resultado individual",
-                StringComparison.OrdinalIgnoreCase);
-
-        private static void ValidarResultadoGeminiCompleto(
-            DiagnosticoIA diagnostico,
-            GeminiDiagnosticoResultado resultado)
-        {
-            List<int> esperadas = diagnostico.Imagenes
-                .Select(item => item.Orden)
-                .OrderBy(item => item)
-                .ToList();
-
-            List<int> recibidas = resultado.ResultadosPorImagen
-                .Select(item => item.Orden)
-                .Distinct()
-                .OrderBy(item => item)
-                .ToList();
-
-            bool hayDuplicados = resultado.ResultadosPorImagen
-                .GroupBy(item => item.Orden)
-                .Any(group => group.Count() > 1);
-
-            bool hayMensajeTecnico =
-                resultado.ResultadosPorImagen.Any(item =>
-                    item.ResumenImagen.Contains(
-                        "Gemini no devolvió",
-                        StringComparison.OrdinalIgnoreCase));
-
-            if (esperadas.SequenceEqual(recibidas) &&
-                resultado.ResultadosPorImagen.Count ==
-                    diagnostico.Imagenes.Count &&
-                !hayDuplicados &&
-                !hayMensajeTecnico)
-            {
-                return;
-            }
-
-            throw new GeminiApiException(
-                HttpStatusCode.BadGateway,
-                "Gemini devolvió una respuesta incompleta por fotografía. La solicitud no avanzará al analizador.",
-                $"Esperadas: {string.Join(", ", esperadas)}. " +
-                $"Recibidas: {string.Join(", ", recibidas)}.");
-        }
-
-        private static string ResolverMensajeErrorGemini(
-            GeminiApiException ex,
-            bool esSegundaRevision)
-        {
-            if (ex.StatusCode == HttpStatusCode.BadGateway &&
-                (ex.Message.Contains(
-                     "resultado individual",
-                     StringComparison.OrdinalIgnoreCase) ||
-                 ex.Message.Contains(
-                     "respuesta incompleta por fotografía",
-                     StringComparison.OrdinalIgnoreCase)))
-            {
-                return ex.Message;
-            }
-
-            return MapearErrorGemini(
-                ex.StatusCode,
-                esSegundaRevision).Mensaje;
         }
 
         private static void AplicarResultadoGemini(
@@ -2486,6 +2378,32 @@ namespace CONATRADEC_API.Controllers
                 TipoDiagnostico = resultado.TipoDiagnostico,
                 SeveridadVisual = resultado.SeveridadVisual,
                 NivelCerteza = resultado.NivelCerteza,
+                CategoriaAlbumBotanicoIdSugerida =
+                    resultado.CategoriaAlbumBotanicoIdSugerida,
+                AlbumBotanicoCafeIdSugerido =
+                    resultado.AlbumBotanicoCafeIdSugerido,
+                CategoriaAlbumSugerida =
+                    resultado.CategoriaAlbumSugerida,
+                ClasificacionAlbumSugerida =
+                    resultado.ClasificacionAlbumSugerida,
+                NombreCientificoSugerido =
+                    resultado.NombreCientificoSugerido,
+                CoincideCatalogoAlbum =
+                    resultado.CoincideCatalogoAlbum,
+                RequiereDecisionClasificacion =
+                    resultado.RequiereDecisionClasificacion,
+                MotivoClasificacionAlbum =
+                    resultado.MotivoClasificacionAlbum,
+                CategoriaAlbumBotanicoIdSeleccionada =
+                    resultado.CategoriaAlbumBotanicoIdSeleccionada,
+                AlbumBotanicoCafeIdSeleccionado =
+                    resultado.AlbumBotanicoCafeIdSeleccionado,
+                CategoriaAlbumSeleccionada =
+                    resultado.CategoriaAlbumSeleccionada,
+                ClasificacionAlbumSeleccionada =
+                    resultado.ClasificacionAlbumSeleccionada,
+                EstadoClasificacionAlbum =
+                    resultado.EstadoClasificacionAlbum,
                 ResumenImagen = resultado.ResumenImagen,
                 SintomasVisibles =
                     DeserializarLista(

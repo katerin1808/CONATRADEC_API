@@ -673,6 +673,46 @@ namespace CONATRADEC_API.Services
                         Normalizar(origen.TipoDiagnostico, 80),
                     SeveridadVisual = origen.SeveridadVisual,
                     NivelCerteza = origen.NivelCerteza,
+                    CategoriaAlbumBotanicoIdSugerida =
+                        origen.CategoriaAlbumBotanicoId > 0
+                            ? origen.CategoriaAlbumBotanicoId
+                            : null,
+                    AlbumBotanicoCafeIdSugerido =
+                        origen.AlbumBotanicoCafeId > 0
+                            ? origen.AlbumBotanicoCafeId
+                            : null,
+                    CategoriaAlbumSugerida =
+                        Normalizar(origen.CategoriaAlbumSugerida, 150),
+                    ClasificacionAlbumSugerida =
+                        Normalizar(origen.ClasificacionAlbumSugerida, 200),
+                    NombreCientificoSugerido =
+                        Normalizar(origen.NombreCientificoSugerido, 200),
+                    CoincideCatalogoAlbum =
+                        origen.CoincideCatalogoAlbum,
+                    RequiereDecisionClasificacion =
+                        origen.RequiereDecisionClasificacion,
+                    MotivoClasificacionAlbum =
+                        Normalizar(origen.MotivoClasificacionAlbum, 1000),
+                    CategoriaAlbumBotanicoIdSeleccionada =
+                        origen.CoincideCatalogoAlbum &&
+                        origen.CategoriaAlbumBotanicoId > 0
+                            ? origen.CategoriaAlbumBotanicoId
+                            : null,
+                    AlbumBotanicoCafeIdSeleccionado =
+                        origen.CoincideCatalogoAlbum &&
+                        origen.AlbumBotanicoCafeId > 0
+                            ? origen.AlbumBotanicoCafeId
+                            : null,
+                    CategoriaAlbumSeleccionada =
+                        origen.CoincideCatalogoAlbum
+                            ? Normalizar(origen.CategoriaAlbumSugerida, 150)
+                            : string.Empty,
+                    ClasificacionAlbumSeleccionada =
+                        origen.CoincideCatalogoAlbum
+                            ? Normalizar(origen.ClasificacionAlbumSugerida, 200)
+                            : string.Empty,
+                    EstadoClasificacionAlbum =
+                        origen.EstadoClasificacionAlbum,
                     ResumenImagen = Normalizar(origen.ResumenImagen, 1600),
                     SintomasVisiblesJson =
                         SerializarLista(origen.SintomasVisibles),

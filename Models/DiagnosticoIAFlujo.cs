@@ -134,6 +134,36 @@ namespace CONATRADEC_API.Models
                 };
         }
 
+        /// <summary>
+        /// Estado de la clasificación que vincula un resultado de Gemini con
+        /// la estructura oficial del Álbum Botánico. Gemini nunca crea
+        /// registros: únicamente selecciona uno existente o propone uno nuevo.
+        /// </summary>
+        public static class ClasificacionAlbum
+        {
+            public const string NoAplica = "NO_APLICA";
+            public const string ResueltaAutomatica =
+                "RESUELTA_AUTOMATICA";
+            public const string PendienteDecisionTecnico =
+                "PENDIENTE_DECISION_TECNICO";
+            public const string ResueltaPorTecnico =
+                "RESUELTA_POR_TECNICO";
+            public const string CreadaDesdeInspeccion =
+                "CREADA_DESDE_INSPECCION";
+
+            public static bool EstaPendiente(string? estado) =>
+                string.Equals(
+                    estado,
+                    PendienteDecisionTecnico,
+                    StringComparison.OrdinalIgnoreCase);
+
+            public static bool EstaResuelta(string? estado) =>
+                string.Equals(estado, ResueltaAutomatica, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(estado, ResueltaPorTecnico, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(estado, CreadaDesdeInspeccion, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(estado, NoAplica, StringComparison.OrdinalIgnoreCase);
+        }
+
         public static class EstadoAnalisisHumano
         {
             public const string Borrador = "BORRADOR";

@@ -13,6 +13,9 @@ namespace CONATRADEC_API.Security
         public const string HeaderActividadUsuario =
             "X-Actividad-Usuario";
 
+        public const string HeaderCodigoAutenticacion =
+            "X-Auth-Error-Code";
+
         public const string ItemAuthenticationError =
             "__CONATRADEC_JWT_ERROR";
 
@@ -88,12 +91,13 @@ namespace CONATRADEC_API.Security
                         .ToString());
 
             EstadoSesionToken estado =
-                sesionActivaService
-                    .ValidarYRegistrarActividad(
+                await sesionActivaService
+                    .ValidarYRegistrarActividadAsync(
                         sesionId,
                         usuarioId,
                         versionSesion,
-                        registrarActividad);
+                        registrarActividad,
+                        context.RequestAborted);
 
             if (estado != EstadoSesionToken.Valida)
             {
@@ -136,8 +140,8 @@ namespace CONATRADEC_API.Security
             await next(context);
 
             /*
-             * Si VersionSesionMiddleware detectó posteriormente un cambio de rol,
-             * permisos o estado, se elimina también el jti de memoria.
+             * Si VersionSesionMiddleware detectó posteriormente un cambio de
+             * rol, permisos o estado, se revoca también el jti persistido.
              */
             if (context.Response.Headers.TryGetValue(
                     VersionSesionMiddleware.HeaderSesionInvalidada,
@@ -148,8 +152,10 @@ namespace CONATRADEC_API.Security
                         "true",
                         StringComparison.OrdinalIgnoreCase)))
             {
-                sesionActivaService.Revocar(
-                    sesionId);
+                await sesionActivaService.RevocarAsync(
+                    sesionId,
+                    "VERSION_DE_SESION_INVALIDADA",
+                    CancellationToken.None);
             }
         }
 
@@ -294,6 +300,24 @@ namespace CONATRADEC_API.Security
                         "SESSION_TOKEN_EXPIRED"
                     ),
 
+                EstadoSesionToken.NoRegistrada =>
+                    (
+                        "La sesión no se encuentra registrada. Inicie sesión nuevamente.",
+                        "SESSION_NOT_REGISTERED"
+                    ),
+
+                EstadoSesionToken.NoCoincide =>
+                    (
+                        "La identidad del token no coincide con la sesión registrada.",
+                        "SESSION_IDENTITY_MISMATCH"
+                    ),
+
+                EstadoSesionToken.Revocada =>
+                    (
+                        "La sesión fue cerrada o revocada. Inicie sesión nuevamente.",
+                        "SESSION_REVOKED"
+                    ),
+
                 _ =>
                     (
                         "La sesión ya no se encuentra activa. Inicie sesión nuevamente.",
@@ -316,6 +340,10 @@ namespace CONATRADEC_API.Security
             context.Response.Headers[
                 VersionSesionMiddleware.HeaderSesionInvalidada] =
                 "true";
+
+            context.Response.Headers[
+                HeaderCodigoAutenticacion] =
+                code;
 
             context.Response.Headers["Cache-Control"] =
                 "no-store";

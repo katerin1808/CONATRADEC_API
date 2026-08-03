@@ -1,7 +1,6 @@
 using CONATRADEC_API.DTOs;
 using CONATRADEC_API.Models;
 using CONATRADEC_API.Security;
-using CONATRADEC_API.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Cryptography;
@@ -83,26 +82,12 @@ namespace CONATRADEC_API.Controllers
                 return Unauthorized("Usuario o contraseña inválidos.");
 
             /*
-             * Este aprovisionador puede crear una interfaz o una relación de
-             * permisos. Cuando eso sucede, el interceptor aumenta en la base de
-             * datos la versionSesion de los usuarios afectados.
-             *
-             * Como el usuario fue cargado antes, su entidad rastreada puede
-             * conservar temporalmente la versión anterior. Si se devuelve esa
-             * versión desactualizada, el siguiente request del cliente queda
-             * invalidado aunque el usuario apenas haya iniciado sesión.
+             * El aprovisionamiento de permisos offline ahora se realiza una
+             * sola vez durante el arranque del backend. Evitamos que cien
+             * inicios de sesión concurrentes intenten modificar la misma
+             * interfaz y las mismas relaciones de permisos.
              */
-            await OfflinePermissionProvisioner.AsegurarAsync(
-                db,
-                cancellationToken);
 
-            // Recupera la versión definitiva que quedó guardada en la BD.
-            await db.Entry(usuario).ReloadAsync(cancellationToken);
-
-            /*
-             * Protección adicional para instalaciones antiguas o registros que
-             * todavía tengan una versión nula/cero por datos heredados.
-             */
             if (usuario.versionSesion < 1)
             {
                 usuario.versionSesion = 1;
@@ -131,7 +116,9 @@ namespace CONATRADEC_API.Controllers
                 .ToListAsync(cancellationToken);
 
             TokenSesionEmitido token =
-                jwtTokenService.Crear(usuario);
+                await jwtTokenService.CrearAsync(
+                    usuario,
+                    cancellationToken);
 
             var response = new UsuarioLoginResponseDto
             {

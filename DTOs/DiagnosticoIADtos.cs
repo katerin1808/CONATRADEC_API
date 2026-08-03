@@ -231,6 +231,19 @@ namespace CONATRADEC_API.DTOs
         public string TipoDiagnostico { get; set; } = string.Empty;
         public string SeveridadVisual { get; set; } = string.Empty;
         public string NivelCerteza { get; set; } = string.Empty;
+        public int? CategoriaAlbumBotanicoIdSugerida { get; set; }
+        public int? AlbumBotanicoCafeIdSugerido { get; set; }
+        public string CategoriaAlbumSugerida { get; set; } = string.Empty;
+        public string ClasificacionAlbumSugerida { get; set; } = string.Empty;
+        public string NombreCientificoSugerido { get; set; } = string.Empty;
+        public bool CoincideCatalogoAlbum { get; set; }
+        public bool RequiereDecisionClasificacion { get; set; }
+        public string MotivoClasificacionAlbum { get; set; } = string.Empty;
+        public int? CategoriaAlbumBotanicoIdSeleccionada { get; set; }
+        public int? AlbumBotanicoCafeIdSeleccionado { get; set; }
+        public string CategoriaAlbumSeleccionada { get; set; } = string.Empty;
+        public string ClasificacionAlbumSeleccionada { get; set; } = string.Empty;
+        public string EstadoClasificacionAlbum { get; set; } = string.Empty;
         public string ResumenImagen { get; set; } = string.Empty;
         public List<string> SintomasVisibles { get; set; } = [];
         public List<string> EvidenciasObservadas { get; set; } = [];

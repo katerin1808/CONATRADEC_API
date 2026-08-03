@@ -26,13 +26,18 @@ namespace CONATRADEC_API.Controllers
         /// Revoca inmediatamente la sesión representada por el JWT actual.
         /// </summary>
         [HttpPost("cerrar")]
-        public IActionResult Cerrar()
+        public async Task<IActionResult> Cerrar(
+            CancellationToken cancellationToken = default)
         {
             string? sesionId = User.FindFirst(
                 JwtRegisteredClaimNames.Jti)?.Value;
 
             if (!string.IsNullOrWhiteSpace(sesionId))
-                sesionActivaService.Revocar(sesionId);
+            {
+                await sesionActivaService.RevocarAsync(
+                    sesionId,
+                    cancellationToken);
+            }
 
             return NoContent();
         }

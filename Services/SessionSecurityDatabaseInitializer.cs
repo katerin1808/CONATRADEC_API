@@ -1,4 +1,4 @@
-﻿using CONATRADEC_API.Models;
+using CONATRADEC_API.Models;
 using Microsoft.EntityFrameworkCore;
 
 namespace CONATRADEC_API.Services
@@ -140,8 +140,108 @@ namespace CONATRADEC_API.Services
                 restaurarAdministradorSql,
                 cancellationToken);
 
+            /*
+             * La tabla sesionActiva reemplaza el ConcurrentDictionary que
+             * existía dentro de cada proceso. Todos los nodos del backend
+             * consultan la misma información y las sesiones sobreviven a los
+             * reciclajes de IIS.
+             */
+            const string crearSesionesSql = """
+                IF OBJECT_ID(N'[dbo].[sesionActiva]', N'U') IS NULL
+                BEGIN
+                    CREATE TABLE [dbo].[sesionActiva]
+                    (
+                        [SesionId] NVARCHAR(64) NOT NULL,
+                        [UsuarioId] INT NOT NULL,
+                        [VersionSesion] INT NOT NULL,
+                        [CreadaUtc] DATETIME2(3) NOT NULL,
+                        [UltimaActividadUtc] DATETIME2(3) NOT NULL,
+                        [ExpiraUtc] DATETIME2(3) NOT NULL,
+                        [Revocada] BIT NOT NULL
+                            CONSTRAINT [DF_sesionActiva_revocada]
+                            DEFAULT (0),
+                        [FechaRevocacionUtc] DATETIME2(3) NULL,
+                        [MotivoRevocacion] NVARCHAR(100) NULL,
+                        [UltimaActualizacionUtc] DATETIME2(3) NOT NULL,
+                        CONSTRAINT [PK_sesionActiva]
+                            PRIMARY KEY CLUSTERED ([SesionId]),
+                        CONSTRAINT [FK_sesionActiva_usuario]
+                            FOREIGN KEY ([UsuarioId])
+                            REFERENCES [dbo].[usuario]([UsuarioId])
+                    );
+                END;
+                """;
+
+            await db.Database.ExecuteSqlRawAsync(
+                crearSesionesSql,
+                cancellationToken);
+
+            const string crearIndicesSesionesSql = """
+                IF NOT EXISTS
+                (
+                    SELECT 1
+                      FROM sys.indexes
+                     WHERE [object_id] =
+                           OBJECT_ID(N'[dbo].[sesionActiva]')
+                       AND [name] =
+                           N'IX_sesionActiva_usuario_revocada'
+                )
+                BEGIN
+                    CREATE INDEX [IX_sesionActiva_usuario_revocada]
+                        ON [dbo].[sesionActiva]
+                        (
+                            [UsuarioId],
+                            [Revocada]
+                        )
+                        INCLUDE
+                        (
+                            [VersionSesion],
+                            [UltimaActividadUtc],
+                            [ExpiraUtc]
+                        );
+                END;
+
+                IF NOT EXISTS
+                (
+                    SELECT 1
+                      FROM sys.indexes
+                     WHERE [object_id] =
+                           OBJECT_ID(N'[dbo].[sesionActiva]')
+                       AND [name] =
+                           N'IX_sesionActiva_expiracion'
+                )
+                BEGIN
+                    CREATE INDEX [IX_sesionActiva_expiracion]
+                        ON [dbo].[sesionActiva]
+                        (
+                            [ExpiraUtc],
+                            [Revocada]
+                        );
+                END;
+                """;
+
+            await db.Database.ExecuteSqlRawAsync(
+                crearIndicesSesionesSql,
+                cancellationToken);
+
+            const string limpiarSesionesAntiguasSql = """
+                DELETE FROM [dbo].[sesionActiva]
+                 WHERE [ExpiraUtc] <
+                       DATEADD(DAY, -1, SYSUTCDATETIME())
+                    OR
+                       (
+                           [Revocada] = 1
+                           AND [FechaRevocacionUtc] <
+                               DATEADD(DAY, -1, SYSUTCDATETIME())
+                       );
+                """;
+
+            await db.Database.ExecuteSqlRawAsync(
+                limpiarSesionesAntiguasSql,
+                cancellationToken);
+
             logger.LogInformation(
-                "La estructura de seguridad de sesiones fue inicializada correctamente.");
+                "La estructura de seguridad y sesiones persistentes fue inicializada correctamente.");
         }
     }
 }

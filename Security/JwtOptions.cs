@@ -15,8 +15,9 @@ namespace CONATRADEC_API.Security
             "CONATRADEC_CLIENTS";
 
         /// <summary>
-        /// Se recomienda configurarlo con Jwt__Secret.
-        /// Si queda vacío, la API genera una clave segura temporal al arrancar.
+        /// Clave privada utilizada para firmar los JWT.
+        /// Debe contener como mínimo 32 bytes y permanecer estable entre
+        /// publicaciones, reinicios y múltiples instancias del backend.
         /// </summary>
         public string Secret { get; set; } =
             string.Empty;
@@ -26,5 +27,12 @@ namespace CONATRADEC_API.Security
         public int InactivityMinutes { get; set; } = 15;
 
         public int ClockSkewSeconds { get; set; } = 30;
+
+        /// <summary>
+        /// Evita escribir en SQL Server en cada solicitud. Aunque el cliente
+        /// reporte actividad real, la fecha se persiste como máximo una vez
+        /// dentro de este intervalo por sesión.
+        /// </summary>
+        public int ActivityUpdateSeconds { get; set; } = 20;
     }
 }

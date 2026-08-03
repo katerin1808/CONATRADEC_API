@@ -11,7 +11,8 @@ namespace CONATRADEC_API.Security
         int MinutosInactividad);
 
     /// <summary>
-    /// Emite un JWT firmado y registra su identificador jti como sesión activa.
+    /// Emite un JWT firmado y registra su identificador jti en SQL Server.
+    /// El token solamente se devuelve cuando la sesión quedó persistida.
     /// </summary>
     public sealed class JwtTokenService
     {
@@ -29,9 +30,12 @@ namespace CONATRADEC_API.Security
             this.sesionActivaService = sesionActivaService;
         }
 
-        public TokenSesionEmitido Crear(
-            Usuario usuario)
+        public async Task<TokenSesionEmitido> CrearAsync(
+            Usuario usuario,
+            CancellationToken cancellationToken = default)
         {
+            ArgumentNullException.ThrowIfNull(usuario);
+
             JwtOptions configuracion =
                 options.Value;
 
@@ -103,11 +107,12 @@ namespace CONATRADEC_API.Security
                 new JwtSecurityTokenHandler()
                     .WriteToken(token);
 
-            sesionActivaService.Registrar(
+            await sesionActivaService.RegistrarAsync(
                 sesionId,
                 usuario.UsuarioId,
                 usuario.versionSesion,
-                expiraUtc);
+                expiraUtc,
+                cancellationToken);
 
             return new TokenSesionEmitido(
                 accessToken,

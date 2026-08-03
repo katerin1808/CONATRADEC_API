@@ -1,6 +1,5 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
-using System.Security.Cryptography;
 using System.Text;
 
 namespace CONATRADEC_API.Security
@@ -33,18 +32,22 @@ namespace CONATRADEC_API.Security
                 values.Secret?.Trim() ??
                 string.Empty;
 
-            bool esEfimera =
-                Encoding.UTF8.GetByteCount(secret) < 32;
+            if (Encoding.UTF8.GetByteCount(secret) < 32)
+            {
+                throw new InvalidOperationException(
+                    "La variable Jwt__Secret no está configurada o contiene " +
+                    "menos de 32 bytes. El backend no iniciará con una llave " +
+                    "JWT temporal porque invalidaría las sesiones después " +
+                    "de un reinicio o reciclaje de IIS.");
+            }
 
             byte[] keyBytes =
-                esEfimera
-                    ? RandomNumberGenerator.GetBytes(64)
-                    : Encoding.UTF8.GetBytes(secret);
+                Encoding.UTF8.GetBytes(secret);
 
             var keyMaterial =
                 new JwtKeyMaterial(
                     keyBytes,
-                    esEfimera);
+                    esEfimera: false);
 
             services.AddSingleton(keyMaterial);
 
@@ -65,6 +68,8 @@ namespace CONATRADEC_API.Security
                             ? values.Audience
                             : options.Audience.Trim();
 
+                    options.Secret = secret;
+
                     options.ExpirationHours =
                         Math.Clamp(
                             options.ExpirationHours,
@@ -81,6 +86,12 @@ namespace CONATRADEC_API.Security
                         Math.Clamp(
                             options.ClockSkewSeconds,
                             0,
+                            300);
+
+                    options.ActivityUpdateSeconds =
+                        Math.Clamp(
+                            options.ActivityUpdateSeconds,
+                            5,
                             300);
                 });
 
@@ -134,8 +145,13 @@ namespace CONATRADEC_API.Security
                     });
 
             services.AddAuthorization();
-            services.AddSingleton<SesionActivaService>();
-            services.AddSingleton<JwtTokenService>();
+
+            /*
+             * Ambos servicios son scoped porque utilizan el DBContext de la
+             * solicitud para consultar y actualizar las sesiones persistidas.
+             */
+            services.AddScoped<SesionActivaService>();
+            services.AddScoped<JwtTokenService>();
 
             return services;
         }
