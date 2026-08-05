@@ -1,5 +1,6 @@
 using CONATRADEC_API.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using System.Data;
 using System.Data.Common;
 
@@ -91,9 +92,41 @@ END;
             int inspeccionId,
             CancellationToken cancellationToken = default)
         {
+            Dictionary<int, InspeccionFitosanitariaControlRegistro> registros =
+                await ObtenerPorInspeccionesAsync(
+                    [inspeccionId],
+                    cancellationToken);
+
+            return registros.GetValueOrDefault(inspeccionId);
+        }
+
+        /// <summary>
+        /// Obtiene el control de varias inspecciones en una sola consulta. Se
+        /// utiliza en las bandejas para evitar consultas N+1.
+        /// </summary>
+        public async Task<Dictionary<int, InspeccionFitosanitariaControlRegistro>>
+            ObtenerPorInspeccionesAsync(
+                IEnumerable<int> inspeccionIds,
+                CancellationToken cancellationToken = default)
+        {
             await InicializarAsync(cancellationToken);
 
-            const string sql = """
+            int[] ids = (inspeccionIds ?? [])
+                .Where(item => item > 0)
+                .Distinct()
+                .ToArray();
+
+            var resultado =
+                new Dictionary<int, InspeccionFitosanitariaControlRegistro>();
+
+            if (ids.Length == 0)
+                return resultado;
+
+            string nombresParametros = string.Join(
+                ",",
+                ids.Select((_, indice) => $"@id{indice}"));
+
+            string sql = $"""
 SELECT
     DiagnosticoIAId,
     UsuarioSolicitanteId,
@@ -103,38 +136,48 @@ SELECT
     UsuarioCierreTecnicoId,
     Activo
 FROM dbo.diagnosticoIA
-WHERE DiagnosticoIAId = @id;
+WHERE DiagnosticoIAId IN ({nombresParametros});
 """;
 
             return await EjecutarAsync(async conexion =>
             {
-                await using DbCommand comando = conexion.CreateCommand();
-                comando.CommandText = sql;
-                AgregarParametro(comando, "@id", inspeccionId);
+                await using DbCommand comando = CrearComando(conexion, sql);
+                for (int indice = 0; indice < ids.Length; indice++)
+                {
+                    AgregarParametro(
+                        comando,
+                        $"@id{indice}",
+                        ids[indice]);
+                }
 
                 await using DbDataReader reader =
                     await comando.ExecuteReaderAsync(cancellationToken);
 
-                if (!await reader.ReadAsync(cancellationToken))
-                    return null;
-
-                return new InspeccionFitosanitariaControlRegistro
+                while (await reader.ReadAsync(cancellationToken))
                 {
-                    InspeccionId = reader.GetInt32(0),
-                    UsuarioSolicitanteId = reader.GetInt32(1),
-                    NombreInspeccion = reader.IsDBNull(2)
-                        ? string.Empty
-                        : reader.GetString(2),
-                    CerradaTecnico = reader.GetBoolean(3),
-                    FechaCierreTecnicoUtc = reader.IsDBNull(4)
-                        ? null
-                        : DateTime.SpecifyKind(
-                            reader.GetDateTime(4), DateTimeKind.Utc),
-                    UsuarioCierreTecnicoId = reader.IsDBNull(5)
-                        ? null
-                        : reader.GetInt32(5),
-                    Activo = reader.GetBoolean(6)
-                };
+                    var registro = new InspeccionFitosanitariaControlRegistro
+                    {
+                        InspeccionId = reader.GetInt32(0),
+                        UsuarioSolicitanteId = reader.GetInt32(1),
+                        NombreInspeccion = reader.IsDBNull(2)
+                            ? string.Empty
+                            : reader.GetString(2),
+                        CerradaTecnico = reader.GetBoolean(3),
+                        FechaCierreTecnicoUtc = reader.IsDBNull(4)
+                            ? null
+                            : DateTime.SpecifyKind(
+                                reader.GetDateTime(4),
+                                DateTimeKind.Utc),
+                        UsuarioCierreTecnicoId = reader.IsDBNull(5)
+                            ? null
+                            : reader.GetInt32(5),
+                        Activo = reader.GetBoolean(6)
+                    };
+
+                    resultado[registro.InspeccionId] = registro;
+                }
+
+                return resultado;
             }, cancellationToken);
         }
 
@@ -144,6 +187,7 @@ WHERE DiagnosticoIAId = @id;
             CancellationToken cancellationToken = default)
         {
             await InicializarAsync(cancellationToken);
+
             string valor = (nombre ?? string.Empty).Trim();
             if (valor.Length == 0)
                 valor = $"Inspección #{inspeccionId}";
@@ -160,8 +204,7 @@ WHERE DiagnosticoIAId = @id
 
             await EjecutarAsync(async conexion =>
             {
-                await using DbCommand comando = conexion.CreateCommand();
-                comando.CommandText = sql;
+                await using DbCommand comando = CrearComando(conexion, sql);
                 AgregarParametro(comando, "@id", inspeccionId);
                 AgregarParametro(comando, "@nombre", valor);
                 await comando.ExecuteNonQueryAsync(cancellationToken);
@@ -169,31 +212,81 @@ WHERE DiagnosticoIAId = @id
             }, cancellationToken);
         }
 
-        public async Task<bool> TieneProcesamientoActivoAsync(
-            int inspeccionId,
-            CancellationToken cancellationToken = default)
+        /// <summary>
+        /// Resume la condición de cierre sin cargar imágenes ni historiales.
+        /// La consulta cuenta únicamente las fotografías activas.
+        /// </summary>
+        public async Task<InspeccionFitosanitariaEstadoCierre>
+            ObtenerEstadoCierreAsync(
+                int inspeccionId,
+                CancellationToken cancellationToken = default)
         {
             await InicializarAsync(cancellationToken);
+
             const string sql = """
-SELECT CASE WHEN EXISTS
-(
-    SELECT 1
-    FROM dbo.diagnosticoIAImagen
-    WHERE DiagnosticoIAId = @id
-      AND ISNULL(Activo, 1) = 1
-      AND UPPER(ISNULL(Estado, N'BORRADOR')) IN
-          (N'PENDIENTE_IA', N'ANALIZANDO_IA')
-) THEN 1 ELSE 0 END;
+SELECT
+    COUNT_BIG(1) AS TotalActivas,
+    SUM(CASE
+        WHEN UPPER(ISNULL(Estado, N'BORRADOR')) IN
+        (
+            N'APROBADA',
+            N'APROBADA_CON_CORRECCION',
+            N'RECHAZADA',
+            N'NO_CONCLUYENTE',
+            N'DESCARTADA',
+            N'PUBLICADA_ALBUM'
+        ) THEN 1 ELSE 0 END) AS TotalFinalizadas,
+    SUM(CASE
+        WHEN UPPER(ISNULL(Estado, N'BORRADOR')) IN
+            (N'PENDIENTE_IA', N'ANALIZANDO_IA')
+        THEN 1 ELSE 0 END) AS TotalProcesando,
+    SUM(CASE
+        WHEN UPPER(ISNULL(Estado, N'BORRADOR')) NOT IN
+        (
+            N'APROBADA',
+            N'APROBADA_CON_CORRECCION',
+            N'RECHAZADA',
+            N'NO_CONCLUYENTE',
+            N'DESCARTADA',
+            N'PUBLICADA_ALBUM'
+        ) THEN 1 ELSE 0 END) AS TotalPendientes
+FROM dbo.diagnosticoIAImagen
+WHERE DiagnosticoIAId = @id
+  AND ISNULL(Activo, 1) = 1;
 """;
 
             return await EjecutarAsync(async conexion =>
             {
-                await using DbCommand comando = conexion.CreateCommand();
-                comando.CommandText = sql;
+                await using DbCommand comando = CrearComando(conexion, sql);
                 AgregarParametro(comando, "@id", inspeccionId);
-                object? valor = await comando.ExecuteScalarAsync(cancellationToken);
-                return Convert.ToInt32(valor ?? 0) == 1;
+
+                await using DbDataReader reader =
+                    await comando.ExecuteReaderAsync(cancellationToken);
+
+                if (!await reader.ReadAsync(cancellationToken))
+                {
+                    return new InspeccionFitosanitariaEstadoCierre(
+                        0, 0, 0, 0);
+                }
+
+                return new InspeccionFitosanitariaEstadoCierre(
+                    Convert.ToInt32(reader.GetInt64(0)),
+                    reader.IsDBNull(1) ? 0 : reader.GetInt32(1),
+                    reader.IsDBNull(2) ? 0 : reader.GetInt32(2),
+                    reader.IsDBNull(3) ? 0 : reader.GetInt32(3));
             }, cancellationToken);
+        }
+
+        public async Task<bool> TieneProcesamientoActivoAsync(
+            int inspeccionId,
+            CancellationToken cancellationToken = default)
+        {
+            InspeccionFitosanitariaEstadoCierre estado =
+                await ObtenerEstadoCierreAsync(
+                    inspeccionId,
+                    cancellationToken);
+
+            return estado.TotalProcesando > 0;
         }
 
         public async Task<bool> CerrarDefinitivamenteAsync(
@@ -202,34 +295,62 @@ SELECT CASE WHEN EXISTS
             CancellationToken cancellationToken = default)
         {
             await InicializarAsync(cancellationToken);
+
             const string sql = """
 UPDATE dbo.diagnosticoIA
 SET CerradaTecnico = 1,
     FechaCierreTecnicoUtc = SYSUTCDATETIME(),
-    UsuarioCierreTecnicoId = @usuarioId
+    UsuarioCierreTecnicoId = @usuarioId,
+    Estado = CASE
+        WHEN EXISTS
+        (
+            SELECT 1
+            FROM dbo.diagnosticoIAImagen i
+            WHERE i.DiagnosticoIAId =
+                  dbo.diagnosticoIA.DiagnosticoIAId
+              AND ISNULL(i.Activo, 1) = 1
+              AND UPPER(ISNULL(i.Estado, N'BORRADOR')) IN
+                  (N'RECHAZADA', N'NO_CONCLUYENTE')
+        ) THEN N'FINALIZADA_PARCIALMENTE'
+        ELSE N'FINALIZADA'
+    END
 WHERE DiagnosticoIAId = @id
   AND UsuarioSolicitanteId = @usuarioId
   AND Activo = 1
   AND CerradaTecnico = 0
+  AND EXISTS
+  (
+      SELECT 1
+      FROM dbo.diagnosticoIAImagen i
+      WHERE i.DiagnosticoIAId = dbo.diagnosticoIA.DiagnosticoIAId
+        AND ISNULL(i.Activo, 1) = 1
+  )
   AND NOT EXISTS
   (
       SELECT 1
       FROM dbo.diagnosticoIAImagen i
       WHERE i.DiagnosticoIAId = dbo.diagnosticoIA.DiagnosticoIAId
         AND ISNULL(i.Activo, 1) = 1
-        AND UPPER(ISNULL(i.Estado, N'BORRADOR')) IN
-            (N'PENDIENTE_IA', N'ANALIZANDO_IA')
+        AND UPPER(ISNULL(i.Estado, N'BORRADOR')) NOT IN
+        (
+            N'APROBADA',
+            N'APROBADA_CON_CORRECCION',
+            N'RECHAZADA',
+            N'NO_CONCLUYENTE',
+            N'DESCARTADA',
+            N'PUBLICADA_ALBUM'
+        )
   );
 SELECT @@ROWCOUNT;
 """;
 
             return await EjecutarAsync(async conexion =>
             {
-                await using DbCommand comando = conexion.CreateCommand();
-                comando.CommandText = sql;
+                await using DbCommand comando = CrearComando(conexion, sql);
                 AgregarParametro(comando, "@id", inspeccionId);
                 AgregarParametro(comando, "@usuarioId", usuarioId);
-                object? valor = await comando.ExecuteScalarAsync(cancellationToken);
+                object? valor =
+                    await comando.ExecuteScalarAsync(cancellationToken);
                 return Convert.ToInt32(valor ?? 0) == 1;
             }, cancellationToken);
         }
@@ -249,9 +370,27 @@ SELECT @@ROWCOUNT;
             }
             finally
             {
-                if (cerrar)
+                if (cerrar && db.Database.CurrentTransaction == null)
                     await conexion.CloseAsync();
             }
+        }
+
+        private DbCommand CrearComando(
+            DbConnection conexion,
+            string sql)
+        {
+            DbCommand comando = conexion.CreateCommand();
+            comando.CommandText = sql;
+            comando.CommandType = CommandType.Text;
+            comando.CommandTimeout = 180;
+
+            if (db.Database.CurrentTransaction is not null)
+            {
+                comando.Transaction =
+                    db.Database.CurrentTransaction.GetDbTransaction();
+            }
+
+            return comando;
         }
 
         private static void AgregarParametro(
@@ -275,5 +414,17 @@ SELECT @@ROWCOUNT;
         public DateTime? FechaCierreTecnicoUtc { get; set; }
         public int? UsuarioCierreTecnicoId { get; set; }
         public bool Activo { get; set; }
+    }
+
+    public sealed record InspeccionFitosanitariaEstadoCierre(
+        int TotalActivas,
+        int TotalFinalizadas,
+        int TotalProcesando,
+        int TotalPendientes)
+    {
+        public bool TodasFinalizadas =>
+            TotalActivas > 0 &&
+            TotalFinalizadas == TotalActivas &&
+            TotalPendientes == 0;
     }
 }
