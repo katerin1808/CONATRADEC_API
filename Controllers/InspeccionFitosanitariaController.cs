@@ -112,7 +112,7 @@ namespace CONATRADEC_API.Controllers
                 CodigoTerreno = codigoTerreno,
                 UsuarioSolicitanteId = usuarioId!.Value,
                 FechaSolicitudUtc = DateTime.UtcNow,
-                Estado = InspeccionFitosanitariaFlujo.InspeccionEstados.Borrador,
+                Estado = InspeccionFitosanitariaFlujo.InspeccionEstados.EnProceso,
                 ModeloGemini = Limitar(proveedor.ModeloPrincipal, 80),
                 ObservacionUsuario = Limitar(request.Observacion, 1000),
                 RequiereValidacionHumana = true,
@@ -228,6 +228,21 @@ namespace CONATRADEC_API.Controllers
             if (inspeccion == null)
                 return NoEncontrado();
 
+            InspeccionCierreMetadatos cierre =
+                await database.ObtenerCierreInspeccionAsync(
+                    id,
+                    cancellationToken);
+
+            if (cierre.CerradaTecnico)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "La inspección ya fue cerrada por el técnico y no admite nuevas fotografías."
+                });
+            }
+
             bool puedeAgregar =
                 inspeccion.UsuarioSolicitanteId == usuarioId.Value &&
                 await TienePermisoAsync(
@@ -320,14 +335,10 @@ namespace CONATRADEC_API.Controllers
                         cancellationToken);
                 }
 
-                string estadoAnterior = inspeccion.Estado;
-                inspeccion.Estado =
-                    InspeccionFitosanitariaFlujo.InspeccionEstados.Borrador;
-
                 inspeccion.Historial.Add(new DiagnosticoIAHistorial
                 {
                     UsuarioId = usuarioId.Value,
-                    EstadoAnterior = estadoAnterior,
+                    EstadoAnterior = inspeccion.Estado,
                     EstadoNuevo = inspeccion.Estado,
                     Accion = "FOTOGRAFIAS_AGREGADAS_V2",
                     Detalle =
@@ -347,6 +358,10 @@ namespace CONATRADEC_API.Controllers
 
                 throw;
             }
+
+            await ActualizarEstadoInspeccionAsync(
+                inspeccion,
+                cancellationToken);
 
             return Ok(new
             {
@@ -375,10 +390,6 @@ namespace CONATRADEC_API.Controllers
                 .Trim()
                 .ToLowerInvariant();
 
-            IQueryable<DiagnosticoIA> query = diagnosticoDb.Diagnosticos
-                .AsNoTracking()
-                .Where(item => item.Activo);
-
             switch (modoNormalizado)
             {
                 case "analizador":
@@ -390,12 +401,6 @@ namespace CONATRADEC_API.Controllers
                         cancellationToken);
                     if (acceso != null)
                         return acceso;
-
-                    query = query.Where(item =>
-                        item.Estado ==
-                            InspeccionFitosanitariaFlujo.InspeccionEstados.PendienteRevision ||
-                        item.Estado ==
-                            InspeccionFitosanitariaFlujo.InspeccionEstados.EnProceso);
                     break;
                 }
                 case "aprobador":
@@ -407,10 +412,6 @@ namespace CONATRADEC_API.Controllers
                         cancellationToken);
                     if (acceso != null)
                         return acceso;
-
-                    query = query.Where(item =>
-                        item.Estado ==
-                            InspeccionFitosanitariaFlujo.InspeccionEstados.PendienteAprobacion);
                     break;
                 }
                 case "historial":
@@ -433,12 +434,6 @@ namespace CONATRADEC_API.Controllers
 
                     if (!puedeLeer)
                         return Forbid();
-
-                    query = query.Where(item =>
-                        item.Estado ==
-                            InspeccionFitosanitariaFlujo.InspeccionEstados.Finalizada ||
-                        item.Estado ==
-                            InspeccionFitosanitariaFlujo.InspeccionEstados.FinalizadaParcialmente);
                     break;
                 }
                 default:
@@ -450,11 +445,20 @@ namespace CONATRADEC_API.Controllers
                         cancellationToken);
                     if (acceso != null)
                         return acceso;
-
-                    query = query.Where(item =>
-                        item.UsuarioSolicitanteId == usuarioId.Value);
                     break;
                 }
+            }
+
+            IQueryable<DiagnosticoIA> query = diagnosticoDb.Diagnosticos
+                .AsNoTracking()
+                .Where(item => item.Activo);
+
+            if (modoNormalizado is not "analizador" and
+                not "aprobador" and
+                not "historial")
+            {
+                query = query.Where(item =>
+                    item.UsuarioSolicitanteId == usuarioId.Value);
             }
 
             List<DiagnosticoIA> inspecciones = await query
@@ -463,9 +467,18 @@ namespace CONATRADEC_API.Controllers
                 .Take(300)
                 .ToListAsync(cancellationToken);
 
+            int[] ids = inspecciones
+                .Select(item => item.DiagnosticoIAId)
+                .ToArray();
+
             Dictionary<int, List<FotoMetadatos>> fotosPorInspeccion =
                 await database.ObtenerFotosPorDiagnosticosAsync(
-                    inspecciones.Select(item => item.DiagnosticoIAId),
+                    ids,
+                    cancellationToken);
+
+            Dictionary<int, InspeccionCierreMetadatos> cierres =
+                await database.ObtenerCierresInspeccionesAsync(
+                    ids,
                     cancellationToken);
 
             var data = new List<InspeccionFitosanitariaListaDto>();
@@ -476,13 +489,43 @@ namespace CONATRADEC_API.Controllers
                     fotosPorInspeccion.GetValueOrDefault(
                         inspeccion.DiagnosticoIAId) ?? [];
 
+                InspeccionCierreMetadatos cierre =
+                    cierres.GetValueOrDefault(
+                        inspeccion.DiagnosticoIAId) ??
+                    new InspeccionCierreMetadatos(false, null, null);
+
+                string estado =
+                    InspeccionFitosanitariaFlujo.CalcularEstadoInspeccion(
+                        metadatos.Select(item => item.Estado),
+                        cierre.CerradaTecnico);
+
+                bool incluir = modoNormalizado switch
+                {
+                    "analizador" =>
+                        cierre.CerradaTecnico &&
+                        estado == InspeccionFitosanitariaFlujo
+                            .InspeccionEstados.PendienteRevision,
+                    "aprobador" =>
+                        estado == InspeccionFitosanitariaFlujo
+                            .InspeccionEstados.PendienteAprobacion,
+                    "historial" =>
+                        estado is
+                            InspeccionFitosanitariaFlujo.InspeccionEstados.Finalizada or
+                            InspeccionFitosanitariaFlujo.InspeccionEstados.FinalizadaParcialmente,
+                    _ => true
+                };
+
+                if (!incluir)
+                    continue;
+
                 data.Add(new InspeccionFitosanitariaListaDto
                 {
                     InspeccionId = inspeccion.DiagnosticoIAId,
                     CodigoTerreno = inspeccion.CodigoTerreno,
                     FechaRegistroSistemaUtc = inspeccion.FechaSolicitudUtc,
-                    Estado = InspeccionFitosanitariaFlujo.CalcularEstadoInspeccion(
-                        metadatos.Select(item => item.Estado)),
+                    Estado = estado,
+                    CerradaTecnico = cierre.CerradaTecnico,
+                    FechaCierreTecnicoUtc = cierre.FechaCierreTecnicoUtc,
                     TotalFotografias = metadatos.Count,
                     Pendientes = metadatos.Count(item =>
                         !InspeccionFitosanitariaFlujo.EsEstadoFinal(item.Estado) &&
@@ -633,6 +676,13 @@ namespace CONATRADEC_API.Controllers
             if (acceso != null)
                 return acceso;
 
+            IActionResult? cierreInvalido = await ValidarInspeccionAbiertaAsync(
+                id,
+                cancellationToken);
+
+            if (cierreInvalido != null)
+                return cierreInvalido;
+
             InspeccionOperacionMasivaDto data =
                 await ProcesarSeleccionAsync(
                     inspeccion!,
@@ -681,6 +731,32 @@ namespace CONATRADEC_API.Controllers
             if (!esPropietario && !puedeAnalizar)
                 return Forbid();
 
+            await database.InicializarAsync(cancellationToken);
+            InspeccionCierreMetadatos cierreRevision =
+                await database.ObtenerCierreInspeccionAsync(
+                    id,
+                    cancellationToken);
+
+            if (!cierreRevision.CerradaTecnico && !esPropietario)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "La inspección todavía está abierta y no se encuentra disponible para el analizador."
+                });
+            }
+
+            if (cierreRevision.CerradaTecnico && !puedeAnalizar)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "La inspección ya fue cerrada. Las revisiones posteriores corresponden al analizador."
+                });
+            }
+
             InspeccionOperacionMasivaDto data =
                 await ProcesarSeleccionAsync(
                     inspeccion,
@@ -725,6 +801,13 @@ namespace CONATRADEC_API.Controllers
             if (permiso != null)
                 return permiso;
 
+            IActionResult? cierreInvalido = await ValidarInspeccionAbiertaAsync(
+                id,
+                cancellationToken);
+
+            if (cierreInvalido != null)
+                return cierreInvalido;
+
             InspeccionOperacionMasivaDto data = await EjecutarSobreSeleccionAsync(
                 inspeccion,
                 request.FotografiaIds,
@@ -742,7 +825,7 @@ namespace CONATRADEC_API.Controllers
                         usuarioId!.Value,
                         InspeccionFitosanitariaFlujo.FotoEstados.PendienteAnalizador,
                         InspeccionFitosanitariaFlujo.Acciones.TecnicoEnviaAnalizador,
-                        "El técnico envió la fotografía al analizador humano.",
+                        "El técnico marcó la fotografía como lista para el analizador. Será visible después de cerrar la inspección.",
                         cancellationToken: cancellationToken);
 
                     return InspeccionFitosanitariaFlujo.FotoEstados.PendienteAnalizador;
@@ -754,7 +837,7 @@ namespace CONATRADEC_API.Controllers
             return Ok(new
             {
                 success = data.TotalExitosas > 0,
-                message = CrearMensajeOperacion(data, "enviadas al analizador"),
+                message = CrearMensajeOperacion(data, "preparadas para revisión"),
                 data
             });
         }
@@ -780,14 +863,15 @@ namespace CONATRADEC_API.Controllers
                     TipoPermisoApi.Eliminar,
                     cancellationToken);
 
-            bool puedeAnalizar = await TienePermisoAsync(
-                usuarioId,
-                DiagnosticoIAFlujo.InterfazAnalizador,
-                TipoPermisoApi.Actualizar,
+            if (!esPropietario)
+                return Forbid();
+
+            IActionResult? cierreInvalido = await ValidarInspeccionAbiertaAsync(
+                id,
                 cancellationToken);
 
-            if (!esPropietario && !puedeAnalizar)
-                return Forbid();
+            if (cierreInvalido != null)
+                return cierreInvalido;
 
             InspeccionOperacionMasivaDto data = await EjecutarSobreSeleccionAsync(
                 inspeccion,
@@ -821,6 +905,100 @@ namespace CONATRADEC_API.Controllers
             });
         }
 
+        [HttpPost("{id:int}/cerrar-tecnico")]
+        public async Task<IActionResult> CerrarInspeccionTecnico(
+            int id,
+            CancellationToken cancellationToken = default)
+        {
+            int? usuarioId = ObtenerUsuarioId();
+            if (!usuarioId.HasValue)
+                return Forbid();
+
+            await database.InicializarAsync(cancellationToken);
+
+            DiagnosticoIA? inspeccion = await CargarInspeccionAsync(
+                id,
+                cancellationToken);
+
+            if (inspeccion == null)
+                return NoEncontrado();
+
+            if (inspeccion.UsuarioSolicitanteId != usuarioId.Value)
+                return Forbid();
+
+            IActionResult? permiso = await ValidarPermisoAsync(
+                usuarioId,
+                DiagnosticoIAFlujo.InterfazSolicitud,
+                TipoPermisoApi.Agregar,
+                cancellationToken);
+
+            if (permiso != null)
+                return permiso;
+
+            InspeccionCierreMetadatos cierre =
+                await database.ObtenerCierreInspeccionAsync(
+                    id,
+                    cancellationToken);
+
+            if (cierre.CerradaTecnico)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "La inspección ya fue cerrada por el técnico."
+                });
+            }
+
+            List<FotoMetadatos> fotos = await database.ObtenerFotosAsync(
+                id,
+                cancellationToken);
+
+            if (!InspeccionFitosanitariaFlujo.PuedeCerrarInspeccion(
+                    fotos.Where(item => item.Activo)
+                        .Select(item => item.Estado)))
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = ObtenerMotivoNoPuedeCerrar(fotos)
+                });
+            }
+
+            await database.CerrarInspeccionAsync(
+                id,
+                usuarioId.Value,
+                cancellationToken);
+
+            string estadoAnterior = inspeccion.Estado;
+            inspeccion.Estado =
+                InspeccionFitosanitariaFlujo.InspeccionEstados.PendienteRevision;
+
+            inspeccion.Historial.Add(new DiagnosticoIAHistorial
+            {
+                UsuarioId = usuarioId.Value,
+                EstadoAnterior = Limitar(estadoAnterior, 40),
+                EstadoNuevo = Limitar(inspeccion.Estado, 40),
+                Accion =
+                    InspeccionFitosanitariaFlujo.Acciones.TecnicoCierraInspeccion,
+                Detalle =
+                    "El técnico cerró la inspección. Desde este momento las fotografías listas quedan visibles para el analizador humano.",
+                FechaUtc = DateTime.UtcNow
+            });
+
+            await diagnosticoDb.SaveChangesAsync(cancellationToken);
+
+            return Ok(new
+            {
+                success = true,
+                message =
+                    "La inspección fue cerrada y enviada a la bandeja del analizador.",
+                data = await CrearDetalleAsync(
+                    id,
+                    usuarioId.Value,
+                    cancellationToken)
+            });
+        }
+
         [HttpPost("{id:int}/analisis-humano")]
         public async Task<IActionResult> GuardarAnalisisHumano(
             int id,
@@ -843,6 +1021,23 @@ namespace CONATRADEC_API.Controllers
 
             if (inspeccion == null)
                 return NoEncontrado();
+
+            await database.InicializarAsync(cancellationToken);
+
+            InspeccionCierreMetadatos cierre =
+                await database.ObtenerCierreInspeccionAsync(
+                    id,
+                    cancellationToken);
+
+            if (!cierre.CerradaTecnico)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "La inspección todavía no ha sido cerrada por el técnico."
+                });
+            }
 
             var data = new InspeccionOperacionMasivaDto
             {
@@ -974,6 +1169,23 @@ namespace CONATRADEC_API.Controllers
 
             if (inspeccion == null)
                 return NoEncontrado();
+
+            await database.InicializarAsync(cancellationToken);
+
+            InspeccionCierreMetadatos cierre =
+                await database.ObtenerCierreInspeccionAsync(
+                    id,
+                    cancellationToken);
+
+            if (!cierre.CerradaTecnico)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "La inspección todavía no ha sido cerrada por el técnico."
+                });
+            }
 
             var data = new InspeccionOperacionMasivaDto
             {
@@ -1538,6 +1750,11 @@ namespace CONATRADEC_API.Controllers
                     inspeccionId,
                     cancellationToken);
 
+            InspeccionCierreMetadatos cierre =
+                await database.ObtenerCierreInspeccionAsync(
+                    inspeccionId,
+                    cancellationToken);
+
             Dictionary<int, AnalisisHumanoRegistro> humanos =
                 await database.ObtenerUltimosAnalisisHumanosAsync(
                     inspeccionId,
@@ -1576,7 +1793,7 @@ namespace CONATRADEC_API.Controllers
                     item => item.nombreCompletoUsuario,
                     cancellationToken);
 
-            bool puedeGestionar =
+            bool tienePermisoGestionar =
                 inspeccion.UsuarioSolicitanteId == usuarioActualId &&
                 await TienePermisoAsync(
                     usuarioActualId,
@@ -1584,17 +1801,28 @@ namespace CONATRADEC_API.Controllers
                     TipoPermisoApi.Agregar,
                     cancellationToken);
 
-            bool puedeAnalizar = await TienePermisoAsync(
-                usuarioActualId,
-                DiagnosticoIAFlujo.InterfazAnalizador,
-                TipoPermisoApi.Actualizar,
-                cancellationToken);
+            bool puedeGestionar =
+                tienePermisoGestionar && !cierre.CerradaTecnico;
 
-            bool puedeAprobar = await TienePermisoAsync(
-                usuarioActualId,
-                DiagnosticoIAFlujo.InterfazAprobador,
-                TipoPermisoApi.Actualizar,
-                cancellationToken);
+            bool puedeCerrar =
+                puedeGestionar &&
+                InspeccionFitosanitariaFlujo.PuedeCerrarInspeccion(
+                    metadatos.Where(item => item.Activo)
+                        .Select(item => item.Estado));
+
+            bool puedeAnalizar = cierre.CerradaTecnico &&
+                await TienePermisoAsync(
+                    usuarioActualId,
+                    DiagnosticoIAFlujo.InterfazAnalizador,
+                    TipoPermisoApi.Actualizar,
+                    cancellationToken);
+
+            bool puedeAprobar = cierre.CerradaTecnico &&
+                await TienePermisoAsync(
+                    usuarioActualId,
+                    DiagnosticoIAFlujo.InterfazAprobador,
+                    TipoPermisoApi.Actualizar,
+                    cancellationToken);
 
             bool puedePublicar = await TienePermisoAsync(
                 usuarioActualId,
@@ -1613,9 +1841,19 @@ namespace CONATRADEC_API.Controllers
                     $"Usuario {inspeccion.UsuarioSolicitanteId}"),
                 Observacion = inspeccion.ObservacionUsuario,
                 Estado = InspeccionFitosanitariaFlujo.CalcularEstadoInspeccion(
-                    metadatos.Select(item => item.Estado)),
+                    metadatos.Select(item => item.Estado),
+                    cierre.CerradaTecnico),
                 FechaRegistroSistemaUtc = inspeccion.FechaSolicitudUtc,
+                CerradaTecnico = cierre.CerradaTecnico,
+                FechaCierreTecnicoUtc = cierre.FechaCierreTecnicoUtc,
+                UsuarioCierreTecnicoId = cierre.UsuarioCierreTecnicoId,
                 PuedeGestionarSolicitud = puedeGestionar,
+                PuedeCerrarInspeccion = puedeCerrar,
+                MotivoNoPuedeCerrar = cierre.CerradaTecnico
+                    ? "La inspección ya fue cerrada por el técnico."
+                    : puedeCerrar
+                        ? "Todas las fotografías activas están listas. Ya puede cerrar la inspección y habilitar la revisión humana."
+                        : ObtenerMotivoNoPuedeCerrar(metadatos),
                 PuedeAnalizar = puedeAnalizar,
                 PuedeAprobar = puedeAprobar,
                 PuedePublicarAlbum = puedePublicar,
@@ -1872,9 +2110,15 @@ namespace CONATRADEC_API.Controllers
                 inspeccion.DiagnosticoIAId,
                 cancellationToken);
 
+            InspeccionCierreMetadatos cierre =
+                await database.ObtenerCierreInspeccionAsync(
+                    inspeccion.DiagnosticoIAId,
+                    cancellationToken);
+
             string estadoNuevo =
                 InspeccionFitosanitariaFlujo.CalcularEstadoInspeccion(
-                    fotos.Select(item => item.Estado));
+                    fotos.Select(item => item.Estado),
+                    cierre.CerradaTecnico);
 
             if (inspeccion.Estado == estadoNuevo)
                 return;
@@ -1987,15 +2231,73 @@ namespace CONATRADEC_API.Controllers
                     TipoPermisoApi.Agregar,
                     cancellationToken);
 
-            bool puedeAnalizar = await TienePermisoAsync(
-                usuarioId,
-                DiagnosticoIAFlujo.InterfazAnalizador,
-                TipoPermisoApi.Actualizar,
-                cancellationToken);
-
-            return esPropietario || puedeAnalizar
+            return esPropietario
                 ? null
                 : Forbid();
+        }
+
+        private async Task<IActionResult?> ValidarInspeccionAbiertaAsync(
+            int inspeccionId,
+            CancellationToken cancellationToken)
+        {
+            await database.InicializarAsync(cancellationToken);
+
+            InspeccionCierreMetadatos cierre =
+                await database.ObtenerCierreInspeccionAsync(
+                    inspeccionId,
+                    cancellationToken);
+
+            if (!cierre.CerradaTecnico)
+                return null;
+
+            return BadRequest(new
+            {
+                success = false,
+                message =
+                    "La inspección ya fue cerrada por el técnico. No se pueden agregar, descartar, reenviar ni volver a analizar fotografías desde la etapa técnica."
+            });
+        }
+
+        private static string ObtenerMotivoNoPuedeCerrar(
+            IReadOnlyCollection<FotoMetadatos> fotos)
+        {
+            List<FotoMetadatos> activas = fotos
+                .Where(item => item.Activo)
+                .ToList();
+
+            if (activas.Count == 0)
+                return "La inspección debe contener al menos una fotografía activa.";
+
+            if (activas.Any(item =>
+                    item.Estado ==
+                    InspeccionFitosanitariaFlujo.FotoEstados.ErrorIA))
+            {
+                return "Hay fotografías con error de IA. Reintente el análisis o descártelas antes de cerrar la inspección.";
+            }
+
+            if (activas.Any(item => item.Estado is
+                    InspeccionFitosanitariaFlujo.FotoEstados.Borrador or
+                    InspeccionFitosanitariaFlujo.FotoEstados.PendienteIA or
+                    InspeccionFitosanitariaFlujo.FotoEstados.AnalizandoIA))
+            {
+                return "Todas las fotografías activas deben analizarse con IA o descartarse antes de cerrar la inspección.";
+            }
+
+            if (activas.Any(item =>
+                    item.Estado ==
+                    InspeccionFitosanitariaFlujo.FotoEstados.PendienteDecisionTecnico))
+            {
+                return "Todavía hay fotografías pendientes de la decisión del técnico. Envíelas al analizador o descártelas.";
+            }
+
+            if (!activas.Any(item =>
+                    item.Estado ==
+                    InspeccionFitosanitariaFlujo.FotoEstados.PendienteAnalizador))
+            {
+                return "Debe enviar al menos una fotografía al analizador antes de cerrar la inspección.";
+            }
+
+            return "Para cerrar, todas las fotografías activas deben estar enviadas al analizador o descartadas.";
         }
 
         private ProveedorIAClienteService CrearProveedorService() =>
@@ -2014,7 +2316,17 @@ namespace CONATRADEC_API.Controllers
             string codigoTerreno = (codigo ?? string.Empty).Trim();
 
             if (string.IsNullOrWhiteSpace(codigoTerreno))
-                return (null, string.Empty, null);
+            {
+                return (
+                    null,
+                    string.Empty,
+                    BadRequest(new
+                    {
+                        success = false,
+                        message =
+                            "Debe seleccionar un terreno activo antes de crear la inspección fitosanitaria."
+                    }));
+            }
 
             var terreno = await db.Terreno
                 .AsNoTracking()

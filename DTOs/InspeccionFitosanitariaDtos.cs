@@ -5,8 +5,8 @@ namespace CONATRADEC_API.DTOs
 {
     public sealed class InspeccionFitosanitariaCrearRequest
     {
-        [MaxLength(50)]
-        public string? CodigoTerreno { get; set; }
+        [Required, MaxLength(50)]
+        public string CodigoTerreno { get; set; } = string.Empty;
 
         [MaxLength(1000)]
         public string? Observacion { get; set; }
@@ -183,6 +183,8 @@ namespace CONATRADEC_API.DTOs
         public string CodigoTerreno { get; set; } = string.Empty;
         public DateTime FechaRegistroSistemaUtc { get; set; }
         public string Estado { get; set; } = string.Empty;
+        public bool CerradaTecnico { get; set; }
+        public DateTime? FechaCierreTecnicoUtc { get; set; }
         public int TotalFotografias { get; set; }
         public int Pendientes { get; set; }
         public int ConError { get; set; }
@@ -303,8 +305,13 @@ namespace CONATRADEC_API.DTOs
         public string Observacion { get; set; } = string.Empty;
         public string Estado { get; set; } = string.Empty;
         public DateTime FechaRegistroSistemaUtc { get; set; }
+        public bool CerradaTecnico { get; set; }
+        public DateTime? FechaCierreTecnicoUtc { get; set; }
+        public int? UsuarioCierreTecnicoId { get; set; }
         public List<InspeccionFotoDto> Fotografias { get; set; } = [];
         public bool PuedeGestionarSolicitud { get; set; }
+        public bool PuedeCerrarInspeccion { get; set; }
+        public string MotivoNoPuedeCerrar { get; set; } = string.Empty;
         public bool PuedeAnalizar { get; set; }
         public bool PuedeAprobar { get; set; }
         public bool PuedePublicarAlbum { get; set; }

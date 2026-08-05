@@ -1,5 +1,6 @@
 using CONATRADEC_API.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using System.Data;
 using System.Data.Common;
 
@@ -37,8 +38,25 @@ namespace CONATRADEC_API.Infrastructure
                 if (inicializada)
                     return;
 
+                bool columnaCierreYaExistia =
+                    await ExisteColumnaAsync(
+                        "dbo.diagnosticoIA",
+                        "CerradaTecnico",
+                        cancellationToken);
+
+                await InicializarColumnasInspeccionAsync(cancellationToken);
                 await InicializarColumnasImagenAsync(cancellationToken);
                 await NormalizarImagenesExistentesAsync(cancellationToken);
+
+                // La compatibilidad se aplica una sola vez, exactamente cuando
+                // se incorpora la columna de cierre. En reinicios posteriores
+                // no se cierran automáticamente inspecciones parciales nuevas.
+                if (!columnaCierreYaExistia)
+                {
+                    await NormalizarCierreInspeccionesExistentesAsync(
+                        cancellationToken);
+                }
+
                 await InicializarTablasFlujoAsync(cancellationToken);
 
                 inicializada = true;
@@ -168,6 +186,57 @@ END;
             {
                 ProveedorInicializacionLock.Release();
             }
+        }
+
+        private async Task<bool> ExisteColumnaAsync(
+            string tabla,
+            string columna,
+            CancellationToken cancellationToken)
+        {
+            const string sql = """
+SELECT CASE
+    WHEN COL_LENGTH(@tabla, @columna) IS NULL THEN 0
+    ELSE 1
+END;
+""";
+
+            await using DbCommand command = CrearComando(sql);
+            AgregarParametro(command, "@tabla", tabla);
+            AgregarParametro(command, "@columna", columna);
+            await AbrirAsync(command.Connection!, cancellationToken);
+
+            object? resultado =
+                await command.ExecuteScalarAsync(cancellationToken);
+
+            return Convert.ToInt32(resultado) == 1;
+        }
+
+        private async Task InicializarColumnasInspeccionAsync(
+            CancellationToken cancellationToken)
+        {
+            const string sql = """
+IF OBJECT_ID(N'[dbo].[diagnosticoIA]', N'U') IS NULL
+BEGIN
+    RAISERROR(
+        N'La tabla base diagnosticoIA no existe. Publique primero la versión base del módulo Diagnóstico IA.',
+        16,
+        1);
+    RETURN;
+END;
+
+IF COL_LENGTH(N'dbo.diagnosticoIA', N'CerradaTecnico') IS NULL
+    ALTER TABLE [dbo].[diagnosticoIA]
+        ADD [CerradaTecnico] BIT NOT NULL
+            CONSTRAINT [DF_diagIA_cerradaTecnico] DEFAULT(0);
+IF COL_LENGTH(N'dbo.diagnosticoIA', N'FechaCierreTecnicoUtc') IS NULL
+    ALTER TABLE [dbo].[diagnosticoIA]
+        ADD [FechaCierreTecnicoUtc] DATETIME2(0) NULL;
+IF COL_LENGTH(N'dbo.diagnosticoIA', N'UsuarioCierreTecnicoId') IS NULL
+    ALTER TABLE [dbo].[diagnosticoIA]
+        ADD [UsuarioCierreTecnicoId] INT NULL;
+""";
+
+            await db.Database.ExecuteSqlRawAsync(sql, cancellationToken);
         }
 
         private async Task InicializarColumnasImagenAsync(
@@ -303,6 +372,46 @@ WHERE imagen.[Estado] = N''BORRADOR'';');
         PRINT ERROR_MESSAGE();
     END CATCH;
 END;
+""";
+
+            await db.Database.ExecuteSqlRawAsync(sql, cancellationToken);
+        }
+
+        private async Task NormalizarCierreInspeccionesExistentesAsync(
+            CancellationToken cancellationToken)
+        {
+            /*
+             * Las inspecciones creadas con versiones anteriores no tenían un
+             * cierre explícito. Si ya poseen fotografías en etapas humanas o
+             * finales, se consideran cerradas para no desaparecer de las
+             * bandejas del analizador y aprobador.
+             */
+            const string sql = """
+UPDATE diagnostico
+SET [CerradaTecnico] = 1,
+    [FechaCierreTecnicoUtc] = ISNULL(
+        [FechaCierreTecnicoUtc],
+        diagnostico.[FechaSolicitudUtc])
+FROM [dbo].[diagnosticoIA] diagnostico
+WHERE [CerradaTecnico] = 0
+  AND EXISTS
+  (
+      SELECT 1
+      FROM [dbo].[diagnosticoIAImagen] imagen
+      WHERE imagen.[DiagnosticoIAId] = diagnostico.[DiagnosticoIAId]
+        AND imagen.[Estado] IN
+        (
+            N'PENDIENTE_ANALIZADOR',
+            N'EN_ANALISIS_HUMANO',
+            N'PENDIENTE_APROBACION',
+            N'DEVUELTA_AL_ANALIZADOR',
+            N'APROBADA',
+            N'APROBADA_CON_CORRECCION',
+            N'RECHAZADA',
+            N'NO_CONCLUYENTE',
+            N'PUBLICADA_ALBUM'
+        )
+  );
 """;
 
             await db.Database.ExecuteSqlRawAsync(sql, cancellationToken);
@@ -1368,10 +1477,122 @@ VALUES
                 ("@historialJson", historialJson));
         }
 
+        public async Task<InspeccionCierreMetadatos>
+            ObtenerCierreInspeccionAsync(
+                int diagnosticoId,
+                CancellationToken cancellationToken = default)
+        {
+            const string sql = """
+SELECT
+    [CerradaTecnico],
+    [FechaCierreTecnicoUtc],
+    [UsuarioCierreTecnicoId]
+FROM [dbo].[diagnosticoIA]
+WHERE [DiagnosticoIAId] = @diagnosticoId;
+""";
+
+            await using DbCommand command = CrearComando(sql);
+            AgregarParametro(command, "@diagnosticoId", diagnosticoId);
+            await AbrirAsync(command.Connection!, cancellationToken);
+
+            await using DbDataReader reader =
+                await command.ExecuteReaderAsync(cancellationToken);
+
+            if (!await reader.ReadAsync(cancellationToken))
+                return new InspeccionCierreMetadatos(false, null, null);
+
+            return new InspeccionCierreMetadatos(
+                reader.GetBoolean(0),
+                reader.IsDBNull(1) ? null : reader.GetDateTime(1),
+                reader.IsDBNull(2) ? null : reader.GetInt32(2));
+        }
+
+        public async Task<Dictionary<int, InspeccionCierreMetadatos>>
+            ObtenerCierresInspeccionesAsync(
+                IEnumerable<int> diagnosticoIds,
+                CancellationToken cancellationToken = default)
+        {
+            int[] ids = diagnosticoIds
+                .Where(item => item > 0)
+                .Distinct()
+                .ToArray();
+
+            var resultado = ids.ToDictionary(
+                item => item,
+                _ => new InspeccionCierreMetadatos(false, null, null));
+
+            if (ids.Length == 0)
+                return resultado;
+
+            string parametros = string.Join(
+                ",",
+                ids.Select((_, indice) => $"@id{indice}"));
+
+            string sql = $"""
+SELECT
+    [DiagnosticoIAId],
+    [CerradaTecnico],
+    [FechaCierreTecnicoUtc],
+    [UsuarioCierreTecnicoId]
+FROM [dbo].[diagnosticoIA]
+WHERE [DiagnosticoIAId] IN ({parametros});
+""";
+
+            await using DbCommand command = CrearComando(sql);
+            for (int indice = 0; indice < ids.Length; indice++)
+                AgregarParametro(command, $"@id{indice}", ids[indice]);
+
+            await AbrirAsync(command.Connection!, cancellationToken);
+            await using DbDataReader reader =
+                await command.ExecuteReaderAsync(cancellationToken);
+
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                resultado[reader.GetInt32(0)] = new InspeccionCierreMetadatos(
+                    reader.GetBoolean(1),
+                    reader.IsDBNull(2) ? null : reader.GetDateTime(2),
+                    reader.IsDBNull(3) ? null : reader.GetInt32(3));
+            }
+
+            return resultado;
+        }
+
+        public Task CerrarInspeccionAsync(
+            int diagnosticoId,
+            int usuarioId,
+            CancellationToken cancellationToken = default)
+        {
+            const string sql = """
+UPDATE [dbo].[diagnosticoIA]
+SET [CerradaTecnico] = 1,
+    [FechaCierreTecnicoUtc] = SYSUTCDATETIME(),
+    [UsuarioCierreTecnicoId] = @usuarioId
+WHERE [DiagnosticoIAId] = @diagnosticoId
+  AND [CerradaTecnico] = 0;
+""";
+
+            return EjecutarAsync(
+                sql,
+                cancellationToken,
+                ("@diagnosticoId", diagnosticoId),
+                ("@usuarioId", usuarioId));
+        }
+
         private DbCommand CrearComando(string sql)
         {
             DbConnection connection = db.Database.GetDbConnection();
             DbCommand command = connection.CreateCommand();
+
+            // Cuando EF Core ya abrió una transacción, los comandos SQL
+            // auxiliares deben participar en la misma transacción. De lo
+            // contrario SQL Server rechaza el comando por no tener asignado
+            // DbTransaction.
+            if (db.Database.CurrentTransaction is not null)
+            {
+                command.Transaction =
+                    db.Database.CurrentTransaction.GetDbTransaction();
+            }
+
             command.CommandText = sql;
             command.CommandType = CommandType.Text;
             command.CommandTimeout = 180;
@@ -1543,6 +1764,11 @@ VALUES
         string Accion,
         string Detalle,
         DateTime FechaUtc);
+
+    public sealed record InspeccionCierreMetadatos(
+        bool CerradaTecnico,
+        DateTime? FechaCierreTecnicoUtc,
+        int? UsuarioCierreTecnicoId);
 
     public sealed record ProveedorConfiguracionRegistro(
         string Proveedor,

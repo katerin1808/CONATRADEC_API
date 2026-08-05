@@ -2,6 +2,8 @@ using CONATRADEC_API.DTOs;
 using CONATRADEC_API.Infrastructure;
 using CONATRADEC_API.Models;
 using Microsoft.EntityFrameworkCore;
+using System.Data;
+using System.Data.Common;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
@@ -327,12 +329,23 @@ namespace CONATRADEC_API.Services
                 new { categorias, fichas },
                 JsonOptions);
 
+            TipoFotografiaIAContexto contextoTipo =
+                await ObtenerContextoTipoFotografiaAsync(
+                    imagen.TipoFotografia,
+                    cancellationToken);
+
             return $$"""
 Actúa como apoyo preliminar para una inspección fitosanitaria de café.
 No sustituyes al técnico, al analizador ni al aprobador humano.
 Analiza solamente la fotografía adjunta y no inventes síntomas que no sean visibles.
 
-Tipo declarado por el técnico: {{imagen.TipoFotografia}}.
+Tipo declarado por el técnico: {{contextoTipo.Codigo}} - {{contextoTipo.Nombre}}.
+Descripción del tipo: {{contextoTipo.Descripcion}}
+Instrucción específica para esta fotografía:
+{{contextoTipo.InstruccionIA}}
+La instrucción específica orienta tu atención, pero no autoriza a inventar síntomas
+ni a ignorar otras evidencias claramente visibles en la fotografía.
+
 Observación de campo: {{Normalizar(observacionUsuario, 1000)}}
 Retroalimentación para una revisión adicional: {{Normalizar(retroalimentacion, 2000)}}
 Diagnóstico que el humano considera posible: {{Normalizar(diagnosticoPropuesto, 300)}}
@@ -375,6 +388,125 @@ Valores controlados:
 - severidadVisual: LEVE, MODERADA, SEVERA, NO_APLICA o NO_EVALUABLE.
 - nivelCerteza: ALTO, MEDIO, BAJO o NO_DETERMINADO.
 """;
+        }
+
+        private async Task<TipoFotografiaIAContexto>
+            ObtenerContextoTipoFotografiaAsync(
+                string? codigoRecibido,
+                CancellationToken cancellationToken)
+        {
+            string codigo = NormalizarCodigoTipo(codigoRecibido);
+
+            const string sql = """
+SELECT TOP (1)
+    [Codigo], [Nombre], [Descripcion], [InstruccionIA]
+FROM [dbo].[tipoFotografiaIA]
+WHERE [Codigo] = @codigo
+ORDER BY [Activo] DESC, [FechaModificacionUtc] DESC;
+""";
+
+            try
+            {
+                DbConnection connection = db.Database.GetDbConnection();
+                await using DbCommand command = connection.CreateCommand();
+                command.CommandText = sql;
+                command.CommandType = CommandType.Text;
+                command.CommandTimeout = 30;
+
+                DbParameter parameter = command.CreateParameter();
+                parameter.ParameterName = "@codigo";
+                parameter.Value = codigo;
+                command.Parameters.Add(parameter);
+
+                if (connection.State != ConnectionState.Open)
+                    await connection.OpenAsync(cancellationToken);
+
+                await using DbDataReader reader =
+                    await command.ExecuteReaderAsync(cancellationToken);
+
+                if (await reader.ReadAsync(cancellationToken))
+                {
+                    return new TipoFotografiaIAContexto(
+                        reader.GetString(0),
+                        reader.GetString(1),
+                        reader.GetString(2),
+                        reader.GetString(3));
+                }
+            }
+            catch (Exception ex)
+            {
+                /*
+                 * Permite analizar registros anteriores aunque el catálogo aún
+                 * no se haya inicializado. La selección de fotografías nuevas
+                 * sí carga el catálogo desde su endpoint administrativo.
+                 */
+                logger.LogWarning(
+                    ex,
+                    "No fue posible cargar la instrucción del tipo de fotografía {Codigo}.",
+                    codigo);
+            }
+
+            return CrearContextoPredeterminado(codigo);
+        }
+
+        private static TipoFotografiaIAContexto
+            CrearContextoPredeterminado(string codigo) =>
+            codigo switch
+            {
+                "HOJA" => new(
+                    codigo,
+                    "Hoja",
+                    "Fotografía enfocada principalmente en hojas de café.",
+                    "Prioriza manchas, clorosis, necrosis, perforaciones, galerías, pústulas, micelio, esporas, insectos, deformaciones y distribución de síntomas en el haz y el envés."),
+                "FRUTO" => new(
+                    codigo,
+                    "Fruto",
+                    "Fotografía enfocada en frutos del café.",
+                    "Prioriza coloración, madurez anormal, lesiones, perforaciones, pudrición, momificación, deformaciones y presencia de broca u otros insectos."),
+                "TALLO" => new(
+                    codigo,
+                    "Tallo",
+                    "Fotografía enfocada en tallos del cafeto.",
+                    "Prioriza lesiones, cancros, grietas, perforaciones, descortezamiento, exudados, pudrición y presencia de insectos."),
+                "RAMA" => new(
+                    codigo,
+                    "Rama",
+                    "Fotografía enfocada en una rama.",
+                    "Prioriza lesiones, defoliación, marchitez, muerte regresiva, nudos, hojas o frutos asociados y presencia de insectos."),
+                "PLANTA_COMPLETA" => new(
+                    codigo,
+                    "Planta completa",
+                    "Fotografía general del cafeto.",
+                    "Evalúa vigor, arquitectura, distribución de síntomas, marchitez, defoliación, coloración y daños generalizados."),
+                "RAIZ" => new(
+                    codigo,
+                    "Raíz",
+                    "Fotografía de raíces o cuello de la planta.",
+                    "Prioriza pudrición, necrosis, deformaciones, agallas, pérdida de raíces finas, lesiones del cuello y plagas del suelo."),
+                "OTRA" => new(
+                    codigo,
+                    "Otra evidencia",
+                    "Evidencia diferente de los tipos comunes.",
+                    "Describe primero el contenido visible y adapta el análisis a la evidencia y a la observación del técnico."),
+                _ => new(
+                    "EVIDENCIA",
+                    "Evidencia general",
+                    "Fotografía general de una inspección fitosanitaria.",
+                    "Describe el contenido visible y revisa síntomas, plagas, enfermedades, daños mecánicos y condiciones anormales en cualquier parte del cafeto.")
+            };
+
+        private static string NormalizarCodigoTipo(string? valor)
+        {
+            string codigo = (valor ?? string.Empty)
+                .Trim()
+                .ToUpperInvariant()
+                .Replace(' ', '_');
+
+            return string.IsNullOrWhiteSpace(codigo)
+                ? "EVIDENCIA"
+                : codigo.Length <= 40
+                    ? codigo
+                    : codigo[..40];
         }
 
         private async Task<string> EnviarGeminiNativoAsync(
@@ -1199,6 +1331,12 @@ Valores controlados:
         [JsonIgnore]
         public string RespuestaOriginalJson { get; set; } = string.Empty;
     }
+
+    internal sealed record TipoFotografiaIAContexto(
+        string Codigo,
+        string Nombre,
+        string Descripcion,
+        string InstruccionIA);
 
     public sealed class ProveedorIAException : Exception
     {
