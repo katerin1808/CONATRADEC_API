@@ -28,15 +28,18 @@ namespace CONATRADEC_API.Controllers
         private readonly DiagnosticoIADbContext diagnosticoDb;
         private readonly PermisoApiService permisos;
         private readonly InspeccionFitosanitariaDatabase database;
+        private readonly InspeccionFitosanitariaControlDatabaseInitializer control;
 
         public InspeccionFitosanitariaBandejaController(
             DBContext db,
             DiagnosticoIADbContext diagnosticoDb,
-            PermisoApiService permisos)
+            PermisoApiService permisos,
+            InspeccionFitosanitariaControlDatabaseInitializer control)
         {
             this.db = db;
             this.diagnosticoDb = diagnosticoDb;
             this.permisos = permisos;
+            this.control = control;
             database = new InspeccionFitosanitariaDatabase(diagnosticoDb);
         }
 
@@ -170,6 +173,7 @@ namespace CONATRADEC_API.Controllers
             }
 
             await database.InicializarAsync(cancellationToken);
+            await control.InicializarAsync(cancellationToken);
             await AsegurarIndicesAsync(cancellationToken);
 
             List<InspeccionFitosanitariaBandejaItemDto> items =
@@ -240,6 +244,10 @@ WITH bandejaBase AS
 (
     SELECT
         d.DiagnosticoIAId AS InspeccionId,
+        ISNULL(NULLIF(LTRIM(RTRIM(d.NombreInspeccion)), N''),
+               N'Inspección #' + CONVERT(NVARCHAR(20), d.DiagnosticoIAId))
+            AS NombreInspeccion,
+        CONVERT(BIT, ISNULL(d.CerradaTecnico, 0)) AS CerradaTecnico,
         ISNULL(d.CodigoTerreno, N'') AS CodigoTerreno,
         d.FechaSolicitudUtc AS FechaRegistroSistemaUtc,
         ISNULL(propietarioActual.NombreCompleto, N'') AS Propietario,
@@ -372,6 +380,7 @@ WITH bandejaBase AS
       AND
       (
           @buscar = N''
+          OR ISNULL(d.NombreInspeccion, N'') LIKE N'%' + @buscar + N'%'
           OR ISNULL(d.CodigoTerreno, N'') LIKE N'%' + @buscar + N'%'
           OR ISNULL(t.direccionTerreno, N'') LIKE N'%' + @buscar + N'%'
           OR ISNULL(m.NombreMunicipio, N'') LIKE N'%' + @buscar + N'%'
@@ -444,6 +453,8 @@ WITH bandejaBase AS
 )
 SELECT TOP(@limite)
     InspeccionId,
+    NombreInspeccion,
+    CerradaTecnico,
     CodigoTerreno,
     Propietario,
     Municipio,
@@ -460,8 +471,8 @@ WHERE (@estado = N'' OR EstadoCalculado = @estado)
   AND
   (
       @modoDecisiones = 0
-      OR EstadoCalculado IN
-          (N'EN_PROCESO', N'EN_PROCESO_CON_ERRORES')
+      OR (CerradaTecnico = 0 AND EstadoCalculado IN
+          (N'EN_PROCESO', N'EN_PROCESO_CON_ERRORES'))
   )
   AND
   (
@@ -557,19 +568,21 @@ ORDER BY FechaRegistroSistemaUtc DESC, InspeccionId DESC;
                     resultado.Add(new InspeccionFitosanitariaBandejaItemDto
                     {
                         InspeccionId = reader.GetInt32(0),
-                        CodigoTerreno = Texto(reader, 1),
-                        Propietario = Texto(reader, 2),
-                        Municipio = Texto(reader, 3),
-                        Departamento = Texto(reader, 4),
+                        NombreInspeccion = Texto(reader, 1),
+                        CerradaTecnico = reader.GetBoolean(2),
+                        CodigoTerreno = Texto(reader, 3),
+                        Propietario = Texto(reader, 4),
+                        Municipio = Texto(reader, 5),
+                        Departamento = Texto(reader, 6),
                         FechaRegistroSistemaUtc = DateTime.SpecifyKind(
-                            reader.GetDateTime(5),
+                            reader.GetDateTime(7),
                             DateTimeKind.Utc),
-                        Estado = Texto(reader, 6),
-                        TotalFotografias = reader.GetInt32(7),
-                        Pendientes = reader.GetInt32(8),
-                        ConError = reader.GetInt32(9),
-                        Finalizadas = reader.GetInt32(10),
-                        UrlMiniatura = Texto(reader, 11)
+                        Estado = Texto(reader, 8),
+                        TotalFotografias = reader.GetInt32(9),
+                        Pendientes = reader.GetInt32(10),
+                        ConError = reader.GetInt32(11),
+                        Finalizadas = reader.GetInt32(12),
+                        UrlMiniatura = Texto(reader, 13)
                     });
                 }
 

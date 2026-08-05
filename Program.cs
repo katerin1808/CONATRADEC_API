@@ -35,6 +35,8 @@ builder.Services.AddScoped<
     AnalisisEdicionPropietarioActionFilter>();
 
 builder.Services.AddScoped<AnalisisHistorialActionFilter>();
+builder.Services.AddScoped<InspeccionFitosanitariaControlActionFilter>();
+builder.Services.AddScoped<InspeccionFitosanitariaControlDatabaseInitializer>();
 
 builder.Services.AddControllers(options =>
 {
@@ -48,6 +50,7 @@ builder.Services.AddControllers(options =>
         AnalisisEdicionPropietarioActionFilter>();
 
     options.Filters.AddService<AnalisisHistorialActionFilter>();
+    options.Filters.AddService<InspeccionFitosanitariaControlActionFilter>();
 });
 
 builder.Services.AddConatradecJwt(
@@ -375,6 +378,12 @@ await using (
             .GetRequiredService<DiagnosticoIADatabaseInitializer>();
 
     await diagnosticoIAInitializer.InicializarAsync();
+
+    InspeccionFitosanitariaControlDatabaseInitializer inspeccionControlInitializer =
+        scope.ServiceProvider
+            .GetRequiredService<InspeccionFitosanitariaControlDatabaseInitializer>();
+
+    await inspeccionControlInitializer.InicializarAsync();
 
     DispositivosConexionDatabaseInitializer dispositivosInitializer =
         scope.ServiceProvider

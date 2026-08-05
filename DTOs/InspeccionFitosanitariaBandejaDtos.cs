@@ -7,6 +7,8 @@ namespace CONATRADEC_API.DTOs
     public sealed class InspeccionFitosanitariaBandejaItemDto
     {
         public int InspeccionId { get; set; }
+        public string NombreInspeccion { get; set; } = string.Empty;
+        public bool CerradaTecnico { get; set; }
         public string CodigoTerreno { get; set; } = string.Empty;
         public string Propietario { get; set; } = string.Empty;
         public string Municipio { get; set; } = string.Empty;
