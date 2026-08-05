@@ -15,6 +15,12 @@ using QuestPDF.Infrastructure;
 var builder = WebApplication.CreateBuilder(args);
 
 const long tamanoMaximoActualizacion = 1024L * 1024L * 1024L;
+const string politicaCorsPropietarios = "ConatradecPropietarios";
+
+string[] origenesCorsConfigurados =
+    builder.Configuration
+        .GetSection("Cors:AllowedOrigins")
+        .Get<string[]>() ?? [];
 
 builder.Services.Configure<FormOptions>(options =>
 {
@@ -29,6 +35,29 @@ builder.Services.Configure<IISServerOptions>(options =>
 builder.WebHost.ConfigureKestrel(options =>
 {
     options.Limits.MaxRequestBodySize = tamanoMaximoActualizacion;
+});
+
+/*
+ * Permite que el portal de propietarios ejecutado localmente desde Expo Web
+ * consuma la API durante las pruebas. En producción se pueden agregar
+ * orígenes explícitos mediante la sección Cors:AllowedOrigins.
+ *
+ * No se habilita AllowAnyOrigin ni AllowCredentials.
+ */
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy(
+        politicaCorsPropietarios,
+        policy =>
+        {
+            policy
+                .SetIsOriginAllowed(origin =>
+                    EsOrigenCorsPermitido(
+                        origin,
+                        origenesCorsConfigurados))
+                .AllowAnyHeader()
+                .AllowAnyMethod();
+        });
 });
 
 builder.Services.AddScoped<
@@ -238,6 +267,12 @@ app.UseConatradecImageStorage();
 
 app.UseRouting();
 
+/*
+ * CORS debe ejecutarse después de UseRouting y antes de autenticación.
+ * La política solo autoriza orígenes locales o configurados explícitamente.
+ */
+app.UseCors(politicaCorsPropietarios);
+
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseAuthentication();
 app.UseMiddleware<JwtSessionMiddleware>();
@@ -423,3 +458,41 @@ await using (
 }
 
 app.Run();
+
+static bool EsOrigenCorsPermitido(
+    string? origen,
+    IReadOnlyCollection<string> origenesConfigurados)
+{
+    if (string.IsNullOrWhiteSpace(origen))
+        return false;
+
+    string origenNormalizado =
+        origen.Trim().TrimEnd('/');
+
+    if (origenesConfigurados.Any(configurado =>
+        string.Equals(
+            configurado?.Trim().TrimEnd('/'),
+            origenNormalizado,
+            StringComparison.OrdinalIgnoreCase)))
+    {
+        return true;
+    }
+
+    if (!Uri.TryCreate(
+        origenNormalizado,
+        UriKind.Absolute,
+        out Uri? uri))
+    {
+        return false;
+    }
+
+    bool esquemaValido =
+        uri.Scheme.Equals(
+            Uri.UriSchemeHttp,
+            StringComparison.OrdinalIgnoreCase) ||
+        uri.Scheme.Equals(
+            Uri.UriSchemeHttps,
+            StringComparison.OrdinalIgnoreCase);
+
+    return esquemaValido && uri.IsLoopback;
+}
