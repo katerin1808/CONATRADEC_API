@@ -148,7 +148,9 @@ namespace CONATRADEC_API.Controllers
             bool modoDecisiones = modoNormalizado == "decisiones";
             bool soloPropias = !modoHistorial;
 
-            string estadoNormalizado = NormalizarCodigo(estado);
+            string estadoNormalizado = modoDecisiones
+                ? string.Empty
+                : NormalizarCodigo(estado);
             string tipoNormalizado = NormalizarCodigo(tipoFotografia);
 
             HashSet<string> estadosValidos =
@@ -216,7 +218,9 @@ namespace CONATRADEC_API.Controllers
             return Ok(new
             {
                 success = true,
-                message = "Inspecciones obtenidas correctamente.",
+                message = modoDecisiones
+                    ? "Inspecciones con decisiones técnicas pendientes obtenidas correctamente."
+                    : "Inspecciones obtenidas correctamente.",
                 data = pagina
             });
         }
@@ -247,7 +251,15 @@ WITH bandejaBase AS
         ISNULL(NULLIF(LTRIM(RTRIM(d.NombreInspeccion)), N''),
                N'Inspección #' + CONVERT(NVARCHAR(20), d.DiagnosticoIAId))
             AS NombreInspeccion,
-        CONVERT(BIT, ISNULL(d.CerradaTecnico, 0)) AS CerradaTecnico,
+        CONVERT(BIT, ISNULL(d.EtapaTecnicaFinalizada, 0))
+            AS EtapaTecnicaFinalizada,
+        CONVERT(BIT,
+            CASE
+                WHEN ISNULL(d.CerradaDefinitiva, 0) = 1
+                     OR ISNULL(d.CerradaTecnico, 0) = 1
+                    THEN 1
+                ELSE 0
+            END) AS CerradaDefinitiva,
         ISNULL(d.CodigoTerreno, N'') AS CodigoTerreno,
         d.FechaSolicitudUtc AS FechaRegistroSistemaUtc,
         ISNULL(propietarioActual.NombreCompleto, N'') AS Propietario,
@@ -257,36 +269,37 @@ WITH bandejaBase AS
         CONVERT(INT, ISNULL(resumen.Pendientes, 0)) AS Pendientes,
         CONVERT(INT, ISNULL(resumen.ConError, 0)) AS ConError,
         CONVERT(INT, ISNULL(resumen.Finalizadas, 0)) AS Finalizadas,
+        CONVERT(INT, ISNULL(resumen.PendienteDecisionTecnico, 0))
+            AS RequierenDecisionTecnico,
+        CONVERT(INT, ISNULL(resumen.EnviadasRevision, 0))
+            AS EnviadasRevision,
+        CONVERT(INT, ISNULL(resumen.Procesando, 0)) AS Procesando,
+        CONVERT(INT, ISNULL(resumen.Descartadas, 0)) AS Descartadas,
         ISNULL(portada.UrlImagen, N'') AS UrlMiniatura,
         CASE
+            WHEN ISNULL(d.CerradaDefinitiva, 0) = 1
+                 OR ISNULL(d.CerradaTecnico, 0) = 1
+                THEN CASE
+                    WHEN ISNULL(resumen.TotalFotografias, 0) > 0
+                         AND ISNULL(resumen.TotalFotografias, 0) =
+                             ISNULL(resumen.Finalizadas, 0)
+                         AND ISNULL(resumen.FinalizadasExitosas, 0) =
+                             ISNULL(resumen.TotalFotografias, 0)
+                        THEN N'FINALIZADA'
+                    ELSE N'FINALIZADA_PARCIALMENTE'
+                END
+            WHEN ISNULL(d.EtapaTecnicaFinalizada, 0) = 1
+                THEN CASE
+                    WHEN ISNULL(resumen.PendienteAprobacion, 0) > 0
+                        THEN N'PENDIENTE_APROBACION'
+                    ELSE N'PENDIENTE_REVISION'
+                END
             WHEN ISNULL(resumen.TotalFotografias, 0) = 0
                  OR ISNULL(resumen.BorradorOPendienteIA, 0) =
                     ISNULL(resumen.TotalFotografias, 0)
                 THEN N'BORRADOR'
-            WHEN ISNULL(resumen.PendienteAprobacion, 0) > 0
-                THEN N'PENDIENTE_APROBACION'
-            WHEN ISNULL(resumen.PendienteRevision, 0) > 0
-                THEN N'PENDIENTE_REVISION'
-            WHEN ISNULL(resumen.EnProcesamiento, 0) > 0
-                THEN CASE
-                    WHEN ISNULL(resumen.ConError, 0) > 0
-                        THEN N'EN_PROCESO_CON_ERRORES'
-                    ELSE N'EN_PROCESO'
-                END
             WHEN ISNULL(resumen.ConError, 0) > 0
-                THEN CASE
-                    WHEN ISNULL(resumen.Finalizadas, 0) > 0
-                        THEN N'FINALIZADA_PARCIALMENTE'
-                    ELSE N'EN_PROCESO_CON_ERRORES'
-                END
-            WHEN ISNULL(resumen.TotalFotografias, 0) =
-                 ISNULL(resumen.Finalizadas, 0)
-                THEN CASE
-                    WHEN ISNULL(resumen.FinalizadasExitosas, 0) =
-                         ISNULL(resumen.TotalFotografias, 0)
-                        THEN N'FINALIZADA'
-                    ELSE N'FINALIZADA_PARCIALMENTE'
-                END
+                THEN N'EN_PROCESO_CON_ERRORES'
             ELSE N'EN_PROCESO'
         END AS EstadoCalculado
     FROM dbo.diagnosticoIA d
@@ -320,17 +333,21 @@ WITH bandejaBase AS
                     THEN 1 ELSE 0 END) AS BorradorOPendienteIA,
             SUM(CASE
                 WHEN UPPER(ISNULL(i.Estado, N'BORRADOR')) =
+                    N'PENDIENTE_DECISION_TECNICO'
+                    THEN 1 ELSE 0 END) AS PendienteDecisionTecnico,
+            SUM(CASE
+                WHEN UPPER(ISNULL(i.Estado, N'BORRADOR')) =
                     N'PENDIENTE_APROBACION'
                     THEN 1 ELSE 0 END) AS PendienteAprobacion,
             SUM(CASE
                 WHEN UPPER(ISNULL(i.Estado, N'BORRADOR')) IN
                     (N'PENDIENTE_ANALIZADOR', N'EN_ANALISIS_HUMANO',
-                     N'DEVUELTA_AL_ANALIZADOR')
+                     N'DEVUELTO_PARA_CORRECCION', N'DEVUELTA_AL_ANALIZADOR')
                     THEN 1 ELSE 0 END) AS PendienteRevision,
             SUM(CASE
                 WHEN UPPER(ISNULL(i.Estado, N'BORRADOR')) IN
-                    (N'ANALIZANDO_IA', N'PENDIENTE_DECISION_TECNICO')
-                    THEN 1 ELSE 0 END) AS EnProcesamiento,
+                    (N'PENDIENTE_IA', N'ANALIZANDO_IA')
+                    THEN 1 ELSE 0 END) AS Procesando,
             SUM(CASE
                 WHEN UPPER(ISNULL(i.Estado, N'BORRADOR')) = N'ERROR_IA'
                     THEN 1 ELSE 0 END) AS ConError,
@@ -348,8 +365,19 @@ WITH bandejaBase AS
             SUM(CASE
                 WHEN UPPER(ISNULL(i.Estado, N'BORRADOR')) IN
                     (N'APROBADA', N'APROBADA_CON_CORRECCION',
-                     N'PUBLICADA_ALBUM')
-                    THEN 1 ELSE 0 END) AS FinalizadasExitosas
+                     N'DESCARTADA', N'PUBLICADA_ALBUM')
+                    THEN 1 ELSE 0 END) AS FinalizadasExitosas,
+            SUM(CASE
+                WHEN UPPER(ISNULL(i.Estado, N'BORRADOR')) IN
+                    (N'PENDIENTE_ANALIZADOR', N'EN_ANALISIS_HUMANO',
+                     N'DEVUELTO_PARA_CORRECCION', N'DEVUELTA_AL_ANALIZADOR',
+                     N'PENDIENTE_APROBACION', N'APROBADA',
+                     N'APROBADA_CON_CORRECCION', N'RECHAZADA',
+                     N'NO_CONCLUYENTE', N'PUBLICADA_ALBUM')
+                    THEN 1 ELSE 0 END) AS EnviadasRevision,
+            SUM(CASE
+                WHEN UPPER(ISNULL(i.Estado, N'BORRADOR')) = N'DESCARTADA'
+                    THEN 1 ELSE 0 END) AS Descartadas
         FROM dbo.diagnosticoIAImagen i
         WHERE i.DiagnosticoIAId = d.DiagnosticoIAId
           AND ISNULL(i.Activo, 1) = 1
@@ -454,7 +482,9 @@ WITH bandejaBase AS
 SELECT TOP(@limite)
     InspeccionId,
     NombreInspeccion,
-    CerradaTecnico,
+    EtapaTecnicaFinalizada AS CerradaTecnico,
+    EtapaTecnicaFinalizada,
+    CerradaDefinitiva,
     CodigoTerreno,
     Propietario,
     Municipio,
@@ -465,20 +495,27 @@ SELECT TOP(@limite)
     Pendientes,
     ConError,
     Finalizadas,
+    RequierenDecisionTecnico,
+    EnviadasRevision,
+    Procesando,
+    Descartadas,
     UrlMiniatura
 FROM bandejaBase
 WHERE (@estado = N'' OR EstadoCalculado = @estado)
   AND
   (
       @modoDecisiones = 0
-      OR (CerradaTecnico = 0 AND EstadoCalculado IN
-          (N'EN_PROCESO', N'EN_PROCESO_CON_ERRORES'))
+      OR
+      (
+          EtapaTecnicaFinalizada = 0
+          AND CerradaDefinitiva = 0
+          AND RequierenDecisionTecnico > 0
+      )
   )
   AND
   (
       @modoHistorial = 0
-      OR EstadoCalculado IN
-          (N'FINALIZADA', N'FINALIZADA_PARCIALMENTE')
+      OR CerradaDefinitiva = 1
   )
 ORDER BY FechaRegistroSistemaUtc DESC, InspeccionId DESC;
 """;
@@ -570,19 +607,25 @@ ORDER BY FechaRegistroSistemaUtc DESC, InspeccionId DESC;
                         InspeccionId = reader.GetInt32(0),
                         NombreInspeccion = Texto(reader, 1),
                         CerradaTecnico = reader.GetBoolean(2),
-                        CodigoTerreno = Texto(reader, 3),
-                        Propietario = Texto(reader, 4),
-                        Municipio = Texto(reader, 5),
-                        Departamento = Texto(reader, 6),
+                        EtapaTecnicaFinalizada = reader.GetBoolean(3),
+                        CerradaDefinitiva = reader.GetBoolean(4),
+                        CodigoTerreno = Texto(reader, 5),
+                        Propietario = Texto(reader, 6),
+                        Municipio = Texto(reader, 7),
+                        Departamento = Texto(reader, 8),
                         FechaRegistroSistemaUtc = DateTime.SpecifyKind(
-                            reader.GetDateTime(7),
+                            reader.GetDateTime(9),
                             DateTimeKind.Utc),
-                        Estado = Texto(reader, 8),
-                        TotalFotografias = reader.GetInt32(9),
-                        Pendientes = reader.GetInt32(10),
-                        ConError = reader.GetInt32(11),
-                        Finalizadas = reader.GetInt32(12),
-                        UrlMiniatura = Texto(reader, 13)
+                        Estado = Texto(reader, 10),
+                        TotalFotografias = reader.GetInt32(11),
+                        Pendientes = reader.GetInt32(12),
+                        ConError = reader.GetInt32(13),
+                        Finalizadas = reader.GetInt32(14),
+                        RequierenDecisionTecnico = reader.GetInt32(15),
+                        EnviadasRevision = reader.GetInt32(16),
+                        Procesando = reader.GetInt32(17),
+                        Descartadas = reader.GetInt32(18),
+                        UrlMiniatura = Texto(reader, 19)
                     });
                 }
 
@@ -625,7 +668,14 @@ BEGIN
             [FechaSolicitudUtc] DESC,
             [DiagnosticoIAId] DESC
         )
-        INCLUDE ([TerrenoId], [CodigoTerreno]);
+        INCLUDE
+        (
+            [TerrenoId],
+            [CodigoTerreno],
+            [EtapaTecnicaFinalizada],
+            [CerradaDefinitiva],
+            [CerradaTecnico]
+        );
 END;
 
 IF NOT EXISTS
@@ -643,7 +693,39 @@ BEGIN
             [FechaSolicitudUtc] DESC,
             [DiagnosticoIAId] DESC
         )
-        INCLUDE ([TerrenoId], [CodigoTerreno], [UsuarioSolicitanteId]);
+        INCLUDE
+        (
+            [TerrenoId],
+            [CodigoTerreno],
+            [UsuarioSolicitanteId],
+            [EtapaTecnicaFinalizada],
+            [CerradaDefinitiva],
+            [CerradaTecnico]
+        );
+END;
+
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.indexes
+    WHERE [name] = N'IX_diagnosticoIAImagen_bandeja_estado'
+      AND [object_id] = OBJECT_ID(N'[dbo].[diagnosticoIAImagen]')
+)
+BEGIN
+    CREATE INDEX [IX_diagnosticoIAImagen_bandeja_estado]
+        ON [dbo].[diagnosticoIAImagen]
+        (
+            [DiagnosticoIAId],
+            [Activo],
+            [Estado]
+        )
+        INCLUDE
+        (
+            [Orden],
+            [TipoFotografia],
+            [NombreArchivoOriginal],
+            [UrlImagen]
+        );
 END;
 """;
 

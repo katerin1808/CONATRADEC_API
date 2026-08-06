@@ -55,15 +55,14 @@ namespace CONATRADEC_API.Models
         {
             public const string Borrador = "BORRADOR";
             public const string EnProceso = "EN_PROCESO";
+            public const string EnProcesoConErrores =
+                "EN_PROCESO_CON_ERRORES";
             public const string Parcial = "PARCIAL";
             public const string PendienteRevision = "PENDIENTE_REVISION";
             public const string PendienteAprobacion = "PENDIENTE_APROBACION";
             public const string Finalizada = "FINALIZADA";
             public const string FinalizadaParcialmente =
                 "FINALIZADA_PARCIALMENTE";
-
-            // Compatibilidad con registros y clientes anteriores.
-            public const string EnProcesoConErrores = Borrador;
         }
 
         public static class Acciones
@@ -131,8 +130,7 @@ namespace CONATRADEC_API.Models
                 bool todosFinales = lista.All(EsEstadoFinal);
                 if (!todosFinales)
                 {
-                    // Es una salvaguarda para registros heredados. El cierre
-                    // nuevo no permite llegar aquí con fotografías pendientes.
+                    // Salvaguarda para registros heredados.
                     return InspeccionEstados.PendienteRevision;
                 }
 
@@ -162,7 +160,7 @@ namespace CONATRADEC_API.Models
             }
 
             if (lista.Any(item => item == FotoEstados.ErrorIA))
-                return InspeccionEstados.Borrador;
+                return InspeccionEstados.EnProcesoConErrores;
 
             bool ningunaIniciada = lista.All(item => item is
                 FotoEstados.Borrador or

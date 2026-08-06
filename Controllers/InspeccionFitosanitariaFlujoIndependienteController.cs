@@ -1,4 +1,4 @@
-using CONATRADEC_API.DTOs;
+﻿using CONATRADEC_API.DTOs;
 using CONATRADEC_API.Infrastructure;
 using CONATRADEC_API.Models;
 using CONATRADEC_API.Services;
@@ -11,9 +11,14 @@ using System.Text.Json;
 namespace CONATRADEC_API.Controllers
 {
     /// <summary>
-    /// Operaciones del flujo independiente por fotografía. Este controlador no
-    /// reemplaza la carga del detalle; complementa el módulo con bandejas y
-    /// escrituras que no dependen del cierre global de la inspección.
+    /// Operaciones del flujo independiente por fotografía. El analizador puede
+    /// trabajar con las evidencias que el técnico ya envió, aunque todavía
+    /// existan otras fotografías bajo responsabilidad del técnico.
+    ///
+    /// La revisión humana solo avanza al aprobador cuando la etapa técnica fue
+    /// finalizada y todas las fotografías activas no descartadas ya cuentan con
+    /// una clasificación humana. El cierre de la revisión se aplica de manera
+    /// conjunta, sin perder el expediente individual de cada evidencia.
     /// </summary>
     [ApiController]
     [Authorize]
@@ -38,9 +43,9 @@ namespace CONATRADEC_API.Controllers
         }
 
         /// <summary>
-        /// Bandeja liviana sin N+1. Las fotografías aparecen en la bandeja que
-        /// corresponde a su propio estado, aunque otras fotos de la misma
-        /// inspección continúen en una etapa diferente.
+        /// Bandeja liviana sin N+1. Una inspección aparece para el analizador
+        /// desde que contiene al menos una fotografía enviada. Los contadores
+        /// indican cuántas evidencias recibió y cuántas siguen con el técnico.
         /// </summary>
         [HttpGet("bandeja")]
         public async Task<IActionResult> ObtenerBandeja(
@@ -122,18 +127,28 @@ namespace CONATRADEC_API.Controllers
                         Activo = inspeccion.Activo
                     };
 
+                bool cierreDefinitivo =
+                    controlActual.CerradaDefinitiva ||
+                    controlActual.CerradaTecnico;
+
                 bool incluir = DebeIncluirse(
                     modoNormalizado,
-                    controlActual.CerradaTecnico,
+                    cierreDefinitivo,
                     fotos);
 
                 if (!incluir)
                     continue;
 
+                int pendientesTecnico = fotos.Count(EsPendienteTecnico);
+                int recibidasAnalizador = fotos.Count(EsRecibidaPorAnalizador);
+                int erroresIA = fotos.Count(item =>
+                    NormalizarEstado(item.Estado) ==
+                    InspeccionFitosanitariaFlujo.FotoEstados.ErrorIA);
+
                 string estado =
                     InspeccionFitosanitariaFlujo.CalcularEstadoInspeccion(
                         fotos.Select(item => item.Estado),
-                        controlActual.CerradaTecnico);
+                        cierreDefinitivo);
 
                 data.Add(new InspeccionFitosanitariaFlujoListaDto
                 {
@@ -146,21 +161,34 @@ namespace CONATRADEC_API.Controllers
                     CodigoTerreno = inspeccion.CodigoTerreno,
                     FechaRegistroSistemaUtc = inspeccion.FechaSolicitudUtc,
                     Estado = estado,
-                    CerradaTecnico = controlActual.CerradaTecnico,
+
+                    /*
+                     * El cliente MAUI conserva este nombre por compatibilidad,
+                     * pero en las bandejas representa el fin de la etapa técnica.
+                     */
+                    CerradaTecnico = controlActual.EtapaTecnicaFinalizada,
                     FechaCierreTecnicoUtc =
-                        controlActual.FechaCierreTecnicoUtc,
+                        controlActual.FechaFinEtapaTecnicaUtc,
                     TotalFotografias = fotos.Count,
-                    Pendientes = fotos.Count(item =>
-                        !InspeccionFitosanitariaFlujo.EsEstadoFinal(
-                            item.Estado) &&
-                        item.Estado !=
-                            InspeccionFitosanitariaFlujo.FotoEstados.ErrorIA),
-                    ConError = fotos.Count(item =>
-                        item.Estado ==
-                            InspeccionFitosanitariaFlujo.FotoEstados.ErrorIA),
-                    Finalizadas = fotos.Count(item =>
-                        InspeccionFitosanitariaFlujo.EsEstadoFinal(
-                            item.Estado)),
+                    Pendientes = modoNormalizado == "analizador"
+                        ? pendientesTecnico
+                        : fotos.Count(item =>
+                            !InspeccionFitosanitariaFlujo.EsEstadoFinal(
+                                item.Estado) &&
+                            NormalizarEstado(item.Estado) !=
+                                InspeccionFitosanitariaFlujo.FotoEstados.ErrorIA),
+                    ConError = erroresIA,
+
+                    /*
+                     * Para el analizador Finalizadas se usa como contador de
+                     * recibidas. La página presenta el nombre correcto y evita
+                     * ampliar el contrato histórico del cliente.
+                     */
+                    Finalizadas = modoNormalizado == "analizador"
+                        ? recibidasAnalizador
+                        : fotos.Count(item =>
+                            InspeccionFitosanitariaFlujo.EsEstadoFinal(
+                                item.Estado)),
                     UrlMiniatura = inspeccion.Imagenes
                         .OrderBy(item => item.Orden)
                         .Select(item => item.UrlImagen)
@@ -171,14 +199,19 @@ namespace CONATRADEC_API.Controllers
             return Ok(new
             {
                 success = true,
-                message = "Inspecciones obtenidas correctamente.",
+                message = modoNormalizado == "analizador"
+                    ? "Inspecciones con fotografías recibidas por el analizador obtenidas correctamente."
+                    : "Inspecciones obtenidas correctamente.",
                 data
             });
         }
 
         /// <summary>
-        /// Guarda una clasificación humana para una sola fotografía. Los
-        /// valores nunca se comparten con otra evidencia seleccionada.
+        /// Guarda la clasificación humana de una fotografía. Si el usuario
+        /// solicita avanzar al aprobador pero aún faltan fotografías del técnico
+        /// o clasificaciones humanas, la información se conserva como borrador.
+        /// Cuando se completa la última clasificación, todas las clasificaciones
+        /// listas avanzan juntas al aprobador.
         /// </summary>
         [HttpPost("{id:int}/analisis-humano-individual")]
         public async Task<IActionResult> GuardarAnalisisHumanoIndividual(
@@ -252,7 +285,31 @@ namespace CONATRADEC_API.Controllers
                     });
                 }
 
-                if (meta.Estado is not
+                /*
+                 * Una selección múltiple puede finalizar toda la revisión al
+                 * procesar su última fotografía pendiente. Si el ciclo visual
+                 * todavía intenta procesar otro elemento de la selección, se
+                 * responde como operación idempotente en lugar de generar un
+                 * error artificial.
+                 */
+                if (NormalizarEstado(meta.Estado) ==
+                    InspeccionFitosanitariaFlujo.FotoEstados
+                        .PendienteAprobacion)
+                {
+                    return Ok(new
+                    {
+                        success = true,
+                        message =
+                            "La fotografía ya fue enviada al aprobador al finalizar la revisión humana.",
+                        data = CrearResultadoOperacion(
+                            item.FotografiaId,
+                            InspeccionFitosanitariaFlujo.FotoEstados
+                                .PendienteAprobacion,
+                            "La fotografía ya se encuentra pendiente de aprobación.")
+                    });
+                }
+
+                if (NormalizarEstado(meta.Estado) is not
                     (InspeccionFitosanitariaFlujo.FotoEstados.PendienteAnalizador or
                      InspeccionFitosanitariaFlujo.FotoEstados.EnAnalisisHumano or
                      InspeccionFitosanitariaFlujo.FotoEstados.DevueltaAnalizador))
@@ -274,6 +331,18 @@ namespace CONATRADEC_API.Controllers
                     });
                 }
 
+                EstadoRevisionAnalizador estadoRevision =
+                    await ObtenerEstadoRevisionAnalizadorAsync(
+                        id,
+                        item.FotografiaId,
+                        cancellationToken);
+
+                /*
+                 * Primero se registra el análisis actual como borrador. Si esta
+                 * era la última clasificación requerida y el técnico terminó su
+                 * etapa, el cierre posterior convierte las últimas versiones de
+                 * todas las fotografías en ENVIADO dentro de la misma transacción.
+                 */
                 await database.GuardarAnalisisHumanoAsync(
                     item.FotografiaId,
                     usuarioId!.Value,
@@ -286,29 +355,48 @@ namespace CONATRADEC_API.Controllers
                     item.Severidad,
                     item.NivelCerteza,
                     item.Observaciones,
-                    request.EnviarAprobacion,
+                    enviar: false,
                     cancellationToken);
-
-                string estadoNuevo = request.EnviarAprobacion
-                    ? InspeccionFitosanitariaFlujo.FotoEstados
-                        .PendienteAprobacion
-                    : InspeccionFitosanitariaFlujo.FotoEstados
-                        .EnAnalisisHumano;
 
                 await database.CambiarEstadoFotoAsync(
                     item.FotografiaId,
                     usuarioId.Value,
-                    estadoNuevo,
-                    request.EnviarAprobacion
-                        ? InspeccionFitosanitariaFlujo.Acciones
-                            .AnalisisHumanoEnviado
-                        : InspeccionFitosanitariaFlujo.Acciones
-                            .AnalisisHumanoGuardado,
-                    request.EnviarAprobacion
-                        ? "El análisis humano individual fue guardado y enviado al aprobador."
-                        : "El análisis humano individual fue guardado como borrador.",
+                    InspeccionFitosanitariaFlujo.FotoEstados.EnAnalisisHumano,
+                    InspeccionFitosanitariaFlujo.Acciones.AnalisisHumanoGuardado,
+                    "El análisis humano individual fue guardado como borrador.",
                     fechaAnalisisHumanoUtc: DateTime.UtcNow,
                     cancellationToken: cancellationToken);
+
+                bool finalizarRevision =
+                    request.EnviarAprobacion &&
+                    estadoRevision.PuedeFinalizarConFotografiaActual;
+
+                string estadoNuevo;
+                string mensaje;
+
+                if (finalizarRevision)
+                {
+                    await FinalizarRevisionAnalizadorAsync(
+                        id,
+                        usuarioId.Value,
+                        cancellationToken);
+
+                    estadoNuevo =
+                        InspeccionFitosanitariaFlujo.FotoEstados
+                            .PendienteAprobacion;
+                    mensaje =
+                        "Todas las fotografías recibidas fueron clasificadas. La revisión humana se finalizó y quedó disponible para el aprobador.";
+                }
+                else
+                {
+                    estadoNuevo =
+                        InspeccionFitosanitariaFlujo.FotoEstados
+                            .EnAnalisisHumano;
+
+                    mensaje = request.EnviarAprobacion
+                        ? estadoRevision.MensajeBloqueo
+                        : "La clasificación de la fotografía quedó guardada como borrador.";
+                }
 
                 await ActualizarEstadoInspeccionAsync(
                     inspeccion,
@@ -319,13 +407,11 @@ namespace CONATRADEC_API.Controllers
                 return Ok(new
                 {
                     success = true,
-                    message = request.EnviarAprobacion
-                        ? "La fotografía fue clasificada y enviada al aprobador."
-                        : "La clasificación de la fotografía quedó guardada como borrador.",
+                    message = mensaje,
                     data = CrearResultadoOperacion(
                         item.FotografiaId,
                         estadoNuevo,
-                        "Análisis humano guardado.")
+                        mensaje)
                 });
             }
             catch
@@ -411,7 +497,7 @@ namespace CONATRADEC_API.Controllers
                     item.FotografiaId,
                     cancellationToken);
 
-                if (meta == null || meta.Estado !=
+                if (meta == null || NormalizarEstado(meta.Estado) !=
                     InspeccionFitosanitariaFlujo.FotoEstados
                         .PendienteAprobacion)
                 {
@@ -533,6 +619,155 @@ namespace CONATRADEC_API.Controllers
             }
         }
 
+        private async Task<EstadoRevisionAnalizador>
+            ObtenerEstadoRevisionAnalizadorAsync(
+                int inspeccionId,
+                int fotografiaActualId,
+                CancellationToken cancellationToken)
+        {
+            InspeccionFitosanitariaControlRegistro? registro =
+                await control.ObtenerAsync(
+                    inspeccionId,
+                    cancellationToken);
+
+            List<FotoMetadatos> fotos = (await database.ObtenerFotosAsync(
+                    inspeccionId,
+                    cancellationToken))
+                .Where(item => item.Activo && !item.Descartada)
+                .ToList();
+
+            Dictionary<int, AnalisisHumanoRegistro> analisis =
+                await database.ObtenerUltimosAnalisisHumanosAsync(
+                    inspeccionId,
+                    cancellationToken);
+
+            int pendientesTecnico = fotos.Count(EsPendienteTecnico);
+            int faltanAnalisisOtros = fotos.Count(item =>
+                item.FotografiaId != fotografiaActualId &&
+                !analisis.ContainsKey(item.FotografiaId));
+
+            bool etapaFinalizada =
+                registro?.EtapaTecnicaFinalizada == true;
+
+            bool puedeFinalizar =
+                etapaFinalizada &&
+                pendientesTecnico == 0 &&
+                faltanAnalisisOtros == 0 &&
+                fotos.Count > 0;
+
+            string mensaje;
+
+            if (!etapaFinalizada)
+            {
+                mensaje = pendientesTecnico > 0
+                    ? $"La clasificación se guardó como borrador. El técnico todavía debe enviar o descartar {pendientesTecnico} fotografía(s)."
+                    : "La clasificación se guardó como borrador. El técnico todavía debe finalizar su etapa antes de enviar la revisión al aprobador.";
+            }
+            else if (faltanAnalisisOtros > 0)
+            {
+                mensaje =
+                    $"La clasificación se guardó como borrador. Faltan {faltanAnalisisOtros} fotografía(s) por clasificar antes de finalizar la revisión humana.";
+            }
+            else
+            {
+                mensaje =
+                    "La revisión está completa y puede enviarse al aprobador.";
+            }
+
+            return new EstadoRevisionAnalizador(
+                puedeFinalizar,
+                mensaje);
+        }
+
+        /// <summary>
+        /// Convierte las últimas clasificaciones de todas las fotografías
+        /// activas no descartadas en versiones enviadas y las mueve juntas a
+        /// PENDIENTE_APROBACION. Se ejecuta dentro de la transacción abierta por
+        /// GuardarAnalisisHumanoIndividual.
+        /// </summary>
+        private async Task FinalizarRevisionAnalizadorAsync(
+            int inspeccionId,
+            int usuarioId,
+            CancellationToken cancellationToken)
+        {
+            await diagnosticoDb.Database.ExecuteSqlInterpolatedAsync(
+                $"""
+DECLARE @ahora DATETIME2(0) = SYSUTCDATETIME();
+
+WITH ultimos AS
+(
+    SELECT
+        h.DiagnosticoIAImagenAnalisisHumanoId,
+        ROW_NUMBER() OVER
+        (
+            PARTITION BY h.DiagnosticoIAImagenId
+            ORDER BY h.Version DESC,
+                     h.DiagnosticoIAImagenAnalisisHumanoId DESC
+        ) AS rn
+    FROM dbo.diagnosticoIAImagenAnalisisHumano h
+    INNER JOIN dbo.diagnosticoIAImagen i
+        ON i.DiagnosticoIAImagenId = h.DiagnosticoIAImagenId
+    WHERE i.DiagnosticoIAId = {inspeccionId}
+      AND ISNULL(i.Activo, 1) = 1
+      AND ISNULL(i.Descartada, 0) = 0
+)
+UPDATE h
+SET h.EstadoRegistro = N'ENVIADO',
+    h.FechaActualizacionUtc = @ahora,
+    h.FechaEnvioUtc = COALESCE(h.FechaEnvioUtc, @ahora)
+FROM dbo.diagnosticoIAImagenAnalisisHumano h
+INNER JOIN ultimos u
+    ON u.DiagnosticoIAImagenAnalisisHumanoId =
+       h.DiagnosticoIAImagenAnalisisHumanoId
+WHERE u.rn = 1;
+
+INSERT INTO dbo.diagnosticoIAImagenHistorialV2
+(
+    DiagnosticoIAImagenId,
+    UsuarioId,
+    EstadoAnterior,
+    EstadoNuevo,
+    Accion,
+    Detalle,
+    FechaUtc
+)
+SELECT
+    i.DiagnosticoIAImagenId,
+    {usuarioId},
+    UPPER(ISNULL(i.Estado, N'BORRADOR')),
+    N'PENDIENTE_APROBACION',
+    N'ANALISIS_HUMANO_ENVIADO',
+    N'El analizador finalizó la revisión completa y envió la fotografía al aprobador.',
+    @ahora
+FROM dbo.diagnosticoIAImagen i
+WHERE i.DiagnosticoIAId = {inspeccionId}
+  AND ISNULL(i.Activo, 1) = 1
+  AND ISNULL(i.Descartada, 0) = 0
+  AND UPPER(ISNULL(i.Estado, N'BORRADOR')) IN
+  (
+      N'PENDIENTE_ANALIZADOR',
+      N'EN_ANALISIS_HUMANO',
+      N'DEVUELTO_PARA_CORRECCION',
+      N'DEVUELTA_AL_ANALIZADOR'
+  );
+
+UPDATE dbo.diagnosticoIAImagen
+SET Estado = N'PENDIENTE_APROBACION',
+    FechaAnalisisHumanoUtc = COALESCE(FechaAnalisisHumanoUtc, @ahora)
+WHERE DiagnosticoIAId = {inspeccionId}
+  AND ISNULL(Activo, 1) = 1
+  AND ISNULL(Descartada, 0) = 0
+  AND UPPER(ISNULL(Estado, N'BORRADOR')) IN
+  (
+      N'PENDIENTE_ANALIZADOR',
+      N'EN_ANALISIS_HUMANO',
+      N'DEVUELTO_PARA_CORRECCION',
+      N'DEVUELTA_AL_ANALIZADOR'
+  );
+""",
+                cancellationToken);
+        }
+
         private async Task<IActionResult?> ValidarAccesoBandejaAsync(
             int usuarioId,
             string modo,
@@ -589,31 +824,32 @@ namespace CONATRADEC_API.Controllers
 
         private static bool DebeIncluirse(
             string modo,
-            bool cerrada,
+            bool cerradaDefinitiva,
             IReadOnlyCollection<FotoMetadatos> fotos)
         {
             if (modo == "analizador")
             {
-                return !cerrada && fotos.Any(item => item.Estado is
-                    InspeccionFitosanitariaFlujo.FotoEstados
-                        .PendienteAnalizador or
-                    InspeccionFitosanitariaFlujo.FotoEstados
-                        .EnAnalisisHumano or
-                    InspeccionFitosanitariaFlujo.FotoEstados
-                        .DevueltaAnalizador);
+                return !cerradaDefinitiva && fotos.Any(item =>
+                    NormalizarEstado(item.Estado) is
+                        InspeccionFitosanitariaFlujo.FotoEstados
+                            .PendienteAnalizador or
+                        InspeccionFitosanitariaFlujo.FotoEstados
+                            .EnAnalisisHumano or
+                        InspeccionFitosanitariaFlujo.FotoEstados
+                            .DevueltaAnalizador);
             }
 
             if (modo == "aprobador")
             {
-                return !cerrada && fotos.Any(item =>
-                    item.Estado ==
+                return !cerradaDefinitiva && fotos.Any(item =>
+                    NormalizarEstado(item.Estado) ==
                         InspeccionFitosanitariaFlujo.FotoEstados
                             .PendienteAprobacion);
             }
 
             if (modo == "historial")
             {
-                return cerrada &&
+                return cerradaDefinitiva &&
                        fotos.Count > 0 &&
                        fotos.All(item =>
                            InspeccionFitosanitariaFlujo.EsEstadoFinal(
@@ -622,6 +858,21 @@ namespace CONATRADEC_API.Controllers
 
             return true;
         }
+
+        private static bool EsPendienteTecnico(FotoMetadatos foto) =>
+            !foto.Descartada && NormalizarEstado(foto.Estado) is
+                InspeccionFitosanitariaFlujo.FotoEstados.Borrador or
+                InspeccionFitosanitariaFlujo.FotoEstados.PendienteIA or
+                InspeccionFitosanitariaFlujo.FotoEstados.AnalizandoIA or
+                InspeccionFitosanitariaFlujo.FotoEstados.ErrorIA or
+                InspeccionFitosanitariaFlujo.FotoEstados
+                    .PendienteDecisionTecnico;
+
+        private static bool EsRecibidaPorAnalizador(FotoMetadatos foto) =>
+            !foto.Descartada && !EsPendienteTecnico(foto);
+
+        private static string NormalizarEstado(string? estado) =>
+            (estado ?? string.Empty).Trim().ToUpperInvariant();
 
         private async Task<DiagnosticoIA?> CargarInspeccionAsync(
             int id,
@@ -641,11 +892,20 @@ namespace CONATRADEC_API.Controllers
                 inspeccion.DiagnosticoIAId,
                 cancellationToken);
 
+            InspeccionFitosanitariaControlRegistro? controlActual =
+                await control.ObtenerAsync(
+                    inspeccion.DiagnosticoIAId,
+                    cancellationToken);
+
+            bool cerradaDefinitiva =
+                controlActual?.CerradaDefinitiva == true ||
+                controlActual?.CerradaTecnico == true;
+
             string estadoNuevo =
                 InspeccionFitosanitariaFlujo.CalcularEstadoInspeccion(
                     fotos.Where(item => item.Activo)
                         .Select(item => item.Estado),
-                    cerradaPorTecnico: false);
+                    cerradaDefinitiva);
 
             if (!string.Equals(
                     inspeccion.Estado,
@@ -667,7 +927,7 @@ namespace CONATRADEC_API.Controllers
             if (registro == null || !registro.Activo)
                 return NoEncontrado();
 
-            if (!registro.CerradaTecnico)
+            if (!registro.CerradaTecnico && !registro.CerradaDefinitiva)
                 return null;
 
             return Conflict(new
@@ -781,11 +1041,15 @@ namespace CONATRADEC_API.Controllers
             string.IsNullOrWhiteSpace(nuevo)
                 ? anterior
                 : nuevo.Trim();
+
+        private sealed record EstadoRevisionAnalizador(
+            bool PuedeFinalizarConFotografiaActual,
+            string MensajeBloqueo);
     }
 
     /// <summary>
     /// Respuesta compatible con las bandejas MAUI, enriquecida con el nombre
-    /// de la inspección.
+    /// de la inspección y los contadores de recepción progresiva.
     /// </summary>
     public sealed class InspeccionFitosanitariaFlujoListaDto
     {

@@ -13,11 +13,11 @@ namespace CONATRADEC_API.Filters
     /// Reglas transversales del flujo fitosanitario:
     /// - el técnico puede preparar fotografías mientras su etapa siga abierta;
     /// - las fotografías enviadas ya no pueden ser descartadas por el técnico;
-    /// - el analizador y el aprobador trabajan únicamente después del cierre
-    ///   de la etapa técnica;
+    /// - el analizador puede revisar las evidencias ya enviadas aunque la etapa
+    ///   técnica todavía continúe abierta;
+    /// - el aprobador interviene después de finalizar la revisión humana;
     /// - el cierre definitivo convierte todo el expediente en solo lectura;
-    /// - las decisiones individuales se ejecutan sobre una fotografía por
-    ///   petición.
+    /// - las decisiones individuales conservan el historial de cada fotografía.
     /// </summary>
     public sealed class InspeccionFitosanitariaControlActionFilter :
         IAsyncActionFilter
@@ -126,16 +126,36 @@ namespace CONATRADEC_API.Filters
                         EsOperacionAprobador(context, ruta);
 
                     if (!registro.EtapaTecnicaFinalizada &&
-                        (operacionAnalizador || operacionAprobador))
+                        operacionAprobador)
                     {
                         context.Result = new ConflictObjectResult(new
                         {
                             success = false,
-                            message = operacionAnalizador
-                                ? "El analizador no puede intervenir hasta que el técnico finalice y envíe la inspección."
-                                : "La inspección todavía no ha finalizado su etapa técnica."
+                            message =
+                                "La revisión humana todavía no ha sido finalizada. El aprobador no puede intervenir."
                         });
                         return;
+                    }
+
+                    if (!registro.EtapaTecnicaFinalizada &&
+                        operacionAnalizador)
+                    {
+                        InspeccionFitosanitariaEstadoEtapaTecnica
+                            estadoRecepcion =
+                                await control.ObtenerEstadoEtapaTecnicaAsync(
+                                    id.Value,
+                                    cancellationToken);
+
+                        if (estadoRecepcion.TotalEnviadasRevision == 0)
+                        {
+                            context.Result = new ConflictObjectResult(new
+                            {
+                                success = false,
+                                message =
+                                    "El técnico todavía no ha enviado fotografías para revisión humana."
+                            });
+                            return;
+                        }
                     }
 
                     if (EsRutaDescarte(ruta))
@@ -383,8 +403,8 @@ namespace CONATRADEC_API.Filters
             detalle["NombreInspeccion"] = registro.NombreInspeccion;
             /*
              * Compatibilidad con el cliente MAUI actual: CerradaTecnico se
-             * expone como cierre de la etapa técnica. El valor histórico de
-             * cierre global permanece separado dentro del control interno.
+             * expone como finalización de la etapa técnica. El cierre global
+             * permanece separado en CerradaDefinitiva.
              */
             detalle["CerradaTecnico"] = registro.EtapaTecnicaFinalizada;
             detalle["FechaCierreTecnicoUtc"] =
@@ -447,8 +467,14 @@ namespace CONATRADEC_API.Filters
                     !registro.EtapaTecnicaFinalizada;
 
                 detalle["PuedeGestionarSolicitud"] = puedeGestionar;
+
+                /*
+                 * Basta con que exista una fotografía enviada para habilitar al
+                 * analizador. La fotografía individual y su estado siguen siendo
+                 * la autoridad final para permitir la selección.
+                 */
                 detalle["PuedeAnalizar"] =
-                    puedeAnalizar && registro.EtapaTecnicaFinalizada;
+                    puedeAnalizar && estadoTecnico.TotalEnviadasRevision > 0;
                 detalle["PuedeAprobar"] =
                     puedeAprobar && registro.EtapaTecnicaFinalizada;
                 detalle["PuedePublicarAlbum"] =
@@ -523,10 +549,26 @@ namespace CONATRADEC_API.Filters
         }
 
         private static bool EsRutaControlada(string ruta) =>
-            ruta.StartsWith(RutaBase, StringComparison.OrdinalIgnoreCase) ||
-            ruta.StartsWith(
-                RutaAlbumJerarquia,
-                StringComparison.OrdinalIgnoreCase);
+            CoincideRutaBase(ruta, RutaBase) ||
+            CoincideRutaBase(ruta, RutaAlbumJerarquia);
+
+        /// <summary>
+        /// Exige una frontera real después del prefijo. Así la ruta
+        /// /api/inspecciones-fitosanitarias-flujo no se confunde con la ruta
+        /// base /api/inspecciones-fitosanitarias.
+        /// </summary>
+        private static bool CoincideRutaBase(string ruta, string rutaBase)
+        {
+            string normalizada = ruta.TrimEnd('/');
+
+            return string.Equals(
+                       normalizada,
+                       rutaBase,
+                       StringComparison.OrdinalIgnoreCase) ||
+                   normalizada.StartsWith(
+                       rutaBase + "/",
+                       StringComparison.OrdinalIgnoreCase);
+        }
 
         private static bool EsRutaCierreTecnicoAnterior(string ruta) =>
             ruta.TrimEnd('/').EndsWith(
