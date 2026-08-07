@@ -700,27 +700,6 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
-            bool estadoPermitido = esAprobador
-                ? string.Equals(
-                    diagnostico.Estado,
-                    "PENDIENTE_APROBACION",
-                    StringComparison.OrdinalIgnoreCase)
-                : diagnostico.Estado is
-                    "PENDIENTE_ANALIZADOR" or
-                    "EN_ANALISIS_HUMANO" or
-                    "DEVUELTO_PARA_CORRECCION" or
-                    "DEVUELTA_AL_ANALIZADOR";
-
-            if (!estadoPermitido)
-            {
-                return Conflict(new
-                {
-                    success = false,
-                    message =
-                        "La clasificación no puede modificarse en el estado actual de la inspección."
-                });
-            }
-
             DiagnosticoIAImagenJerarquiaReferencia? foto =
                 diagnostico.Fotografias.FirstOrDefault(item =>
                     item.DiagnosticoIAImagenId == fotoId);
@@ -732,6 +711,46 @@ namespace CONATRADEC_API.Controllers
                     success = false,
                     message =
                         "La fotografía o su resultado individual no fueron encontrados."
+                });
+            }
+
+            if (!foto.Activo || foto.Descartada)
+            {
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        "La fotografía ya no se encuentra disponible para modificar su clasificación."
+                });
+            }
+
+            /*
+             * El flujo fitosanitario actual avanza por fotografía. El estado
+             * general de la inspección es un resumen y puede ser, por ejemplo,
+             * PENDIENTE_REVISION mientras una evidencia concreta todavía está
+             * PENDIENTE_ANALIZADOR. Por eso la autorización de esta operación
+             * se realiza contra el estado individual de la fotografía.
+             */
+            string estadoFotografia = (foto.Estado ?? string.Empty)
+                .Trim()
+                .ToUpperInvariant();
+
+            bool estadoPermitido = esAprobador
+                ? estadoFotografia == "PENDIENTE_APROBACION"
+                : estadoFotografia is
+                    "PENDIENTE_ANALIZADOR" or
+                    "EN_ANALISIS_HUMANO" or
+                    "DEVUELTO_PARA_CORRECCION" or
+                    "DEVUELTA_AL_ANALIZADOR";
+
+            if (!estadoPermitido)
+            {
+                return Conflict(new
+                {
+                    success = false,
+                    message = esAprobador
+                        ? "La fotografía no está pendiente de aprobación y su clasificación no puede modificarse en esta etapa."
+                        : "La fotografía no está disponible para revisión del analizador en su estado actual."
                 });
             }
 

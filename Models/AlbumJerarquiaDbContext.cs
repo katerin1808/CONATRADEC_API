@@ -277,6 +277,17 @@ namespace CONATRADEC_API.Models
         [MaxLength(40)]
         public string TipoFotografia { get; set; } = string.Empty;
 
+        /// <summary>
+        /// Estado individual de la evidencia. El flujo de clasificación debe
+        /// validar este valor y no el estado agregado de toda la inspección.
+        /// </summary>
+        [MaxLength(40)]
+        public string Estado { get; set; } = string.Empty;
+
+        public bool Activo { get; set; } = true;
+
+        public bool Descartada { get; set; }
+
         public DiagnosticoIAJerarquiaReferencia Diagnostico { get; set; } = null!;
 
         public DiagnosticoIAImagenResultadoJerarquiaReferencia? ResultadoIA { get; set; }
