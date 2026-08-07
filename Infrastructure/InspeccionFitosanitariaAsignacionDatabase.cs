@@ -9,8 +9,11 @@ namespace CONATRADEC_API.Infrastructure
     /// <summary>
     /// Controla la asignación exclusiva de las etapas de análisis y aprobación.
     /// La primera escritura de cada etapa toma el expediente; las siguientes
-    /// escrituras solo se aceptan para el mismo usuario. Las consultas siguen
-    /// siendo compartidas para no ocultar información operativa.
+    /// escrituras solo se aceptan para el mismo usuario de esa etapa.
+    ///
+    /// Un mismo usuario puede asumir análisis y aprobación únicamente cuando
+    /// sus permisos de interfaz lo autorizan. La trazabilidad conserva ambos
+    /// identificadores para que el historial indique esa situación.
     /// </summary>
     public sealed class InspeccionFitosanitariaAsignacionDatabase
     {
@@ -224,8 +227,7 @@ SET UsuarioAnalizadorId = COALESCE(UsuarioAnalizadorId, @usuarioId),
         SYSUTCDATETIME()),
     FechaModificacionUtc = SYSUTCDATETIME()
 WHERE DiagnosticoIAId = @id
-  AND (UsuarioAnalizadorId IS NULL OR UsuarioAnalizadorId = @usuarioId)
-  AND (UsuarioAprobadorId IS NULL OR UsuarioAprobadorId <> @usuarioId);
+  AND (UsuarioAnalizadorId IS NULL OR UsuarioAnalizadorId = @usuarioId);
 """
                     : """
 UPDATE dbo.diagnosticoIAAsignacionFlujo WITH (UPDLOCK, HOLDLOCK)
@@ -235,8 +237,7 @@ SET UsuarioAprobadorId = COALESCE(UsuarioAprobadorId, @usuarioId),
         SYSUTCDATETIME()),
     FechaModificacionUtc = SYSUTCDATETIME()
 WHERE DiagnosticoIAId = @id
-  AND (UsuarioAprobadorId IS NULL OR UsuarioAprobadorId = @usuarioId)
-  AND (UsuarioAnalizadorId IS NULL OR UsuarioAnalizadorId <> @usuarioId);
+  AND (UsuarioAprobadorId IS NULL OR UsuarioAprobadorId = @usuarioId);
 """;
 
                 int actualizadas;
@@ -290,29 +291,13 @@ WHERE DiagnosticoIAId = @id;
                         registro);
                 }
 
-                string mensaje;
-                if (!etapaAnalizador &&
-                    registro.UsuarioAnalizadorId == usuarioId)
-                {
-                    mensaje =
-                        "El usuario asignado como analizador no puede aprobar la misma inspección.";
-                }
-                else if (etapaAnalizador &&
-                         registro.UsuarioAprobadorId == usuarioId)
-                {
-                    mensaje =
-                        "El usuario asignado como aprobador no puede asumir el análisis de la misma inspección.";
-                }
-                else
-                {
-                    int? asignado = etapaAnalizador
-                        ? registro.UsuarioAnalizadorId
-                        : registro.UsuarioAprobadorId;
+                int? asignado = etapaAnalizador
+                    ? registro.UsuarioAnalizadorId
+                    : registro.UsuarioAprobadorId;
 
-                    mensaje = asignado.HasValue
-                        ? $"La inspección ya está asignada al usuario #{asignado.Value} para esta etapa."
-                        : "No fue posible tomar la inspección porque cambió durante la operación.";
-                }
+                string mensaje = asignado.HasValue
+                    ? $"La inspección ya está asignada al usuario #{asignado.Value} para esta etapa."
+                    : "No fue posible tomar la inspección porque cambió durante la operación.";
 
                 return new ResultadoAsignacionFlujo(false, mensaje, registro);
             }

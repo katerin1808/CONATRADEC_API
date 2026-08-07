@@ -15,10 +15,9 @@ namespace CONATRADEC_API.Controllers
     /// trabajar con las evidencias que el técnico ya envió, aunque todavía
     /// existan otras fotografías bajo responsabilidad del técnico.
     ///
-    /// La revisión humana solo avanza al aprobador cuando la etapa técnica fue
-    /// finalizada y todas las fotografías activas no descartadas ya cuentan con
-    /// una clasificación humana. El cierre de la revisión se aplica de manera
-    /// conjunta, sin perder el expediente individual de cada evidencia.
+    /// Cada fotografía puede enviarse al aprobador de forma independiente. La
+    /// asignación y los permisos determinan quién puede operar cada etapa, y la
+    /// trazabilidad conserva si un mismo usuario participó en ambas etapas.
     /// </summary>
     [ApiController]
     [Authorize]
@@ -49,8 +48,7 @@ namespace CONATRADEC_API.Controllers
 
         /// <summary>
         /// Guarda la clasificación humana de una fotografía como borrador. El
-        /// envío al aprobador se realiza únicamente al finalizar la revisión
-        /// completa desde el endpoint de revisión fitosanitaria.
+        /// envío al aprobador se realiza desde el flujo de revisión por fotografía.
         /// </summary>
         [HttpPost("{id:int}/analisis-humano-individual")]
         public async Task<IActionResult> GuardarAnalisisHumanoIndividual(
@@ -147,11 +145,6 @@ namespace CONATRADEC_API.Controllers
                     });
                 }
 
-                /*
-                 * La asignación se toma después de validar que la fotografía
-                 * pertenece al expediente y está disponible. Así una petición
-                 * inválida no puede reservar una inspección.
-                 */
                 ResultadoAsignacionFlujo asignacionAnalizador =
                     await asignaciones.TomarAnalizadorAsync(
                         id,
@@ -183,7 +176,7 @@ namespace CONATRADEC_API.Controllers
                     cancellationToken);
 
                 const string mensaje =
-                    "La clasificación humana quedó guardada como borrador. Finalice la revisión general cuando todas las fotografías estén completas.";
+                    "La clasificación humana quedó guardada como borrador. Puede enviarla al aprobador cuando esté lista.";
 
                 await database.CambiarEstadoFotoAsync(
                     item.FotografiaId,
@@ -326,21 +319,14 @@ namespace CONATRADEC_API.Controllers
                     });
                 }
 
-                if (analisis.UsuarioAnalizadorId == usuarioId.Value)
-                {
-                    return Conflict(new
-                    {
-                        success = false,
-                        message =
-                            "El usuario que realizó el análisis humano no puede aprobar la misma evidencia."
-                    });
-                }
-
                 /*
-                 * La asignación se toma únicamente después de validar la
-                 * evidencia y la separación de funciones. De esta forma una
-                 * solicitud inválida no bloquea la bandeja del aprobador.
+                 * Los permisos siguen siendo la barrera de autorización. Si el
+                 * mismo usuario posee permiso de analizador y aprobador se le
+                 * permite continuar y la auditoría conserva MismoUsuario=true.
                  */
+                bool mismoUsuarioQueAnalizo =
+                    analisis.UsuarioAnalizadorId == usuarioId.Value;
+
                 ResultadoAsignacionFlujo asignacionAprobador =
                     await asignaciones.TomarAprobadorAsync(
                         id,
@@ -378,7 +364,15 @@ namespace CONATRADEC_API.Controllers
                     InspeccionFitosanitariaFlujo.FotoEstados
                         .AprobadaConCorreccion;
 
-                await database.RegistrarAprobacionAsync(
+                /*
+                 * La autorización se rige por permisos. Si la misma cuenta
+                 * posee permisos de analizador y aprobador, la aprobación se
+                 * registra y la auditoría conserva MismoUsuarioQueAnalizo=1.
+                 * InspeccionFitosanitariaDatabase conserva una restricción
+                 * heredada, por lo que aquí se registra primero la decisión y
+                 * después se marca explícitamente la coincidencia de usuarios.
+                 */
+                int aprobacionId = await database.RegistrarAprobacionAsync(
                     item.FotografiaId,
                     analisis.AnalisisHumanoId,
                     usuarioId!.Value,
@@ -412,6 +406,15 @@ namespace CONATRADEC_API.Controllers
                     decisionPositiva && item.AutorizaPublicacionAlbum,
                     mismoUsuario: false,
                     cancellationToken);
+
+                if (mismoUsuarioQueAnalizo)
+                {
+                    await diagnosticoDb.Database.ExecuteSqlInterpolatedAsync($"""
+UPDATE dbo.diagnosticoIAImagenAprobacionV2
+SET MismoUsuarioQueAnalizo = 1
+WHERE DiagnosticoIAImagenAprobacionId = {aprobacionId};
+""", cancellationToken);
+                }
 
                 await database.CambiarEstadoFotoAsync(
                     item.FotografiaId,
@@ -625,8 +628,6 @@ namespace CONATRADEC_API.Controllers
             string.IsNullOrWhiteSpace(nuevo)
                 ? anterior
                 : nuevo.Trim();
-
-
     }
 
     /// <summary>

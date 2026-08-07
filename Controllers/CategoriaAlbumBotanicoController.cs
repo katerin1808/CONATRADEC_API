@@ -13,7 +13,9 @@ namespace CONATRADEC_API.Controllers
         private readonly DBContext _context;
         private readonly ImageService _imageService;
 
-        public CategoriaAlbumBotanicoController(DBContext context, ImageService imageService)
+        public CategoriaAlbumBotanicoController(
+            DBContext context,
+            ImageService imageService)
         {
             _context = context;
             _imageService = imageService;
@@ -30,9 +32,7 @@ namespace CONATRADEC_API.Controllers
                 .AsQueryable();
 
             if (!incluirInactivos)
-            {
                 query = query.Where(x => x.activo);
-            }
 
             var data = await query
                 .OrderByDescending(x => x.activo)
@@ -44,11 +44,9 @@ namespace CONATRADEC_API.Controllers
                     x.descripcion,
                     x.rutaImagenPortada,
                     x.activo,
-
                     totalRegistros = incluirInactivos
                         ? x.Registros.Count()
                         : x.Registros.Count(r => r.activo),
-
                     totalRegistrosActivos =
                         x.Registros.Count(r => r.activo)
                 })
@@ -105,9 +103,7 @@ namespace CONATRADEC_API.Controllers
             [FromBody] CrearCategoriaAlbumBotanicoDto dto)
         {
             if (!ModelState.IsValid)
-            {
                 return ValidationProblem(ModelState);
-            }
 
             string nombre = dto.nombreCategoria.Trim();
 
@@ -160,17 +156,14 @@ namespace CONATRADEC_API.Controllers
             [FromBody] ActualizarCategoriaAlbumBotanicoDto dto)
         {
             if (!ModelState.IsValid)
-            {
                 return ValidationProblem(ModelState);
-            }
 
             if (id != dto.categoriaAlbumBotanicoId)
             {
                 return BadRequest(new
                 {
                     success = false,
-                    message =
-                        "El ID de la ruta no coincide con el ID enviado."
+                    message = "El ID de la ruta no coincide con el ID enviado."
                 });
             }
 
@@ -209,8 +202,7 @@ namespace CONATRADEC_API.Controllers
                 return BadRequest(new
                 {
                     success = false,
-                    message =
-                        "Ya existe otra categoría con ese nombre."
+                    message = "Ya existe otra categoría con ese nombre."
                 });
             }
 
@@ -257,30 +249,43 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
-            /*
-             * Cambiar el estado de la categoría no elimina ni cambia
-             * el estado de sus registros.
-             *
-             * Al desactivar la categoría:
-             * - La categoría deja de mostrarse en la galería pública.
-             * - Sus registros conservan su estado actual.
-             * - Al reactivar la categoría, sus registros activos vuelven
-             *   a mostrarse automáticamente.
-             *
-             * La validación de registros activos se conserva únicamente
-             * en el endpoint Eliminar.
-             */
-            registro.activo = activo;
+            await using var transaccion = await _context.Database
+                .BeginTransactionAsync();
 
-            await _context.SaveChangesAsync();
-
-            return Ok(new
+            try
             {
-                success = true,
-                message = activo
-                    ? "Categoría activada correctamente."
-                    : "Categoría desactivada correctamente."
-            });
+                /*
+                 * Los registros y las fotografías administradas manualmente
+                 * conservan su estado, igual que en la lógica existente. Solo
+                 * las copias creadas desde inspecciones fitosanitarias se
+                 * retiran cuando la categoría se desactiva, evitando que una
+                 * publicación reviva automáticamente al reactivar la categoría.
+                 */
+                registro.activo = activo;
+
+                if (!activo)
+                    await DesactivarPublicacionesFitosanitariasDeCategoriaAsync(id);
+
+                await _context.SaveChangesAsync();
+
+                if (activo)
+                    await GarantizarPortadasDeCategoriaAsync(id);
+
+                await transaccion.CommitAsync();
+
+                return Ok(new
+                {
+                    success = true,
+                    message = activo
+                        ? "Categoría activada correctamente."
+                        : "Categoría desactivada correctamente."
+                });
+            }
+            catch
+            {
+                await transaccion.RollbackAsync();
+                throw;
+            }
         }
 
         // DELETE: api/categoria-album-botanico/eliminar/1
@@ -321,19 +326,31 @@ namespace CONATRADEC_API.Controllers
                 return BadRequest(new
                 {
                     success = false,
-                    message =
-                        "La categoría tiene registros activos y no puede eliminarse."
+                    message = "La categoría tiene registros activos y no puede eliminarse."
                 });
             }
 
-            registro.activo = false;
-            await _context.SaveChangesAsync();
+            await using var transaccion = await _context.Database
+                .BeginTransactionAsync();
 
-            return Ok(new
+            try
             {
-                success = true,
-                message = "Categoría desactivada correctamente."
-            });
+                registro.activo = false;
+                await DesactivarPublicacionesFitosanitariasDeCategoriaAsync(id);
+                await _context.SaveChangesAsync();
+                await transaccion.CommitAsync();
+
+                return Ok(new
+                {
+                    success = true,
+                    message = "Categoría desactivada correctamente."
+                });
+            }
+            catch
+            {
+                await transaccion.RollbackAsync();
+                throw;
+            }
         }
 
         // POST: api/categoria-album-botanico/1/portada
@@ -382,8 +399,7 @@ namespace CONATRADEC_API.Controllers
                 return BadRequest(new
                 {
                     success = false,
-                    message =
-                        "Solo se permiten imágenes JPG, JPEG, PNG o WEBP."
+                    message = "Solo se permiten imágenes JPG, JPEG, PNG o WEBP."
                 });
             }
 
@@ -421,14 +437,86 @@ namespace CONATRADEC_API.Controllers
             return Ok(new
             {
                 success = true,
-                message =
-                    "Portada de la categoría guardada correctamente.",
+                message = "Portada de la categoría guardada correctamente.",
                 data = new
                 {
                     categoria.categoriaAlbumBotanicoId,
                     categoria.rutaImagenPortada
                 }
             });
+        }
+
+        private async Task DesactivarPublicacionesFitosanitariasDeCategoriaAsync(
+            int categoriaAlbumBotanicoId)
+        {
+            await _context.Database.ExecuteSqlInterpolatedAsync($"""
+UPDATE f
+SET f.activo = 0,
+    f.esPortada = 0
+FROM dbo.AlbumBotanicoCafeFoto f
+INNER JOIN dbo.diagnosticoIAAlbumPublicacion p
+    ON p.AlbumBotanicoCafeFotoId = f.albumBotanicoCafeFotoId
+WHERE p.CategoriaAlbumBotanicoId = {categoriaAlbumBotanicoId}
+  AND p.Activo = 1;
+
+UPDATE dbo.diagnosticoIAAlbumPublicacion
+SET Activo = 0
+WHERE CategoriaAlbumBotanicoId = {categoriaAlbumBotanicoId}
+  AND Activo = 1;
+""");
+        }
+
+        /// <summary>
+        /// Al reactivar una categoría se revisan sus fichas activas. Las fotos
+        /// de publicaciones fitosanitarias retiradas no se reactivan, pero las
+        /// fotografías activas restantes conservan una portada válida.
+        /// </summary>
+        private async Task GarantizarPortadasDeCategoriaAsync(
+            int categoriaAlbumBotanicoId)
+        {
+            int[] fichas = await _context.AlbumesBotanicosCafe
+                .AsNoTracking()
+                .Where(x =>
+                    x.categoriaAlbumBotanicoId == categoriaAlbumBotanicoId &&
+                    x.activo)
+                .Select(x => x.albumBotanicoCafeId)
+                .ToArrayAsync();
+
+            foreach (int fichaId in fichas)
+            {
+                List<AlbumBotanicoCafeFoto> fotosActivas = await _context
+                    .AlbumesBotanicosCafeFotos
+                    .Where(x =>
+                        x.albumBotanicoCafeId == fichaId &&
+                        x.activo)
+                    .OrderBy(x => x.orden)
+                    .ThenBy(x => x.albumBotanicoCafeFotoId)
+                    .ToListAsync();
+
+                if (fotosActivas.Count == 0)
+                    continue;
+
+                AlbumBotanicoCafeFoto portada =
+                    fotosActivas.FirstOrDefault(x => x.esPortada) ??
+                    fotosActivas[0];
+
+                bool cambio = false;
+                foreach (AlbumBotanicoCafeFoto foto in fotosActivas)
+                {
+                    bool debeSerPortada =
+                        foto.albumBotanicoCafeFotoId ==
+                        portada.albumBotanicoCafeFotoId;
+
+                    if (foto.esPortada == debeSerPortada)
+                        continue;
+
+                    foto.esPortada = debeSerPortada;
+                    cambio = true;
+                }
+
+                if (cambio)
+                    await _context.SaveChangesAsync();
+            }
         }
     }
 }
