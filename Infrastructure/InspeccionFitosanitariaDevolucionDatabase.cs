@@ -1388,7 +1388,6 @@ SELECT CASE WHEN
         FROM dbo.diagnosticoIA d WITH (UPDLOCK, HOLDLOCK)
         WHERE d.DiagnosticoIAId = @inspeccionId
           AND ISNULL(d.EtapaTecnicaFinalizada, 0) = 1
-          AND ISNULL(d.CerradaTecnico, 0) = 0
           AND ISNULL(d.CerradaDefinitiva, 0) = 0
           AND ISNULL(d.Activo, 1) = 1
     )

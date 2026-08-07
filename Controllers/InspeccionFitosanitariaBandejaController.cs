@@ -61,10 +61,24 @@ namespace CONATRADEC_API.Controllers
             CancellationToken cancellationToken = default)
         {
             int? usuarioId = ObtenerUsuarioId();
+            if (!usuarioId.HasValue)
+                return Forbid();
+
+            string modoNormalizado = Normalizar(modo).ToLowerInvariant();
+            bool modoHistorial = modoNormalizado == "historial";
+            bool modoDecisiones = modoNormalizado == "decisiones";
+            bool modoAnalizador = modoNormalizado == "analizador";
+            bool modoAprobador = modoNormalizado == "aprobador";
+
+            string interfaz = modoAnalizador
+                ? DiagnosticoIAFlujo.InterfazAnalizador
+                : modoAprobador
+                    ? DiagnosticoIAFlujo.InterfazAprobador
+                    : DiagnosticoIAFlujo.InterfazSolicitud;
 
             ResultadoPermisoApi permiso = await permisos.ValidarAsync(
                 usuarioId,
-                DiagnosticoIAFlujo.InterfazSolicitud,
+                interfaz,
                 TipoPermisoApi.Leer,
                 cancellationToken);
 
@@ -78,9 +92,6 @@ namespace CONATRADEC_API.Controllers
                         message = permiso.Mensaje
                     });
             }
-
-            if (!usuarioId.HasValue)
-                return Forbid();
 
             tamanoPagina = Math.Clamp(tamanoPagina, 10, 50);
             desfaseHorarioMinutos = Math.Clamp(
@@ -144,14 +155,14 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
-            string modoNormalizado = Normalizar(modo).ToLowerInvariant();
-            bool modoHistorial = modoNormalizado == "historial";
-            bool modoDecisiones = modoNormalizado == "decisiones";
-            bool soloPropias = !modoHistorial;
+            bool soloPropias =
+                !modoHistorial && !modoAnalizador && !modoAprobador;
 
-            int? tecnicoFiltro = modoHistorial && tecnicoId is > 0
-                ? tecnicoId
-                : null;
+            int? tecnicoFiltro =
+                (modoHistorial || modoAnalizador || modoAprobador) &&
+                tecnicoId is > 0
+                    ? tecnicoId
+                    : null;
 
             string estadoNormalizado = modoDecisiones
                 ? string.Empty
@@ -189,6 +200,8 @@ namespace CONATRADEC_API.Controllers
                     soloPropias,
                     modoDecisiones,
                     modoHistorial,
+                    modoAnalizador,
+                    modoAprobador,
                     Normalizar(buscar),
                     Normalizar(propietario),
                     tecnicoFiltro,
@@ -376,11 +389,10 @@ namespace CONATRADEC_API.Controllers
             bool incluirAsignaciones = modo is "analizador" or "aprobador";
 
             /*
-             * El primer resultado contiene todos los técnicos que tienen una
-             * inspección relevante para la bandeja. El segundo conserva solo
-             * las asignaciones de las 300 tarjetas que puede devolver la bandeja
-             * operativa. Así el selector no pierde técnicos por el TOP de la
-             * vista y tampoco se envían miles de asignaciones innecesarias.
+             * El primer resultado contiene los usuarios creadores con
+             * inspecciones relevantes. Las tarjetas paginadas ya incluyen el
+             * responsable, por lo que el segundo resultado se conserva vacío
+             * únicamente para compatibilidad con clientes anteriores.
              */
             const string sql = """
 DECLARE @inspecciones TABLE
@@ -407,7 +419,6 @@ WHERE d.Activo = 1
       (
           @modo = N'analizador'
           AND ISNULL(d.CerradaDefinitiva, 0) = 0
-          AND ISNULL(d.CerradaTecnico, 0) = 0
           AND EXISTS
           (
               SELECT 1
@@ -425,7 +436,6 @@ WHERE d.Activo = 1
           @modo = N'aprobador'
           AND ISNULL(d.EtapaTecnicaFinalizada, 0) = 1
           AND ISNULL(d.CerradaDefinitiva, 0) = 0
-          AND ISNULL(d.CerradaTecnico, 0) = 0
           AND EXISTS
           (
               SELECT 1
@@ -452,17 +462,12 @@ INNER JOIN dbo.usuario u
     ON u.UsuarioId = base.UsuarioTecnicoId
 ORDER BY NombreCompleto, NombreUsuario;
 
-SELECT TOP(300)
-    base.InspeccionId,
-    base.UsuarioTecnicoId,
-    ISNULL(NULLIF(LTRIM(RTRIM(u.nombreCompletoUsuario)), N''),
-           ISNULL(u.nombreUsuario, N'')) AS NombreCompleto,
-    ISNULL(u.nombreUsuario, N'') AS NombreUsuario
-FROM @inspecciones base
-INNER JOIN dbo.usuario u
-    ON u.UsuarioId = base.UsuarioTecnicoId
-WHERE @incluirAsignaciones = 1
-ORDER BY base.FechaSolicitudUtc DESC, base.InspeccionId DESC;
+SELECT
+    CAST(NULL AS INT) AS InspeccionId,
+    CAST(NULL AS INT) AS UsuarioTecnicoId,
+    CAST(N'' AS NVARCHAR(200)) AS NombreCompleto,
+    CAST(N'' AS NVARCHAR(100)) AS NombreUsuario
+WHERE 1 = 0;
 """;
 
             DbConnection conexion = db.Database.GetDbConnection();
@@ -548,11 +553,7 @@ FROM dbo.diagnosticoIA d
 INNER JOIN dbo.usuario u
     ON u.UsuarioId = d.UsuarioSolicitanteId
 WHERE d.Activo = 1
-  AND
-  (
-      ISNULL(d.CerradaDefinitiva, 0) = 1
-      OR ISNULL(d.CerradaTecnico, 0) = 1
-  )
+  AND ISNULL(d.CerradaDefinitiva, 0) = 1
 ORDER BY NombreCompleto, NombreUsuario;
 """;
 
@@ -603,6 +604,8 @@ ORDER BY NombreCompleto, NombreUsuario;
                 bool soloPropias,
                 bool modoDecisiones,
                 bool modoHistorial,
+                bool modoAnalizador,
+                bool modoAprobador,
                 string buscar,
                 string propietario,
                 int? tecnicoId,
@@ -626,13 +629,8 @@ WITH bandejaBase AS
             AS NombreInspeccion,
         CONVERT(BIT, ISNULL(d.EtapaTecnicaFinalizada, 0))
             AS EtapaTecnicaFinalizada,
-        CONVERT(BIT,
-            CASE
-                WHEN ISNULL(d.CerradaDefinitiva, 0) = 1
-                     OR ISNULL(d.CerradaTecnico, 0) = 1
-                    THEN 1
-                ELSE 0
-            END) AS CerradaDefinitiva,
+        CONVERT(BIT, ISNULL(d.CerradaDefinitiva, 0))
+            AS CerradaDefinitiva,
         ISNULL(d.CodigoTerreno, N'') AS CodigoTerreno,
         d.FechaSolicitudUtc AS FechaRegistroSistemaUtc,
         ISNULL(propietarioActual.NombreCompleto, N'') AS Propietario,
@@ -653,9 +651,16 @@ WITH bandejaBase AS
         CONVERT(INT, ISNULL(resumen.Procesando, 0)) AS Procesando,
         CONVERT(INT, ISNULL(resumen.Descartadas, 0)) AS Descartadas,
         ISNULL(portada.UrlImagen, N'') AS UrlMiniatura,
+        asignacion.UsuarioAnalizadorId AS UsuarioAnalizadorAsignadoId,
+        ISNULL(NULLIF(LTRIM(RTRIM(usuarioAnalizador.nombreCompletoUsuario)), N''),
+               ISNULL(usuarioAnalizador.nombreUsuario, N'')) AS AnalizadorAsignado,
+        asignacion.UsuarioAprobadorId AS UsuarioAprobadorAsignadoId,
+        ISNULL(NULLIF(LTRIM(RTRIM(usuarioAprobador.nombreCompletoUsuario)), N''),
+               ISNULL(usuarioAprobador.nombreUsuario, N'')) AS AprobadorAsignado,
+        ISNULL(CONVERT(VARCHAR(40), asignacion.RowVersion, 1), N'')
+            AS VersionAsignacion,
         CASE
             WHEN ISNULL(d.CerradaDefinitiva, 0) = 1
-                 OR ISNULL(d.CerradaTecnico, 0) = 1
                 THEN CASE
                     WHEN ISNULL(resumen.TotalFotografias, 0) > 0
                          AND ISNULL(resumen.TotalFotografias, 0) =
@@ -688,6 +693,12 @@ WITH bandejaBase AS
         ON dep.DepartamentoId = m.DepartamentoId
     LEFT JOIN dbo.usuario tecnico
         ON tecnico.UsuarioId = d.UsuarioSolicitanteId
+    LEFT JOIN dbo.diagnosticoIAAsignacionFlujo asignacion
+        ON asignacion.DiagnosticoIAId = d.DiagnosticoIAId
+    LEFT JOIN dbo.usuario usuarioAnalizador
+        ON usuarioAnalizador.UsuarioId = asignacion.UsuarioAnalizadorId
+    LEFT JOIN dbo.usuario usuarioAprobador
+        ON usuarioAprobador.UsuarioId = asignacion.UsuarioAprobadorId
     OUTER APPLY
     (
         SELECT TOP(1)
@@ -864,11 +875,71 @@ WITH bandejaBase AS
                     @tipoFotografia
           )
       )
+      AND
+      (
+          @modoAnalizador = 0
+          OR
+          (
+              ISNULL(d.CerradaDefinitiva, 0) = 0
+              AND
+              (
+                  asignacion.UsuarioAnalizadorId IS NULL
+                  OR asignacion.UsuarioAnalizadorId = @usuarioId
+              )
+              AND
+              (
+                  asignacion.UsuarioAprobadorId IS NULL
+                  OR asignacion.UsuarioAprobadorId <> @usuarioId
+              )
+              AND EXISTS
+              (
+                  SELECT 1
+                  FROM dbo.diagnosticoIAImagen iAnalizador
+                  WHERE iAnalizador.DiagnosticoIAId = d.DiagnosticoIAId
+                    AND ISNULL(iAnalizador.Activo, 1) = 1
+                    AND ISNULL(iAnalizador.Descartada, 0) = 0
+                    AND UPPER(ISNULL(iAnalizador.Estado, N'BORRADOR')) IN
+                    (
+                        N'PENDIENTE_ANALIZADOR',
+                        N'EN_ANALISIS_HUMANO',
+                        N'DEVUELTA_AL_ANALIZADOR',
+                        N'DEVUELTA_AL_TECNICO'
+                    )
+              )
+          )
+      )
+      AND
+      (
+          @modoAprobador = 0
+          OR
+          (
+              ISNULL(d.CerradaDefinitiva, 0) = 0
+              AND ISNULL(d.EtapaTecnicaFinalizada, 0) = 1
+              AND
+              (
+                  asignacion.UsuarioAprobadorId IS NULL
+                  OR asignacion.UsuarioAprobadorId = @usuarioId
+              )
+              AND
+              (
+                  asignacion.UsuarioAnalizadorId IS NULL
+                  OR asignacion.UsuarioAnalizadorId <> @usuarioId
+              )
+              AND EXISTS
+              (
+                  SELECT 1
+                  FROM dbo.diagnosticoIAImagen iAprobador
+                  WHERE iAprobador.DiagnosticoIAId = d.DiagnosticoIAId
+                    AND ISNULL(iAprobador.Activo, 1) = 1
+                    AND UPPER(ISNULL(iAprobador.Estado, N'BORRADOR')) =
+                        N'PENDIENTE_APROBACION'
+              )
+          )
+      )
 )
 SELECT TOP(@limite)
     InspeccionId,
     NombreInspeccion,
-    EtapaTecnicaFinalizada AS CerradaTecnico,
     EtapaTecnicaFinalizada,
     CerradaDefinitiva,
     CodigoTerreno,
@@ -888,7 +959,12 @@ SELECT TOP(@limite)
     EnviadasRevision,
     Procesando,
     Descartadas,
-    UrlMiniatura
+    UrlMiniatura,
+    UsuarioAnalizadorAsignadoId,
+    AnalizadorAsignado,
+    UsuarioAprobadorAsignadoId,
+    AprobadorAsignado,
+    VersionAsignacion
 FROM bandejaBase
 WHERE (@estado = N'' OR EstadoCalculado = @estado)
   AND
@@ -906,6 +982,8 @@ WHERE (@estado = N'' OR EstadoCalculado = @estado)
       @modoHistorial = 0
       OR CerradaDefinitiva = 1
   )
+  AND (@modoAnalizador = 0 OR CerradaDefinitiva = 0)
+  AND (@modoAprobador = 0 OR EstadoCalculado = N'PENDIENTE_APROBACION')
 ORDER BY FechaRegistroSistemaUtc DESC, InspeccionId DESC;
 """;
 
@@ -939,6 +1017,16 @@ ORDER BY FechaRegistroSistemaUtc DESC, InspeccionId DESC;
                     comando,
                     "@modoHistorial",
                     modoHistorial,
+                    DbType.Boolean);
+                AgregarParametro(
+                    comando,
+                    "@modoAnalizador",
+                    modoAnalizador,
+                    DbType.Boolean);
+                AgregarParametro(
+                    comando,
+                    "@modoAprobador",
+                    modoAprobador,
                     DbType.Boolean);
                 AgregarParametro(comando, "@buscar", buscar, DbType.String);
                 AgregarParametro(
@@ -1000,29 +1088,37 @@ ORDER BY FechaRegistroSistemaUtc DESC, InspeccionId DESC;
                     {
                         InspeccionId = reader.GetInt32(0),
                         NombreInspeccion = Texto(reader, 1),
-                        CerradaTecnico = reader.GetBoolean(2),
-                        EtapaTecnicaFinalizada = reader.GetBoolean(3),
-                        CerradaDefinitiva = reader.GetBoolean(4),
-                        CodigoTerreno = Texto(reader, 5),
-                        Propietario = Texto(reader, 6),
-                        Municipio = Texto(reader, 7),
-                        Departamento = Texto(reader, 8),
-                        UsuarioTecnicoId = reader.GetInt32(9),
-                        TecnicoNombreCompleto = Texto(reader, 10),
-                        TecnicoUsuario = Texto(reader, 11),
+                        EtapaTecnicaFinalizada = reader.GetBoolean(2),
+                        CerradaDefinitiva = reader.GetBoolean(3),
+                        CodigoTerreno = Texto(reader, 4),
+                        Propietario = Texto(reader, 5),
+                        Municipio = Texto(reader, 6),
+                        Departamento = Texto(reader, 7),
+                        UsuarioTecnicoId = reader.GetInt32(8),
+                        TecnicoNombreCompleto = Texto(reader, 9),
+                        TecnicoUsuario = Texto(reader, 10),
                         FechaRegistroSistemaUtc = DateTime.SpecifyKind(
-                            reader.GetDateTime(12),
+                            reader.GetDateTime(11),
                             DateTimeKind.Utc),
-                        Estado = Texto(reader, 13),
-                        TotalFotografias = reader.GetInt32(14),
-                        Pendientes = reader.GetInt32(15),
-                        ConError = reader.GetInt32(16),
-                        Finalizadas = reader.GetInt32(17),
-                        RequierenDecisionTecnico = reader.GetInt32(18),
-                        EnviadasRevision = reader.GetInt32(19),
-                        Procesando = reader.GetInt32(20),
-                        Descartadas = reader.GetInt32(21),
-                        UrlMiniatura = Texto(reader, 22)
+                        Estado = Texto(reader, 12),
+                        TotalFotografias = reader.GetInt32(13),
+                        Pendientes = reader.GetInt32(14),
+                        ConError = reader.GetInt32(15),
+                        Finalizadas = reader.GetInt32(16),
+                        RequierenDecisionTecnico = reader.GetInt32(17),
+                        EnviadasRevision = reader.GetInt32(18),
+                        Procesando = reader.GetInt32(19),
+                        Descartadas = reader.GetInt32(20),
+                        UrlMiniatura = Texto(reader, 21),
+                        UsuarioAnalizadorAsignadoId = reader.IsDBNull(22)
+                            ? null
+                            : reader.GetInt32(22),
+                        AnalizadorAsignado = Texto(reader, 23),
+                        UsuarioAprobadorAsignadoId = reader.IsDBNull(24)
+                            ? null
+                            : reader.GetInt32(24),
+                        AprobadorAsignado = Texto(reader, 25),
+                        VersionAsignacion = Texto(reader, 26)
                     });
                 }
 
@@ -1122,8 +1218,7 @@ BEGIN
             [TerrenoId],
             [CodigoTerreno],
             [EtapaTecnicaFinalizada],
-            [CerradaDefinitiva],
-            [CerradaTecnico]
+            [CerradaDefinitiva]
         );
 END;
 
@@ -1148,8 +1243,7 @@ BEGIN
             [CodigoTerreno],
             [UsuarioSolicitanteId],
             [EtapaTecnicaFinalizada],
-            [CerradaDefinitiva],
-            [CerradaTecnico]
+            [CerradaDefinitiva]
         );
 END;
 

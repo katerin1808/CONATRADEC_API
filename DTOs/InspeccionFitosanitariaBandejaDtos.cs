@@ -9,13 +9,8 @@ namespace CONATRADEC_API.DTOs
         public int InspeccionId { get; set; }
         public string NombreInspeccion { get; set; } = string.Empty;
 
-        /// <summary>
-        /// Compatibilidad con el cliente MAUI: representa que la etapa del
-        /// técnico fue finalizada, no el cierre definitivo del expediente.
-        /// </summary>
-        public bool CerradaTecnico { get; set; }
-
         public bool EtapaTecnicaFinalizada { get; set; }
+        public DateTime? FechaFinEtapaTecnicaUtc { get; set; }
         public bool CerradaDefinitiva { get; set; }
         public string CodigoTerreno { get; set; } = string.Empty;
         public string Propietario { get; set; } = string.Empty;
@@ -35,6 +30,11 @@ namespace CONATRADEC_API.DTOs
         public int Procesando { get; set; }
         public int Descartadas { get; set; }
         public string UrlMiniatura { get; set; } = string.Empty;
+        public int? UsuarioAnalizadorAsignadoId { get; set; }
+        public string AnalizadorAsignado { get; set; } = string.Empty;
+        public int? UsuarioAprobadorAsignadoId { get; set; }
+        public string AprobadorAsignado { get; set; } = string.Empty;
+        public string VersionAsignacion { get; set; } = string.Empty;
     }
 
     public sealed class InspeccionFitosanitariaTecnicoFiltroDto

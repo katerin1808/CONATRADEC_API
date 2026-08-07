@@ -24,9 +24,14 @@ namespace CONATRADEC_API.Filters
     {
         private const string RutaBase = "/api/inspecciones-fitosanitarias";
         private const string RutaAlbumJerarquia = "/api/album-jerarquia";
+        private const string RutaClasificacionIA =
+            "/api/diagnostico-ia-clasificacion";
+        private const string RutaPublicacionAlbum =
+            "/api/publicaciones-album-fitosanitarias";
 
         private readonly InspeccionFitosanitariaControlDatabaseInitializer control;
         private readonly InspeccionFitosanitariaDevolucionDatabase devoluciones;
+        private readonly InspeccionFitosanitariaAsignacionDatabase asignaciones;
         private readonly PermisoApiService permisos;
 
         public InspeccionFitosanitariaControlActionFilter(
@@ -37,6 +42,7 @@ namespace CONATRADEC_API.Filters
             this.control = control;
             this.permisos = permisos;
             devoluciones = new InspeccionFitosanitariaDevolucionDatabase(db);
+            asignaciones = new InspeccionFitosanitariaAsignacionDatabase(db);
         }
 
         public async Task OnActionExecutionAsync(
@@ -54,25 +60,6 @@ namespace CONATRADEC_API.Filters
                 context.HttpContext.RequestAborted;
 
             await control.InicializarAsync(cancellationToken);
-
-            /*
-             * El controlador histórico todavía expone /cerrar-tecnico. Esa
-             * ruta mezclaba el cierre técnico con el cierre global anterior.
-             * Se conserva únicamente para compatibilidad de compilación, pero
-             * se bloquea para impedir que un cliente antiguo ejecute el flujo
-             * equivocado. El frontend actualizado usa
-             * /finalizar-etapa-tecnica.
-             */
-            if (EsRutaCierreTecnicoAnterior(ruta))
-            {
-                context.Result = new ConflictObjectResult(new
-                {
-                    success = false,
-                    message =
-                        "La ruta cerrar-tecnico fue reemplazada por finalizar-etapa-tecnica. Actualice el cliente antes de continuar."
-                });
-                return;
-            }
 
             if (RequiereFotografiaIndividual(ruta))
             {
@@ -97,8 +84,8 @@ namespace CONATRADEC_API.Filters
                 InspeccionFitosanitariaControlRegistro? registro =
                     await control.ObtenerAsync(id.Value, cancellationToken);
 
-                if (registro?.CerradaDefinitiva == true ||
-                    registro?.CerradaTecnico == true)
+                if (registro?.CerradaDefinitiva == true &&
+                    !EsRutaPublicacionAlbum(ruta))
                 {
                     context.Result = new ConflictObjectResult(new
                     {
@@ -361,7 +348,7 @@ namespace CONATRADEC_API.Filters
                 }
 
                 bool cierreDefinitivo =
-                    registro.CerradaDefinitiva || registro.CerradaTecnico;
+                    registro.CerradaDefinitiva;
 
                 if (requiereEtapaFinalizada &&
                     (!registro.EtapaTecnicaFinalizada || cierreDefinitivo))
@@ -369,14 +356,13 @@ namespace CONATRADEC_API.Filters
                     continue;
                 }
 
-                atributos["CerradaTecnico"] =
+                atributos["EtapaTecnicaFinalizada"] =
                     registro.EtapaTecnicaFinalizada;
-                atributos["FechaCierreTecnicoUtc"] =
+                atributos["FechaFinEtapaTecnicaUtc"] =
                     registro.FechaFinEtapaTecnicaUtc;
                 atributos["CerradaDefinitiva"] = cierreDefinitivo;
                 atributos["FechaCierreDefinitivoUtc"] =
-                    registro.FechaCierreDefinitivoUtc ??
-                    registro.FechaCierreTecnicoUtc;
+                    registro.FechaCierreDefinitivoUtc;
 
                 if (registro.EtapaTecnicaFinalizada &&
                     TryObtenerValor(
@@ -431,6 +417,9 @@ namespace CONATRADEC_API.Filters
                     id,
                     cancellationToken);
 
+            InspeccionFitosanitariaAsignacionRegistro asignacion =
+                await asignaciones.ObtenerAsync(id, cancellationToken);
+
             bool puedeGestionarOriginal = ObtenerBooleano(
                 detalle,
                 "PuedeGestionarSolicitud");
@@ -438,15 +427,11 @@ namespace CONATRADEC_API.Filters
             int? usuarioId = ObtenerUsuarioId(context.HttpContext.User);
 
             detalle["NombreInspeccion"] = registro.NombreInspeccion;
-            /*
-             * Compatibilidad con el cliente MAUI actual: CerradaTecnico se
-             * expone como finalización de la etapa técnica. El cierre global
-             * permanece separado en CerradaDefinitiva.
-             */
-            detalle["CerradaTecnico"] = registro.EtapaTecnicaFinalizada;
-            detalle["FechaCierreTecnicoUtc"] =
+            detalle["EtapaTecnicaFinalizada"] =
+                registro.EtapaTecnicaFinalizada;
+            detalle["FechaFinEtapaTecnicaUtc"] =
                 registro.FechaFinEtapaTecnicaUtc;
-            detalle["UsuarioCierreTecnicoId"] =
+            detalle["UsuarioFinEtapaTecnicaId"] =
                 registro.UsuarioFinEtapaTecnicaId;
             detalle["CerradaDefinitiva"] = registro.CerradaDefinitiva;
             detalle["FechaCierreDefinitivoUtc"] =
@@ -454,7 +439,13 @@ namespace CONATRADEC_API.Filters
             detalle["UsuarioCierreDefinitivoId"] =
                 registro.UsuarioCierreDefinitivoId;
             detalle["EsSoloLectura"] =
-                registro.CerradaDefinitiva || registro.CerradaTecnico;
+                registro.CerradaDefinitiva;
+            detalle["UsuarioAnalizadorAsignadoId"] =
+                asignacion.UsuarioAnalizadorId;
+            detalle["UsuarioAprobadorAsignadoId"] =
+                asignacion.UsuarioAprobadorId;
+            detalle["VersionAsignacion"] =
+                asignacion.VersionConcurrencia;
 
             if (registro.EtapaTecnicaFinalizada &&
                 TryObtenerValor(
@@ -469,15 +460,21 @@ namespace CONATRADEC_API.Filters
                 detalle["Estado"] = "PENDIENTE_REVISION";
             }
 
-            if (registro.CerradaDefinitiva || registro.CerradaTecnico)
+            if (registro.CerradaDefinitiva)
             {
+                bool puedePublicarCopia = await TienePermisoAsync(
+                    usuarioId,
+                    DiagnosticoIAFlujo.InterfazAlbum,
+                    TipoPermisoApi.Agregar,
+                    cancellationToken);
+
                 detalle["PuedeGestionarSolicitud"] = false;
                 detalle["PuedeCerrarInspeccion"] = false;
                 detalle["PuedeAnalizar"] = false;
                 detalle["PuedeAprobar"] = false;
-                detalle["PuedePublicarAlbum"] = false;
+                detalle["PuedePublicarAlbum"] = puedePublicarCopia;
                 detalle["MotivoNoPuedeCerrar"] =
-                    "La inspección fue cerrada definitivamente y solo puede consultarse.";
+                    "La inspección fue cerrada definitivamente. El expediente es de solo lectura, pero las fotografías autorizadas todavía pueden copiarse al Álbum Botánico.";
             }
             else
             {
@@ -511,9 +508,17 @@ namespace CONATRADEC_API.Filters
                  * la autoridad final para permitir la selección.
                  */
                 detalle["PuedeAnalizar"] =
-                    puedeAnalizar && estadoTecnico.TotalEnviadasRevision > 0;
+                    puedeAnalizar &&
+                    estadoTecnico.TotalEnviadasRevision > 0 &&
+                    asignacion.UsuarioAprobadorId != usuarioId &&
+                    (!asignacion.UsuarioAnalizadorId.HasValue ||
+                     asignacion.UsuarioAnalizadorId == usuarioId);
                 detalle["PuedeAprobar"] =
-                    puedeAprobar && registro.EtapaTecnicaFinalizada;
+                    puedeAprobar &&
+                    registro.EtapaTecnicaFinalizada &&
+                    asignacion.UsuarioAnalizadorId != usuarioId &&
+                    (!asignacion.UsuarioAprobadorId.HasValue ||
+                     asignacion.UsuarioAprobadorId == usuarioId);
                 detalle["PuedePublicarAlbum"] =
                     puedePublicar && registro.EtapaTecnicaFinalizada;
                 detalle["PuedeCerrarInspeccion"] =
@@ -587,6 +592,8 @@ namespace CONATRADEC_API.Filters
 
         private static bool EsRutaControlada(string ruta) =>
             CoincideRutaBase(ruta, RutaBase) ||
+            CoincideRutaBase(ruta, RutaClasificacionIA) ||
+            CoincideRutaBase(ruta, RutaPublicacionAlbum) ||
             EsRutaAlbumVinculadaInspeccion(ruta);
 
         /// <summary>
@@ -622,9 +629,12 @@ namespace CONATRADEC_API.Filters
                        StringComparison.OrdinalIgnoreCase);
         }
 
-        private static bool EsRutaCierreTecnicoAnterior(string ruta) =>
+        private static bool EsRutaPublicacionAlbum(string ruta) =>
             ruta.TrimEnd('/').EndsWith(
-                "/cerrar-tecnico",
+                "/publicar-album",
+                StringComparison.OrdinalIgnoreCase) ||
+            ruta.Contains(
+                "/api/publicaciones-album-fitosanitarias/",
                 StringComparison.OrdinalIgnoreCase);
 
         private static bool EsOperacionTecnico(string ruta)
@@ -632,7 +642,6 @@ namespace CONATRADEC_API.Filters
             string normalizada = ruta.TrimEnd('/').ToLowerInvariant();
 
             if (normalizada.EndsWith("/cerrar-definitivo") ||
-                normalizada.EndsWith("/cerrar-tecnico") ||
                 normalizada.EndsWith("/finalizar-etapa-tecnica"))
             {
                 return false;
@@ -815,7 +824,7 @@ namespace CONATRADEC_API.Filters
 
         private static int? ObtenerId(ActionExecutingContext context)
         {
-            string[] nombres = ["id", "diagnosticoId"];
+            string[] nombres = ["id", "diagnosticoId", "inspeccionId"];
 
             foreach (string nombre in nombres)
             {

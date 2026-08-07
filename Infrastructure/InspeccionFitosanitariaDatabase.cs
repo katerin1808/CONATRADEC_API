@@ -7,17 +7,17 @@ using System.Data.Common;
 namespace CONATRADEC_API.Infrastructure
 {
     /// <summary>
-    /// Inicialización y acceso liviano a los datos nuevos del flujo por
-    /// fotografía. Se ejecuta de forma idempotente desde la API, por lo que no
-    /// requiere scripts SQL ni migraciones manuales.
+    /// Persistencia del expediente independiente por fotografía. El control de
+    /// etapas se delega a InspeccionFitosanitariaControlDatabaseInitializer y
+    /// no conserva ningún campo heredado llamado CerradaTecnico.
     /// </summary>
     public sealed class InspeccionFitosanitariaDatabase
     {
         private static readonly SemaphoreSlim InicializacionLock = new(1, 1);
-        private static readonly SemaphoreSlim ProveedorInicializacionLock = new(1, 1);
+        private static readonly SemaphoreSlim ProveedorInicializacionLock =
+            new(1, 1);
         private static volatile bool inicializada;
         private static volatile bool proveedorInicializado;
-
         private readonly DiagnosticoIADbContext db;
 
         public InspeccionFitosanitariaDatabase(DiagnosticoIADbContext db)
@@ -32,38 +32,23 @@ namespace CONATRADEC_API.Infrastructure
                 return;
 
             await InicializacionLock.WaitAsync(cancellationToken);
-
             try
             {
                 if (inicializada)
                     return;
 
-                bool columnaCierreYaExistia =
-                    await ExisteColumnaAsync(
-                        "dbo.diagnosticoIA",
-                        "CerradaTecnico",
-                        cancellationToken);
-
-                await InicializarColumnasInspeccionAsync(cancellationToken);
                 await InicializarColumnasImagenAsync(cancellationToken);
                 await NormalizarImagenesExistentesAsync(cancellationToken);
-
-                // La compatibilidad se aplica una sola vez, exactamente cuando
-                // se incorpora la columna de cierre. En reinicios posteriores
-                // no se cierran automáticamente inspecciones parciales nuevas.
-                if (!columnaCierreYaExistia)
-                {
-                    await NormalizarCierreInspeccionesExistentesAsync(
-                        cancellationToken);
-                }
-
                 await InicializarTablasFlujoAsync(cancellationToken);
+                await new InspeccionFitosanitariaControlDatabaseInitializer(db)
+                    .InicializarAsync(cancellationToken);
+                await new InspeccionFitosanitariaAsignacionDatabase(db)
+                    .InicializarAsync(cancellationToken);
 
                 inicializada = true;
             }
             catch
             {
-                // Permite reintentar después de corregir una falla temporal.
                 inicializada = false;
                 throw;
             }
@@ -73,12 +58,6 @@ namespace CONATRADEC_API.Infrastructure
             }
         }
 
-        /// <summary>
-        /// Inicializa solamente la configuración del proveedor de IA.
-        /// Esta operación se mantiene separada del resto del flujo para que
-        /// una tabla auxiliar de inspecciones no bloquee la pantalla de
-        /// configuración de Gemini.
-        /// </summary>
         public async Task InicializarProveedorAsync(
             CancellationToken cancellationToken = default)
         {
@@ -86,13 +65,12 @@ namespace CONATRADEC_API.Infrastructure
                 return;
 
             await ProveedorInicializacionLock.WaitAsync(cancellationToken);
-
             try
             {
                 if (proveedorInicializado)
                     return;
 
-                const string sqlTablaProveedor = """
+                const string sql = """
 IF OBJECT_ID(N'[dbo].[diagnosticoIAProveedorConfiguracion]', N'U') IS NULL
 BEGIN
     CREATE TABLE [dbo].[diagnosticoIAProveedorConfiguracion]
@@ -120,13 +98,7 @@ BEGIN
             PRIMARY KEY ([DiagnosticoIAProveedorConfiguracionId])
     );
 END;
-""";
 
-                await db.Database.ExecuteSqlRawAsync(
-                    sqlTablaProveedor,
-                    cancellationToken);
-
-                const string sqlRegistroProveedor = """
 IF NOT EXISTS
 (
     SELECT 1
@@ -149,14 +121,9 @@ BEGIN
         180, 1, SYSUTCDATETIME()
     );
 END;
-""";
 
-                await db.Database.ExecuteSqlRawAsync(
-                    sqlRegistroProveedor,
-                    cancellationToken);
-
-                const string sqlHistorialProveedor = """
-IF OBJECT_ID(N'[dbo].[diagnosticoIAProveedorConfiguracionHistorial]', N'U') IS NULL
+IF OBJECT_ID(
+    N'[dbo].[diagnosticoIAProveedorConfiguracionHistorial]', N'U') IS NULL
 BEGIN
     CREATE TABLE [dbo].[diagnosticoIAProveedorConfiguracionHistorial]
     (
@@ -171,10 +138,7 @@ BEGIN
 END;
 """;
 
-                await db.Database.ExecuteSqlRawAsync(
-                    sqlHistorialProveedor,
-                    cancellationToken);
-
+                await db.Database.ExecuteSqlRawAsync(sql, cancellationToken);
                 proveedorInicializado = true;
             }
             catch
@@ -188,122 +152,64 @@ END;
             }
         }
 
-        private async Task<bool> ExisteColumnaAsync(
-            string tabla,
-            string columna,
-            CancellationToken cancellationToken)
-        {
-            const string sql = """
-SELECT CASE
-    WHEN COL_LENGTH(@tabla, @columna) IS NULL THEN 0
-    ELSE 1
-END;
-""";
-
-            await using DbCommand command = CrearComando(sql);
-            AgregarParametro(command, "@tabla", tabla);
-            AgregarParametro(command, "@columna", columna);
-            await AbrirAsync(command.Connection!, cancellationToken);
-
-            object? resultado =
-                await command.ExecuteScalarAsync(cancellationToken);
-
-            return Convert.ToInt32(resultado) == 1;
-        }
-
-        private async Task InicializarColumnasInspeccionAsync(
-            CancellationToken cancellationToken)
-        {
-            const string sql = """
-IF OBJECT_ID(N'[dbo].[diagnosticoIA]', N'U') IS NULL
-BEGIN
-    RAISERROR(
-        N'La tabla base diagnosticoIA no existe. Publique primero la versión base del módulo Diagnóstico IA.',
-        16,
-        1);
-    RETURN;
-END;
-
-IF COL_LENGTH(N'dbo.diagnosticoIA', N'CerradaTecnico') IS NULL
-    ALTER TABLE [dbo].[diagnosticoIA]
-        ADD [CerradaTecnico] BIT NOT NULL
-            CONSTRAINT [DF_diagIA_cerradaTecnico] DEFAULT(0);
-IF COL_LENGTH(N'dbo.diagnosticoIA', N'FechaCierreTecnicoUtc') IS NULL
-    ALTER TABLE [dbo].[diagnosticoIA]
-        ADD [FechaCierreTecnicoUtc] DATETIME2(0) NULL;
-IF COL_LENGTH(N'dbo.diagnosticoIA', N'UsuarioCierreTecnicoId') IS NULL
-    ALTER TABLE [dbo].[diagnosticoIA]
-        ADD [UsuarioCierreTecnicoId] INT NULL;
-""";
-
-            await db.Database.ExecuteSqlRawAsync(sql, cancellationToken);
-        }
-
         private async Task InicializarColumnasImagenAsync(
             CancellationToken cancellationToken)
         {
             const string sql = """
 IF OBJECT_ID(N'[dbo].[diagnosticoIAImagen]', N'U') IS NULL
 BEGIN
-    RAISERROR(
-        N'La tabla base diagnosticoIAImagen no existe. Publique primero la versión base del módulo Diagnóstico IA.',
-        16,
-        1);
-    RETURN;
+    THROW 51000, N'La tabla base diagnosticoIAImagen no existe.', 1;
 END;
 
 IF COL_LENGTH(N'dbo.diagnosticoIAImagen', N'FechaIdentificacionCampo') IS NULL
-    ALTER TABLE [dbo].[diagnosticoIAImagen]
-        ADD [FechaIdentificacionCampo] DATE NULL;
+    ALTER TABLE dbo.diagnosticoIAImagen
+        ADD FechaIdentificacionCampo DATE NULL;
 IF COL_LENGTH(N'dbo.diagnosticoIAImagen', N'FechaRegistroSistemaUtc') IS NULL
-    ALTER TABLE [dbo].[diagnosticoIAImagen]
-        ADD [FechaRegistroSistemaUtc] DATETIME2(0) NULL;
+    ALTER TABLE dbo.diagnosticoIAImagen
+        ADD FechaRegistroSistemaUtc DATETIME2(0) NULL;
 IF COL_LENGTH(N'dbo.diagnosticoIAImagen', N'FechaAnalisisIAUtc') IS NULL
-    ALTER TABLE [dbo].[diagnosticoIAImagen]
-        ADD [FechaAnalisisIAUtc] DATETIME2(0) NULL;
+    ALTER TABLE dbo.diagnosticoIAImagen
+        ADD FechaAnalisisIAUtc DATETIME2(0) NULL;
 IF COL_LENGTH(N'dbo.diagnosticoIAImagen', N'FechaAnalisisHumanoUtc') IS NULL
-    ALTER TABLE [dbo].[diagnosticoIAImagen]
-        ADD [FechaAnalisisHumanoUtc] DATETIME2(0) NULL;
+    ALTER TABLE dbo.diagnosticoIAImagen
+        ADD FechaAnalisisHumanoUtc DATETIME2(0) NULL;
 IF COL_LENGTH(N'dbo.diagnosticoIAImagen', N'FechaAprobacionUtc') IS NULL
-    ALTER TABLE [dbo].[diagnosticoIAImagen]
-        ADD [FechaAprobacionUtc] DATETIME2(0) NULL;
+    ALTER TABLE dbo.diagnosticoIAImagen
+        ADD FechaAprobacionUtc DATETIME2(0) NULL;
 IF COL_LENGTH(N'dbo.diagnosticoIAImagen', N'Estado') IS NULL
-    ALTER TABLE [dbo].[diagnosticoIAImagen]
-        ADD [Estado] NVARCHAR(40) NOT NULL
-            CONSTRAINT [DF_diagIAImg_estadoV2] DEFAULT(N'BORRADOR');
+    ALTER TABLE dbo.diagnosticoIAImagen
+        ADD Estado NVARCHAR(40) NOT NULL
+            CONSTRAINT DF_diagIAImg_estadoV2 DEFAULT(N'BORRADOR') WITH VALUES;
 IF COL_LENGTH(N'dbo.diagnosticoIAImagen', N'ErrorProcesamiento') IS NULL
-    ALTER TABLE [dbo].[diagnosticoIAImagen]
-        ADD [ErrorProcesamiento] NVARCHAR(2000) NOT NULL
-            CONSTRAINT [DF_diagIAImg_errorV2] DEFAULT(N'');
+    ALTER TABLE dbo.diagnosticoIAImagen
+        ADD ErrorProcesamiento NVARCHAR(2000) NOT NULL
+            CONSTRAINT DF_diagIAImg_errorV2 DEFAULT(N'') WITH VALUES;
 IF COL_LENGTH(N'dbo.diagnosticoIAImagen', N'ModeloIAUtilizado') IS NULL
-    ALTER TABLE [dbo].[diagnosticoIAImagen]
-        ADD [ModeloIAUtilizado] NVARCHAR(160) NOT NULL
-            CONSTRAINT [DF_diagIAImg_modeloV2] DEFAULT(N'');
+    ALTER TABLE dbo.diagnosticoIAImagen
+        ADD ModeloIAUtilizado NVARCHAR(160) NOT NULL
+            CONSTRAINT DF_diagIAImg_modeloV2 DEFAULT(N'') WITH VALUES;
 IF COL_LENGTH(N'dbo.diagnosticoIAImagen', N'IntentosIA') IS NULL
-    ALTER TABLE [dbo].[diagnosticoIAImagen]
-        ADD [IntentosIA] INT NOT NULL
-            CONSTRAINT [DF_diagIAImg_intentosV2] DEFAULT(0);
+    ALTER TABLE dbo.diagnosticoIAImagen
+        ADD IntentosIA INT NOT NULL
+            CONSTRAINT DF_diagIAImg_intentosV2 DEFAULT(0) WITH VALUES;
 IF COL_LENGTH(N'dbo.diagnosticoIAImagen', N'Descartada') IS NULL
-    ALTER TABLE [dbo].[diagnosticoIAImagen]
-        ADD [Descartada] BIT NOT NULL
-            CONSTRAINT [DF_diagIAImg_descartadaV2] DEFAULT(0);
+    ALTER TABLE dbo.diagnosticoIAImagen
+        ADD Descartada BIT NOT NULL
+            CONSTRAINT DF_diagIAImg_descartadaV2 DEFAULT(0) WITH VALUES;
 IF COL_LENGTH(N'dbo.diagnosticoIAImagen', N'MotivoDescarte') IS NULL
-    ALTER TABLE [dbo].[diagnosticoIAImagen]
-        ADD [MotivoDescarte] NVARCHAR(1000) NOT NULL
-            CONSTRAINT [DF_diagIAImg_motivoDescarteV2] DEFAULT(N'');
+    ALTER TABLE dbo.diagnosticoIAImagen
+        ADD MotivoDescarte NVARCHAR(1000) NOT NULL
+            CONSTRAINT DF_diagIAImg_motivoDescarteV2 DEFAULT(N'') WITH VALUES;
 IF COL_LENGTH(N'dbo.diagnosticoIAImagen', N'UsuarioDescarteId') IS NULL
-    ALTER TABLE [dbo].[diagnosticoIAImagen]
-        ADD [UsuarioDescarteId] INT NULL;
+    ALTER TABLE dbo.diagnosticoIAImagen ADD UsuarioDescarteId INT NULL;
 IF COL_LENGTH(N'dbo.diagnosticoIAImagen', N'FechaDescarteUtc') IS NULL
-    ALTER TABLE [dbo].[diagnosticoIAImagen]
-        ADD [FechaDescarteUtc] DATETIME2(0) NULL;
+    ALTER TABLE dbo.diagnosticoIAImagen ADD FechaDescarteUtc DATETIME2(0) NULL;
 IF COL_LENGTH(N'dbo.diagnosticoIAImagen', N'Activo') IS NULL
-    ALTER TABLE [dbo].[diagnosticoIAImagen]
-        ADD [Activo] BIT NOT NULL
-            CONSTRAINT [DF_diagIAImg_activoV2] DEFAULT(1);
+    ALTER TABLE dbo.diagnosticoIAImagen
+        ADD Activo BIT NOT NULL
+            CONSTRAINT DF_diagIAImg_activoV2 DEFAULT(1) WITH VALUES;
 IF COL_LENGTH(N'dbo.diagnosticoIAImagen', N'RowVersion') IS NULL
-    ALTER TABLE [dbo].[diagnosticoIAImagen]
-        ADD [RowVersion] ROWVERSION;
+    ALTER TABLE dbo.diagnosticoIAImagen ADD RowVersion ROWVERSION;
 """;
 
             await db.Database.ExecuteSqlRawAsync(sql, cancellationToken);
@@ -313,60 +219,56 @@ IF COL_LENGTH(N'dbo.diagnosticoIAImagen', N'RowVersion') IS NULL
             CancellationToken cancellationToken)
         {
             const string sql = """
-EXEC(N'UPDATE [dbo].[diagnosticoIAImagen]
-SET [FechaRegistroSistemaUtc] =
-    ISNULL([FechaRegistroSistemaUtc], [FechaRegistroUtc])
-WHERE [FechaRegistroSistemaUtc] IS NULL;');
+EXEC(N'UPDATE dbo.diagnosticoIAImagen
+SET FechaRegistroSistemaUtc =
+    ISNULL(FechaRegistroSistemaUtc, FechaRegistroUtc)
+WHERE FechaRegistroSistemaUtc IS NULL;');
 
-IF OBJECT_ID(N'[dbo].[diagnosticoIAImagenEvaluacion]', N'U') IS NOT NULL
-   AND OBJECT_ID(N'[dbo].[diagnosticoIAAprobacion]', N'U') IS NOT NULL
-   AND OBJECT_ID(N'[dbo].[diagnosticoIAImagenResultadoIA]', N'U') IS NOT NULL
-   AND OBJECT_ID(N'[dbo].[diagnosticoIAAlbumPublicacion]', N'U') IS NOT NULL
+IF OBJECT_ID(N'dbo.diagnosticoIAImagenEvaluacion', N'U') IS NOT NULL
+   AND OBJECT_ID(N'dbo.diagnosticoIAAprobacion', N'U') IS NOT NULL
+   AND OBJECT_ID(N'dbo.diagnosticoIAImagenResultadoIA', N'U') IS NOT NULL
+   AND OBJECT_ID(N'dbo.diagnosticoIAAlbumPublicacion', N'U') IS NOT NULL
 BEGIN
     BEGIN TRY
         EXEC(N'UPDATE imagen
-SET [Estado] = CASE
-    WHEN publicacion.[DiagnosticoIAImagenId] IS NOT NULL
+SET Estado = CASE
+    WHEN publicacion.DiagnosticoIAImagenId IS NOT NULL
         THEN N''PUBLICADA_ALBUM''
-    WHEN aprobacion.[Decision] IN
+    WHEN aprobacion.Decision IN
         (N''APROBAR_SIN_CAMBIOS'', N''APROBAR'')
         THEN N''APROBADA''
-    WHEN aprobacion.[Decision] = N''APROBAR_CON_CORRECCION''
+    WHEN aprobacion.Decision = N''APROBAR_CON_CORRECCION''
         THEN N''APROBADA_CON_CORRECCION''
-    WHEN aprobacion.[Decision] IN
+    WHEN aprobacion.Decision IN
         (N''RECHAZAR_DIAGNOSTICO'', N''RECHAZAR'')
         THEN N''RECHAZADA''
-    WHEN aprobacion.[Decision] IN
+    WHEN aprobacion.Decision IN
         (N''MARCAR_NO_CONCLUYENTE'', N''NO_CONCLUYENTE'')
         THEN N''NO_CONCLUYENTE''
-    WHEN resultado.[DiagnosticoIAImagenResultadoIAId] IS NOT NULL
+    WHEN resultado.DiagnosticoIAImagenResultadoIAId IS NOT NULL
         THEN N''PENDIENTE_DECISION_TECNICO''
     ELSE N''BORRADOR''
 END
-FROM [dbo].[diagnosticoIAImagen] imagen
+FROM dbo.diagnosticoIAImagen imagen
 OUTER APPLY
 (
-    SELECT TOP(1) a.[Decision]
-    FROM [dbo].[diagnosticoIAImagenEvaluacion] e
-    INNER JOIN [dbo].[diagnosticoIAAprobacion] a
-        ON a.[DiagnosticoIAAprobacionId] =
-           e.[DiagnosticoIAAprobacionId]
-    WHERE e.[DiagnosticoIAImagenId] =
-          imagen.[DiagnosticoIAImagenId]
-    ORDER BY a.[FechaAprobacionUtc] DESC
+    SELECT TOP(1) a.Decision
+    FROM dbo.diagnosticoIAImagenEvaluacion e
+    INNER JOIN dbo.diagnosticoIAAprobacion a
+        ON a.DiagnosticoIAAprobacionId = e.DiagnosticoIAAprobacionId
+    WHERE e.DiagnosticoIAImagenId = imagen.DiagnosticoIAImagenId
+    ORDER BY a.FechaAprobacionUtc DESC
 ) aprobacion
-LEFT JOIN [dbo].[diagnosticoIAImagenResultadoIA] resultado
-    ON resultado.[DiagnosticoIAImagenId] =
-       imagen.[DiagnosticoIAImagenId]
+LEFT JOIN dbo.diagnosticoIAImagenResultadoIA resultado
+    ON resultado.DiagnosticoIAImagenId = imagen.DiagnosticoIAImagenId
 LEFT JOIN
 (
-    SELECT DISTINCT [DiagnosticoIAImagenId]
-    FROM [dbo].[diagnosticoIAAlbumPublicacion]
-    WHERE [Activo] = 1
+    SELECT DISTINCT DiagnosticoIAImagenId
+    FROM dbo.diagnosticoIAAlbumPublicacion
+    WHERE Activo = 1
 ) publicacion
-    ON publicacion.[DiagnosticoIAImagenId] =
-       imagen.[DiagnosticoIAImagenId]
-WHERE imagen.[Estado] = N''BORRADOR'';');
+    ON publicacion.DiagnosticoIAImagenId = imagen.DiagnosticoIAImagenId
+WHERE imagen.Estado = N''BORRADOR'';');
     END TRY
     BEGIN CATCH
         PRINT ERROR_MESSAGE();
@@ -377,306 +279,194 @@ END;
             await db.Database.ExecuteSqlRawAsync(sql, cancellationToken);
         }
 
-        private async Task NormalizarCierreInspeccionesExistentesAsync(
-            CancellationToken cancellationToken)
-        {
-            /*
-             * Las inspecciones creadas con versiones anteriores no tenían un
-             * cierre explícito. Si ya poseen fotografías en etapas humanas o
-             * finales, se consideran cerradas para no desaparecer de las
-             * bandejas del analizador y aprobador.
-             */
-            const string sql = """
-UPDATE diagnostico
-SET [CerradaTecnico] = 1,
-    [FechaCierreTecnicoUtc] = ISNULL(
-        [FechaCierreTecnicoUtc],
-        diagnostico.[FechaSolicitudUtc])
-FROM [dbo].[diagnosticoIA] diagnostico
-WHERE [CerradaTecnico] = 0
-  AND EXISTS
-  (
-      SELECT 1
-      FROM [dbo].[diagnosticoIAImagen] imagen
-      WHERE imagen.[DiagnosticoIAId] = diagnostico.[DiagnosticoIAId]
-        AND imagen.[Estado] IN
-        (
-            N'PENDIENTE_ANALIZADOR',
-            N'EN_ANALISIS_HUMANO',
-            N'PENDIENTE_APROBACION',
-            N'DEVUELTA_AL_ANALIZADOR',
-            N'APROBADA',
-            N'APROBADA_CON_CORRECCION',
-            N'RECHAZADA',
-            N'NO_CONCLUYENTE',
-            N'PUBLICADA_ALBUM'
-        )
-  );
-""";
-
-            await db.Database.ExecuteSqlRawAsync(sql, cancellationToken);
-        }
-
         private async Task InicializarTablasFlujoAsync(
             CancellationToken cancellationToken)
         {
-            const string sqlIndice = """
+            const string sql = """
 IF NOT EXISTS
 (
-    SELECT 1
-    FROM sys.indexes
-    WHERE [name] = N'IX_diagIAImagen_estadoV2'
-      AND [object_id] = OBJECT_ID(N'[dbo].[diagnosticoIAImagen]')
+    SELECT 1 FROM sys.indexes
+    WHERE name = N'IX_diagIAImagen_estadoV2'
+      AND object_id = OBJECT_ID(N'dbo.diagnosticoIAImagen')
 )
 BEGIN
-    CREATE INDEX [IX_diagIAImagen_estadoV2]
-        ON [dbo].[diagnosticoIAImagen]
-           ([DiagnosticoIAId], [Estado], [Activo]);
+    CREATE INDEX IX_diagIAImagen_estadoV2
+        ON dbo.diagnosticoIAImagen
+           (DiagnosticoIAId, Estado, Activo);
 END;
-""";
 
-            await db.Database.ExecuteSqlRawAsync(
-                sqlIndice,
-                cancellationToken);
-
-            const string sqlRevision = """
-IF OBJECT_ID(N'[dbo].[diagnosticoIAImagenRevisionIA]', N'U') IS NULL
+IF OBJECT_ID(N'dbo.diagnosticoIAImagenRevisionIA', N'U') IS NULL
 BEGIN
-    CREATE TABLE [dbo].[diagnosticoIAImagenRevisionIA]
+    CREATE TABLE dbo.diagnosticoIAImagenRevisionIA
     (
-        [DiagnosticoIAImagenRevisionIAId] INT IDENTITY(1,1) NOT NULL,
-        [DiagnosticoIAImagenId] INT NOT NULL,
-        [UsuarioSolicitanteId] INT NOT NULL,
-        [TipoRevision] NVARCHAR(30) NOT NULL,
-        [Retroalimentacion] NVARCHAR(2000) NOT NULL
-            CONSTRAINT [DF_diagIAImgRev_feedback] DEFAULT(N''),
-        [DiagnosticoPropuesto] NVARCHAR(300) NOT NULL
-            CONSTRAINT [DF_diagIAImgRev_propuesto] DEFAULT(N''),
-        [ProveedorIA] NVARCHAR(40) NOT NULL
-            CONSTRAINT [DF_diagIAImgRev_proveedor] DEFAULT(N''),
-        [ModeloIA] NVARCHAR(160) NOT NULL
-            CONSTRAINT [DF_diagIAImgRev_modelo] DEFAULT(N''),
-        [Estado] NVARCHAR(30) NOT NULL,
-        [RespuestaJson] NVARCHAR(MAX) NOT NULL
-            CONSTRAINT [DF_diagIAImgRev_respuesta] DEFAULT(N''),
-        [Error] NVARCHAR(2000) NOT NULL
-            CONSTRAINT [DF_diagIAImgRev_error] DEFAULT(N''),
-        [FechaSolicitudUtc] DATETIME2(0) NOT NULL,
-        [FechaRespuestaUtc] DATETIME2(0) NULL,
-        CONSTRAINT [PK_diagIAImagenRevisionIA]
-            PRIMARY KEY ([DiagnosticoIAImagenRevisionIAId]),
-        CONSTRAINT [FK_diagIAImagenRevisionIA_imagen]
-            FOREIGN KEY ([DiagnosticoIAImagenId])
-            REFERENCES [dbo].[diagnosticoIAImagen]
-                       ([DiagnosticoIAImagenId])
+        DiagnosticoIAImagenRevisionIAId INT IDENTITY(1,1) NOT NULL,
+        DiagnosticoIAImagenId INT NOT NULL,
+        UsuarioSolicitanteId INT NOT NULL,
+        TipoRevision NVARCHAR(30) NOT NULL,
+        Retroalimentacion NVARCHAR(2000) NOT NULL
+            CONSTRAINT DF_diagIAImgRev_feedback DEFAULT(N''),
+        DiagnosticoPropuesto NVARCHAR(300) NOT NULL
+            CONSTRAINT DF_diagIAImgRev_propuesto DEFAULT(N''),
+        ProveedorIA NVARCHAR(40) NOT NULL
+            CONSTRAINT DF_diagIAImgRev_proveedor DEFAULT(N''),
+        ModeloIA NVARCHAR(160) NOT NULL
+            CONSTRAINT DF_diagIAImgRev_modelo DEFAULT(N''),
+        Estado NVARCHAR(30) NOT NULL,
+        RespuestaJson NVARCHAR(MAX) NOT NULL
+            CONSTRAINT DF_diagIAImgRev_respuesta DEFAULT(N''),
+        Error NVARCHAR(2000) NOT NULL
+            CONSTRAINT DF_diagIAImgRev_error DEFAULT(N''),
+        FechaSolicitudUtc DATETIME2(0) NOT NULL,
+        FechaRespuestaUtc DATETIME2(0) NULL,
+        CONSTRAINT PK_diagIAImagenRevisionIA
+            PRIMARY KEY (DiagnosticoIAImagenRevisionIAId),
+        CONSTRAINT FK_diagIAImagenRevisionIA_imagen
+            FOREIGN KEY (DiagnosticoIAImagenId)
+            REFERENCES dbo.diagnosticoIAImagen(DiagnosticoIAImagenId)
     );
 END;
-""";
 
-            await db.Database.ExecuteSqlRawAsync(
-                sqlRevision,
-                cancellationToken);
-
-            const string sqlIndiceRevision = """
 IF NOT EXISTS
 (
-    SELECT 1
-    FROM sys.indexes
-    WHERE [name] = N'IX_diagIAImagenRevisionIA_imagenFecha'
-      AND [object_id] =
-          OBJECT_ID(N'[dbo].[diagnosticoIAImagenRevisionIA]')
+    SELECT 1 FROM sys.indexes
+    WHERE name = N'IX_diagIAImagenRevisionIA_imagenFecha'
+      AND object_id = OBJECT_ID(N'dbo.diagnosticoIAImagenRevisionIA')
 )
-BEGIN
-    CREATE INDEX [IX_diagIAImagenRevisionIA_imagenFecha]
-        ON [dbo].[diagnosticoIAImagenRevisionIA]
-           ([DiagnosticoIAImagenId], [FechaSolicitudUtc] DESC);
-END;
-""";
+    CREATE INDEX IX_diagIAImagenRevisionIA_imagenFecha
+        ON dbo.diagnosticoIAImagenRevisionIA
+           (DiagnosticoIAImagenId, FechaSolicitudUtc DESC);
 
-            await db.Database.ExecuteSqlRawAsync(
-                sqlIndiceRevision,
-                cancellationToken);
-
-            const string sqlHumano = """
-IF OBJECT_ID(N'[dbo].[diagnosticoIAImagenAnalisisHumano]', N'U') IS NULL
+IF OBJECT_ID(N'dbo.diagnosticoIAImagenAnalisisHumano', N'U') IS NULL
 BEGIN
-    CREATE TABLE [dbo].[diagnosticoIAImagenAnalisisHumano]
+    CREATE TABLE dbo.diagnosticoIAImagenAnalisisHumano
     (
-        [DiagnosticoIAImagenAnalisisHumanoId]
-            INT IDENTITY(1,1) NOT NULL,
-        [DiagnosticoIAImagenId] INT NOT NULL,
-        [UsuarioAnalizadorId] INT NOT NULL,
-        [Version] INT NOT NULL,
-        [EstadoRegistro] NVARCHAR(30) NOT NULL,
-        [CalidadEvaluacion] NVARCHAR(30) NOT NULL,
-        [EstadoGeneral] NVARCHAR(40) NOT NULL,
-        [CategoriaPrincipal] NVARCHAR(50) NOT NULL,
-        [CategoriasSecundariasJson] NVARCHAR(MAX) NOT NULL
-            CONSTRAINT [DF_diagIAImgHum_cat] DEFAULT(N'[]'),
-        [Diagnostico] NVARCHAR(300) NOT NULL,
-        [TipoDiagnostico] NVARCHAR(80) NOT NULL
-            CONSTRAINT [DF_diagIAImgHum_tipo] DEFAULT(N''),
-        [Severidad] NVARCHAR(30) NOT NULL,
-        [NivelCerteza] NVARCHAR(30) NOT NULL,
-        [Observaciones] NVARCHAR(3000) NOT NULL
-            CONSTRAINT [DF_diagIAImgHum_obs] DEFAULT(N''),
-        [FechaCreacionUtc] DATETIME2(0) NOT NULL,
-        [FechaActualizacionUtc] DATETIME2(0) NOT NULL,
-        [FechaEnvioUtc] DATETIME2(0) NULL,
-        CONSTRAINT [PK_diagIAImagenAnalisisHumano]
-            PRIMARY KEY ([DiagnosticoIAImagenAnalisisHumanoId]),
-        CONSTRAINT [FK_diagIAImagenAnalisisHumano_imagen]
-            FOREIGN KEY ([DiagnosticoIAImagenId])
-            REFERENCES [dbo].[diagnosticoIAImagen]
-                       ([DiagnosticoIAImagenId])
+        DiagnosticoIAImagenAnalisisHumanoId INT IDENTITY(1,1) NOT NULL,
+        DiagnosticoIAImagenId INT NOT NULL,
+        UsuarioAnalizadorId INT NOT NULL,
+        Version INT NOT NULL,
+        EstadoRegistro NVARCHAR(30) NOT NULL,
+        CalidadEvaluacion NVARCHAR(30) NOT NULL,
+        EstadoGeneral NVARCHAR(40) NOT NULL,
+        CategoriaPrincipal NVARCHAR(50) NOT NULL,
+        CategoriasSecundariasJson NVARCHAR(MAX) NOT NULL
+            CONSTRAINT DF_diagIAImgHum_cat DEFAULT(N'[]'),
+        Diagnostico NVARCHAR(300) NOT NULL,
+        TipoDiagnostico NVARCHAR(80) NOT NULL
+            CONSTRAINT DF_diagIAImgHum_tipo DEFAULT(N''),
+        Severidad NVARCHAR(30) NOT NULL,
+        NivelCerteza NVARCHAR(30) NOT NULL,
+        Observaciones NVARCHAR(3000) NOT NULL
+            CONSTRAINT DF_diagIAImgHum_obs DEFAULT(N''),
+        FechaCreacionUtc DATETIME2(0) NOT NULL,
+        FechaActualizacionUtc DATETIME2(0) NOT NULL,
+        FechaEnvioUtc DATETIME2(0) NULL,
+        CONSTRAINT PK_diagIAImagenAnalisisHumano
+            PRIMARY KEY (DiagnosticoIAImagenAnalisisHumanoId),
+        CONSTRAINT FK_diagIAImagenAnalisisHumano_imagen
+            FOREIGN KEY (DiagnosticoIAImagenId)
+            REFERENCES dbo.diagnosticoIAImagen(DiagnosticoIAImagenId)
     );
 END;
-""";
 
-            await db.Database.ExecuteSqlRawAsync(
-                sqlHumano,
-                cancellationToken);
-
-            const string sqlIndiceHumano = """
 IF NOT EXISTS
 (
-    SELECT 1
-    FROM sys.indexes
-    WHERE [name] = N'UX_diagIAImagenAnalisisHumano_version'
-      AND [object_id] =
-          OBJECT_ID(N'[dbo].[diagnosticoIAImagenAnalisisHumano]')
+    SELECT 1 FROM sys.indexes
+    WHERE name = N'UX_diagIAImagenAnalisisHumano_version'
+      AND object_id = OBJECT_ID(N'dbo.diagnosticoIAImagenAnalisisHumano')
 )
-BEGIN
-    CREATE UNIQUE INDEX [UX_diagIAImagenAnalisisHumano_version]
-        ON [dbo].[diagnosticoIAImagenAnalisisHumano]
-           ([DiagnosticoIAImagenId], [Version]);
-END;
-""";
+    CREATE UNIQUE INDEX UX_diagIAImagenAnalisisHumano_version
+        ON dbo.diagnosticoIAImagenAnalisisHumano
+           (DiagnosticoIAImagenId, Version);
 
-            await db.Database.ExecuteSqlRawAsync(
-                sqlIndiceHumano,
-                cancellationToken);
-
-            const string sqlAprobacion = """
-IF OBJECT_ID(N'[dbo].[diagnosticoIAImagenAprobacionV2]', N'U') IS NULL
+IF OBJECT_ID(N'dbo.diagnosticoIAImagenAprobacionV2', N'U') IS NULL
 BEGIN
-    CREATE TABLE [dbo].[diagnosticoIAImagenAprobacionV2]
+    CREATE TABLE dbo.diagnosticoIAImagenAprobacionV2
     (
-        [DiagnosticoIAImagenAprobacionId] INT IDENTITY(1,1) NOT NULL,
-        [DiagnosticoIAImagenId] INT NOT NULL,
-        [DiagnosticoIAImagenAnalisisHumanoId] INT NULL,
-        [UsuarioAprobadorId] INT NOT NULL,
-        [Decision] NVARCHAR(40) NOT NULL,
-        [CalidadEvaluacionFinal] NVARCHAR(30) NOT NULL
-            CONSTRAINT [DF_diagIAImgApr_calidad] DEFAULT(N''),
-        [EstadoGeneralFinal] NVARCHAR(40) NOT NULL
-            CONSTRAINT [DF_diagIAImgApr_estado] DEFAULT(N''),
-        [CategoriaPrincipalFinal] NVARCHAR(50) NOT NULL
-            CONSTRAINT [DF_diagIAImgApr_categoria] DEFAULT(N''),
-        [CategoriasSecundariasFinalJson] NVARCHAR(MAX) NOT NULL
-            CONSTRAINT [DF_diagIAImgApr_catSec] DEFAULT(N'[]'),
-        [DiagnosticoFinal] NVARCHAR(300) NOT NULL
-            CONSTRAINT [DF_diagIAImgApr_diag] DEFAULT(N''),
-        [TipoDiagnosticoFinal] NVARCHAR(80) NOT NULL
-            CONSTRAINT [DF_diagIAImgApr_tipo] DEFAULT(N''),
-        [SeveridadFinal] NVARCHAR(30) NOT NULL
-            CONSTRAINT [DF_diagIAImgApr_sev] DEFAULT(N''),
-        [NivelCertezaFinal] NVARCHAR(30) NOT NULL
-            CONSTRAINT [DF_diagIAImgApr_certeza] DEFAULT(N''),
-        [Observaciones] NVARCHAR(3000) NOT NULL
-            CONSTRAINT [DF_diagIAImgApr_obs] DEFAULT(N''),
-        [AutorizaPublicacionAlbum] BIT NOT NULL
-            CONSTRAINT [DF_diagIAImgApr_album] DEFAULT(0),
-        [MismoUsuarioQueAnalizo] BIT NOT NULL
-            CONSTRAINT [DF_diagIAImgApr_mismo] DEFAULT(0),
-        [FechaAprobacionUtc] DATETIME2(0) NOT NULL,
-        CONSTRAINT [PK_diagIAImagenAprobacionV2]
-            PRIMARY KEY ([DiagnosticoIAImagenAprobacionId]),
-        CONSTRAINT [FK_diagIAImagenAprobacionV2_imagen]
-            FOREIGN KEY ([DiagnosticoIAImagenId])
-            REFERENCES [dbo].[diagnosticoIAImagen]
-                       ([DiagnosticoIAImagenId]),
-        CONSTRAINT [FK_diagIAImagenAprobacionV2_humano]
-            FOREIGN KEY ([DiagnosticoIAImagenAnalisisHumanoId])
-            REFERENCES [dbo].[diagnosticoIAImagenAnalisisHumano]
-                       ([DiagnosticoIAImagenAnalisisHumanoId])
+        DiagnosticoIAImagenAprobacionId INT IDENTITY(1,1) NOT NULL,
+        DiagnosticoIAImagenId INT NOT NULL,
+        DiagnosticoIAImagenAnalisisHumanoId INT NULL,
+        UsuarioAprobadorId INT NOT NULL,
+        Decision NVARCHAR(40) NOT NULL,
+        CalidadEvaluacionFinal NVARCHAR(30) NOT NULL
+            CONSTRAINT DF_diagIAImgApr_calidad DEFAULT(N''),
+        EstadoGeneralFinal NVARCHAR(40) NOT NULL
+            CONSTRAINT DF_diagIAImgApr_estado DEFAULT(N''),
+        CategoriaPrincipalFinal NVARCHAR(50) NOT NULL
+            CONSTRAINT DF_diagIAImgApr_categoria DEFAULT(N''),
+        CategoriasSecundariasFinalJson NVARCHAR(MAX) NOT NULL
+            CONSTRAINT DF_diagIAImgApr_catSec DEFAULT(N'[]'),
+        DiagnosticoFinal NVARCHAR(300) NOT NULL
+            CONSTRAINT DF_diagIAImgApr_diag DEFAULT(N''),
+        TipoDiagnosticoFinal NVARCHAR(80) NOT NULL
+            CONSTRAINT DF_diagIAImgApr_tipo DEFAULT(N''),
+        SeveridadFinal NVARCHAR(30) NOT NULL
+            CONSTRAINT DF_diagIAImgApr_sev DEFAULT(N''),
+        NivelCertezaFinal NVARCHAR(30) NOT NULL
+            CONSTRAINT DF_diagIAImgApr_certeza DEFAULT(N''),
+        Observaciones NVARCHAR(3000) NOT NULL
+            CONSTRAINT DF_diagIAImgApr_obs DEFAULT(N''),
+        AutorizaPublicacionAlbum BIT NOT NULL
+            CONSTRAINT DF_diagIAImgApr_album DEFAULT(0),
+        MismoUsuarioQueAnalizo BIT NOT NULL
+            CONSTRAINT DF_diagIAImgApr_mismo DEFAULT(0),
+        FechaAprobacionUtc DATETIME2(0) NOT NULL,
+        CONSTRAINT PK_diagIAImagenAprobacionV2
+            PRIMARY KEY (DiagnosticoIAImagenAprobacionId),
+        CONSTRAINT FK_diagIAImagenAprobacionV2_imagen
+            FOREIGN KEY (DiagnosticoIAImagenId)
+            REFERENCES dbo.diagnosticoIAImagen(DiagnosticoIAImagenId),
+        CONSTRAINT FK_diagIAImagenAprobacionV2_humano
+            FOREIGN KEY (DiagnosticoIAImagenAnalisisHumanoId)
+            REFERENCES dbo.diagnosticoIAImagenAnalisisHumano
+                       (DiagnosticoIAImagenAnalisisHumanoId)
     );
 END;
-""";
 
-            await db.Database.ExecuteSqlRawAsync(
-                sqlAprobacion,
-                cancellationToken);
-
-            const string sqlIndiceAprobacion = """
 IF NOT EXISTS
 (
-    SELECT 1
-    FROM sys.indexes
-    WHERE [name] = N'IX_diagIAImagenAprobacionV2_imagenFecha'
-      AND [object_id] =
-          OBJECT_ID(N'[dbo].[diagnosticoIAImagenAprobacionV2]')
+    SELECT 1 FROM sys.indexes
+    WHERE name = N'IX_diagIAImagenAprobacionV2_imagenFecha'
+      AND object_id = OBJECT_ID(N'dbo.diagnosticoIAImagenAprobacionV2')
 )
-BEGIN
-    CREATE INDEX [IX_diagIAImagenAprobacionV2_imagenFecha]
-        ON [dbo].[diagnosticoIAImagenAprobacionV2]
-           ([DiagnosticoIAImagenId], [FechaAprobacionUtc] DESC);
-END;
-""";
+    CREATE INDEX IX_diagIAImagenAprobacionV2_imagenFecha
+        ON dbo.diagnosticoIAImagenAprobacionV2
+           (DiagnosticoIAImagenId, FechaAprobacionUtc DESC);
 
-            await db.Database.ExecuteSqlRawAsync(
-                sqlIndiceAprobacion,
-                cancellationToken);
-
-            const string sqlHistorial = """
-IF OBJECT_ID(N'[dbo].[diagnosticoIAImagenHistorialV2]', N'U') IS NULL
+IF OBJECT_ID(N'dbo.diagnosticoIAImagenHistorialV2', N'U') IS NULL
 BEGIN
-    CREATE TABLE [dbo].[diagnosticoIAImagenHistorialV2]
+    CREATE TABLE dbo.diagnosticoIAImagenHistorialV2
     (
-        [DiagnosticoIAImagenHistorialId] INT IDENTITY(1,1) NOT NULL,
-        [DiagnosticoIAImagenId] INT NOT NULL,
-        [UsuarioId] INT NOT NULL,
-        [EstadoAnterior] NVARCHAR(40) NOT NULL
-            CONSTRAINT [DF_diagIAImgHist_anterior] DEFAULT(N''),
-        [EstadoNuevo] NVARCHAR(40) NOT NULL
-            CONSTRAINT [DF_diagIAImgHist_nuevo] DEFAULT(N''),
-        [Accion] NVARCHAR(80) NOT NULL,
-        [Detalle] NVARCHAR(2000) NOT NULL
-            CONSTRAINT [DF_diagIAImgHist_detalle] DEFAULT(N''),
-        [FechaUtc] DATETIME2(0) NOT NULL,
-        CONSTRAINT [PK_diagIAImagenHistorialV2]
-            PRIMARY KEY ([DiagnosticoIAImagenHistorialId]),
-        CONSTRAINT [FK_diagIAImagenHistorialV2_imagen]
-            FOREIGN KEY ([DiagnosticoIAImagenId])
-            REFERENCES [dbo].[diagnosticoIAImagen]
-                       ([DiagnosticoIAImagenId])
+        DiagnosticoIAImagenHistorialId INT IDENTITY(1,1) NOT NULL,
+        DiagnosticoIAImagenId INT NOT NULL,
+        UsuarioId INT NOT NULL,
+        EstadoAnterior NVARCHAR(40) NOT NULL
+            CONSTRAINT DF_diagIAImgHist_anterior DEFAULT(N''),
+        EstadoNuevo NVARCHAR(40) NOT NULL
+            CONSTRAINT DF_diagIAImgHist_nuevo DEFAULT(N''),
+        Accion NVARCHAR(80) NOT NULL,
+        Detalle NVARCHAR(2000) NOT NULL
+            CONSTRAINT DF_diagIAImgHist_detalle DEFAULT(N''),
+        FechaUtc DATETIME2(0) NOT NULL,
+        CONSTRAINT PK_diagIAImagenHistorialV2
+            PRIMARY KEY (DiagnosticoIAImagenHistorialId),
+        CONSTRAINT FK_diagIAImagenHistorialV2_imagen
+            FOREIGN KEY (DiagnosticoIAImagenId)
+            REFERENCES dbo.diagnosticoIAImagen(DiagnosticoIAImagenId)
     );
 END;
-""";
 
-            await db.Database.ExecuteSqlRawAsync(
-                sqlHistorial,
-                cancellationToken);
-
-            const string sqlIndiceHistorial = """
 IF NOT EXISTS
 (
-    SELECT 1
-    FROM sys.indexes
-    WHERE [name] = N'IX_diagIAImagenHistorialV2_imagenFecha'
-      AND [object_id] =
-          OBJECT_ID(N'[dbo].[diagnosticoIAImagenHistorialV2]')
+    SELECT 1 FROM sys.indexes
+    WHERE name = N'IX_diagIAImagenHistorialV2_imagenFecha'
+      AND object_id = OBJECT_ID(N'dbo.diagnosticoIAImagenHistorialV2')
 )
-BEGIN
-    CREATE INDEX [IX_diagIAImagenHistorialV2_imagenFecha]
-        ON [dbo].[diagnosticoIAImagenHistorialV2]
-           ([DiagnosticoIAImagenId], [FechaUtc] DESC);
-END;
+    CREATE INDEX IX_diagIAImagenHistorialV2_imagenFecha
+        ON dbo.diagnosticoIAImagenHistorialV2
+           (DiagnosticoIAImagenId, FechaUtc DESC);
 """;
 
-            await db.Database.ExecuteSqlRawAsync(
-                sqlIndiceHistorial,
-                cancellationToken);
+            await db.Database.ExecuteSqlRawAsync(sql, cancellationToken);
         }
 
         public async Task<FotoMetadatos?> ObtenerFotoAsync(
@@ -684,26 +474,23 @@ END;
             CancellationToken cancellationToken = default)
         {
             await InicializarAsync(cancellationToken);
-
             const string sql = """
 SELECT TOP(1)
-    [DiagnosticoIAImagenId], [DiagnosticoIAId], [Estado],
-    [FechaIdentificacionCampo], [FechaRegistroSistemaUtc],
-    [FechaAnalisisIAUtc], [FechaAnalisisHumanoUtc], [FechaAprobacionUtc],
-    [ErrorProcesamiento], [ModeloIAUtilizado], [IntentosIA],
-    [Descartada], [MotivoDescarte], [UsuarioDescarteId],
-    [FechaDescarteUtc], [Activo]
-FROM [dbo].[diagnosticoIAImagen]
-WHERE [DiagnosticoIAImagenId] = @fotoId;
+    DiagnosticoIAImagenId, DiagnosticoIAId, Estado,
+    FechaIdentificacionCampo, FechaRegistroSistemaUtc,
+    FechaAnalisisIAUtc, FechaAnalisisHumanoUtc, FechaAprobacionUtc,
+    ErrorProcesamiento, ModeloIAUtilizado, IntentosIA,
+    Descartada, MotivoDescarte, UsuarioDescarteId,
+    FechaDescarteUtc, Activo
+FROM dbo.diagnosticoIAImagen
+WHERE DiagnosticoIAImagenId = @fotoId;
 """;
 
-            await using DbCommand command = CrearComando(sql);
-            AgregarParametro(command, "@fotoId", fotografiaId);
-            await AbrirAsync(command.Connection!, cancellationToken);
-
+            await using DbCommand comando = CrearComando(sql);
+            AgregarParametro(comando, "@fotoId", fotografiaId);
+            await AbrirAsync(comando.Connection!, cancellationToken);
             await using DbDataReader reader =
-                await command.ExecuteReaderAsync(cancellationToken);
-
+                await comando.ExecuteReaderAsync(cancellationToken);
             return await reader.ReadAsync(cancellationToken)
                 ? LeerFoto(reader)
                 : null;
@@ -714,31 +501,27 @@ WHERE [DiagnosticoIAImagenId] = @fotoId;
             CancellationToken cancellationToken = default)
         {
             await InicializarAsync(cancellationToken);
-
             const string sql = """
 SELECT
-    [DiagnosticoIAImagenId], [DiagnosticoIAId], [Estado],
-    [FechaIdentificacionCampo], [FechaRegistroSistemaUtc],
-    [FechaAnalisisIAUtc], [FechaAnalisisHumanoUtc], [FechaAprobacionUtc],
-    [ErrorProcesamiento], [ModeloIAUtilizado], [IntentosIA],
-    [Descartada], [MotivoDescarte], [UsuarioDescarteId],
-    [FechaDescarteUtc], [Activo]
-FROM [dbo].[diagnosticoIAImagen]
-WHERE [DiagnosticoIAId] = @diagnosticoId
-ORDER BY [Orden];
+    DiagnosticoIAImagenId, DiagnosticoIAId, Estado,
+    FechaIdentificacionCampo, FechaRegistroSistemaUtc,
+    FechaAnalisisIAUtc, FechaAnalisisHumanoUtc, FechaAprobacionUtc,
+    ErrorProcesamiento, ModeloIAUtilizado, IntentosIA,
+    Descartada, MotivoDescarte, UsuarioDescarteId,
+    FechaDescarteUtc, Activo
+FROM dbo.diagnosticoIAImagen
+WHERE DiagnosticoIAId = @diagnosticoId
+ORDER BY Orden;
 """;
 
-            await using DbCommand command = CrearComando(sql);
-            AgregarParametro(command, "@diagnosticoId", diagnosticoId);
-            await AbrirAsync(command.Connection!, cancellationToken);
-
+            await using DbCommand comando = CrearComando(sql);
+            AgregarParametro(comando, "@diagnosticoId", diagnosticoId);
+            await AbrirAsync(comando.Connection!, cancellationToken);
             var resultado = new List<FotoMetadatos>();
             await using DbDataReader reader =
-                await command.ExecuteReaderAsync(cancellationToken);
-
+                await comando.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
                 resultado.Add(LeerFoto(reader));
-
             return resultado;
         }
 
@@ -748,58 +531,43 @@ ORDER BY [Orden];
                 CancellationToken cancellationToken = default)
         {
             await InicializarAsync(cancellationToken);
-
-            List<int> ids = diagnosticoIds
+            int[] ids = diagnosticoIds
                 .Where(item => item > 0)
                 .Distinct()
-                .ToList();
-
+                .ToArray();
             var resultado = ids.ToDictionary(
                 item => item,
                 _ => new List<FotoMetadatos>());
-
-            if (ids.Count == 0)
+            if (ids.Length == 0)
                 return resultado;
 
-            string[] nombres = ids
-                .Select((_, indice) => $"@id{indice}")
-                .ToArray();
-
+            string parametros = string.Join(
+                ",",
+                ids.Select((_, indice) => $"@id{indice}"));
             string sql = $"""
 SELECT
-    [DiagnosticoIAImagenId], [DiagnosticoIAId], [Estado],
-    [FechaIdentificacionCampo], [FechaRegistroSistemaUtc],
-    [FechaAnalisisIAUtc], [FechaAnalisisHumanoUtc], [FechaAprobacionUtc],
-    [ErrorProcesamiento], [ModeloIAUtilizado], [IntentosIA],
-    [Descartada], [MotivoDescarte], [UsuarioDescarteId],
-    [FechaDescarteUtc], [Activo]
-FROM [dbo].[diagnosticoIAImagen]
-WHERE [DiagnosticoIAId] IN ({string.Join(", ", nombres)})
-ORDER BY [DiagnosticoIAId], [Orden];
+    DiagnosticoIAImagenId, DiagnosticoIAId, Estado,
+    FechaIdentificacionCampo, FechaRegistroSistemaUtc,
+    FechaAnalisisIAUtc, FechaAnalisisHumanoUtc, FechaAprobacionUtc,
+    ErrorProcesamiento, ModeloIAUtilizado, IntentosIA,
+    Descartada, MotivoDescarte, UsuarioDescarteId,
+    FechaDescarteUtc, Activo
+FROM dbo.diagnosticoIAImagen
+WHERE DiagnosticoIAId IN ({parametros})
+ORDER BY DiagnosticoIAId, Orden;
 """;
 
-            await using DbCommand command = CrearComando(sql);
-            for (int indice = 0; indice < ids.Count; indice++)
-                AgregarParametro(command, nombres[indice], ids[indice]);
-
-            await AbrirAsync(command.Connection!, cancellationToken);
+            await using DbCommand comando = CrearComando(sql);
+            for (int indice = 0; indice < ids.Length; indice++)
+                AgregarParametro(comando, $"@id{indice}", ids[indice]);
+            await AbrirAsync(comando.Connection!, cancellationToken);
             await using DbDataReader reader =
-                await command.ExecuteReaderAsync(cancellationToken);
-
+                await comando.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
                 FotoMetadatos foto = LeerFoto(reader);
-                if (!resultado.TryGetValue(
-                        foto.DiagnosticoId,
-                        out List<FotoMetadatos>? lista))
-                {
-                    lista = [];
-                    resultado[foto.DiagnosticoId] = lista;
-                }
-
-                lista.Add(foto);
+                resultado.GetValueOrDefault(foto.DiagnosticoId)?.Add(foto);
             }
-
             return resultado;
         }
 
@@ -811,19 +579,18 @@ ORDER BY [DiagnosticoIAId], [Orden];
             CancellationToken cancellationToken = default)
         {
             await InicializarAsync(cancellationToken);
-
             const string sql = """
-UPDATE [dbo].[diagnosticoIAImagen]
-SET [FechaIdentificacionCampo] = @fechaCampo,
-    [FechaRegistroSistemaUtc] = @fechaRegistro,
-    [Estado] = N'PENDIENTE_IA',
-    [Activo] = 1
-WHERE [DiagnosticoIAImagenId] = @fotoId;
+UPDATE dbo.diagnosticoIAImagen
+SET FechaIdentificacionCampo = @fechaCampo,
+    FechaRegistroSistemaUtc = @fechaRegistro,
+    Estado = N'PENDIENTE_IA',
+    Activo = 1
+WHERE DiagnosticoIAImagenId = @fotoId;
 
-INSERT INTO [dbo].[diagnosticoIAImagenHistorialV2]
+INSERT INTO dbo.diagnosticoIAImagenHistorialV2
 (
-    [DiagnosticoIAImagenId], [UsuarioId], [EstadoAnterior],
-    [EstadoNuevo], [Accion], [Detalle], [FechaUtc]
+    DiagnosticoIAImagenId, UsuarioId, EstadoAnterior,
+    EstadoNuevo, Accion, Detalle, FechaUtc
 )
 VALUES
 (
@@ -860,25 +627,25 @@ VALUES
             FotoMetadatos? actual = await ObtenerFotoAsync(
                 fotografiaId,
                 cancellationToken);
-
             if (actual == null)
                 throw new InvalidOperationException("La fotografía no existe.");
 
             const string sql = """
-UPDATE [dbo].[diagnosticoIAImagen]
-SET [Estado] = @estadoNuevo,
-    [FechaAnalisisIAUtc] = COALESCE(@fechaIA, [FechaAnalisisIAUtc]),
-    [FechaAnalisisHumanoUtc] = COALESCE(@fechaHumano, [FechaAnalisisHumanoUtc]),
-    [FechaAprobacionUtc] = COALESCE(@fechaAprobacion, [FechaAprobacionUtc]),
-    [ErrorProcesamiento] = @error,
-    [ModeloIAUtilizado] = CASE WHEN @modelo = N'' THEN [ModeloIAUtilizado] ELSE @modelo END,
-    [IntentosIA] = [IntentosIA] + @incremento
-WHERE [DiagnosticoIAImagenId] = @fotoId;
+UPDATE dbo.diagnosticoIAImagen
+SET Estado = @estadoNuevo,
+    FechaAnalisisIAUtc = COALESCE(@fechaIA, FechaAnalisisIAUtc),
+    FechaAnalisisHumanoUtc = COALESCE(@fechaHumano, FechaAnalisisHumanoUtc),
+    FechaAprobacionUtc = COALESCE(@fechaAprobacion, FechaAprobacionUtc),
+    ErrorProcesamiento = @error,
+    ModeloIAUtilizado = CASE
+        WHEN @modelo = N'' THEN ModeloIAUtilizado ELSE @modelo END,
+    IntentosIA = IntentosIA + @incremento
+WHERE DiagnosticoIAImagenId = @fotoId;
 
-INSERT INTO [dbo].[diagnosticoIAImagenHistorialV2]
+INSERT INTO dbo.diagnosticoIAImagenHistorialV2
 (
-    [DiagnosticoIAImagenId], [UsuarioId], [EstadoAnterior],
-    [EstadoNuevo], [Accion], [Detalle], [FechaUtc]
+    DiagnosticoIAImagenId, UsuarioId, EstadoAnterior,
+    EstadoNuevo, Accion, Detalle, FechaUtc
 )
 VALUES
 (
@@ -913,23 +680,22 @@ VALUES
             FotoMetadatos? actual = await ObtenerFotoAsync(
                 fotografiaId,
                 cancellationToken);
-
             if (actual == null)
                 throw new InvalidOperationException("La fotografía no existe.");
 
             const string sql = """
-UPDATE [dbo].[diagnosticoIAImagen]
-SET [Estado] = N'DESCARTADA',
-    [Descartada] = 1,
-    [MotivoDescarte] = @motivo,
-    [UsuarioDescarteId] = @usuarioId,
-    [FechaDescarteUtc] = SYSUTCDATETIME()
-WHERE [DiagnosticoIAImagenId] = @fotoId;
+UPDATE dbo.diagnosticoIAImagen
+SET Estado = N'DESCARTADA',
+    Descartada = 1,
+    MotivoDescarte = @motivo,
+    UsuarioDescarteId = @usuarioId,
+    FechaDescarteUtc = SYSUTCDATETIME()
+WHERE DiagnosticoIAImagenId = @fotoId;
 
-INSERT INTO [dbo].[diagnosticoIAImagenHistorialV2]
+INSERT INTO dbo.diagnosticoIAImagenHistorialV2
 (
-    [DiagnosticoIAImagenId], [UsuarioId], [EstadoAnterior],
-    [EstadoNuevo], [Accion], [Detalle], [FechaUtc]
+    DiagnosticoIAImagenId, UsuarioId, EstadoAnterior,
+    EstadoNuevo, Accion, Detalle, FechaUtc
 )
 VALUES
 (
@@ -958,11 +724,11 @@ VALUES
             CancellationToken cancellationToken = default)
         {
             const string sql = """
-INSERT INTO [dbo].[diagnosticoIAImagenRevisionIA]
+INSERT INTO dbo.diagnosticoIAImagenRevisionIA
 (
-    [DiagnosticoIAImagenId], [UsuarioSolicitanteId], [TipoRevision],
-    [Retroalimentacion], [DiagnosticoPropuesto], [ProveedorIA],
-    [ModeloIA], [Estado], [FechaSolicitudUtc]
+    DiagnosticoIAImagenId, UsuarioSolicitanteId, TipoRevision,
+    Retroalimentacion, DiagnosticoPropuesto, ProveedorIA,
+    ModeloIA, Estado, FechaSolicitudUtc
 )
 VALUES
 (
@@ -993,12 +759,12 @@ SELECT CAST(SCOPE_IDENTITY() AS INT);
             CancellationToken cancellationToken = default) =>
             EjecutarAsync(
                 """
-UPDATE [dbo].[diagnosticoIAImagenRevisionIA]
-SET [Estado] = @estado,
-    [RespuestaJson] = @respuesta,
-    [Error] = @error,
-    [FechaRespuestaUtc] = SYSUTCDATETIME()
-WHERE [DiagnosticoIAImagenRevisionIAId] = @revisionId;
+UPDATE dbo.diagnosticoIAImagenRevisionIA
+SET Estado = @estado,
+    RespuestaJson = @respuesta,
+    Error = @error,
+    FechaRespuestaUtc = SYSUTCDATETIME()
+WHERE DiagnosticoIAImagenRevisionIAId = @revisionId;
 """,
                 cancellationToken,
                 ("@revisionId", revisionId),
@@ -1024,18 +790,18 @@ WHERE [DiagnosticoIAImagenRevisionIAId] = @revisionId;
             const string sql = """
 DECLARE @version INT =
 (
-    SELECT ISNULL(MAX([Version]), 0) + 1
-    FROM [dbo].[diagnosticoIAImagenAnalisisHumano] WITH (UPDLOCK, HOLDLOCK)
-    WHERE [DiagnosticoIAImagenId] = @fotoId
+    SELECT ISNULL(MAX(Version), 0) + 1
+    FROM dbo.diagnosticoIAImagenAnalisisHumano WITH (UPDLOCK, HOLDLOCK)
+    WHERE DiagnosticoIAImagenId = @fotoId
 );
 
-INSERT INTO [dbo].[diagnosticoIAImagenAnalisisHumano]
+INSERT INTO dbo.diagnosticoIAImagenAnalisisHumano
 (
-    [DiagnosticoIAImagenId], [UsuarioAnalizadorId], [Version],
-    [EstadoRegistro], [CalidadEvaluacion], [EstadoGeneral],
-    [CategoriaPrincipal], [CategoriasSecundariasJson], [Diagnostico],
-    [TipoDiagnostico], [Severidad], [NivelCerteza], [Observaciones],
-    [FechaCreacionUtc], [FechaActualizacionUtc], [FechaEnvioUtc]
+    DiagnosticoIAImagenId, UsuarioAnalizadorId, Version,
+    EstadoRegistro, CalidadEvaluacion, EstadoGeneral,
+    CategoriaPrincipal, CategoriasSecundariasJson, Diagnostico,
+    TipoDiagnostico, Severidad, NivelCerteza, Observaciones,
+    FechaCreacionUtc, FechaActualizacionUtc, FechaEnvioUtc
 )
 VALUES
 (
@@ -1046,7 +812,6 @@ VALUES
     SYSUTCDATETIME(), SYSUTCDATETIME(),
     CASE WHEN @enviar = 1 THEN SYSUTCDATETIME() ELSE NULL END
 );
-
 SELECT CAST(SCOPE_IDENTITY() AS INT);
 """;
 
@@ -1073,27 +838,25 @@ SELECT CAST(SCOPE_IDENTITY() AS INT);
         {
             const string sql = """
 SELECT TOP(1)
-    [DiagnosticoIAImagenAnalisisHumanoId], [DiagnosticoIAImagenId],
-    [UsuarioAnalizadorId], [Version], [EstadoRegistro],
-    [CalidadEvaluacion], [EstadoGeneral], [CategoriaPrincipal],
-    [CategoriasSecundariasJson], [Diagnostico], [TipoDiagnostico],
-    [Severidad], [NivelCerteza], [Observaciones], [FechaCreacionUtc],
-    [FechaEnvioUtc]
-FROM [dbo].[diagnosticoIAImagenAnalisisHumano]
-WHERE [DiagnosticoIAImagenId] = @fotoId
-ORDER BY [Version] DESC;
+    DiagnosticoIAImagenAnalisisHumanoId, DiagnosticoIAImagenId,
+    UsuarioAnalizadorId, Version, EstadoRegistro,
+    CalidadEvaluacion, EstadoGeneral, CategoriaPrincipal,
+    CategoriasSecundariasJson, Diagnostico, TipoDiagnostico,
+    Severidad, NivelCerteza, Observaciones, FechaCreacionUtc,
+    FechaEnvioUtc
+FROM dbo.diagnosticoIAImagenAnalisisHumano
+WHERE DiagnosticoIAImagenId = @fotoId
+ORDER BY Version DESC, DiagnosticoIAImagenAnalisisHumanoId DESC;
 """;
 
-            await using DbCommand command = CrearComando(sql);
-            AgregarParametro(command, "@fotoId", fotografiaId);
-            await AbrirAsync(command.Connection!, cancellationToken);
+            await using DbCommand comando = CrearComando(sql);
+            AgregarParametro(comando, "@fotoId", fotografiaId);
+            await AbrirAsync(comando.Connection!, cancellationToken);
             await using DbDataReader reader =
-                await command.ExecuteReaderAsync(cancellationToken);
-
-            if (!await reader.ReadAsync(cancellationToken))
-                return null;
-
-            return LeerAnalisisHumano(reader);
+                await comando.ExecuteReaderAsync(cancellationToken);
+            return await reader.ReadAsync(cancellationToken)
+                ? LeerAnalisisHumano(reader)
+                : null;
         }
 
         public async Task<Dictionary<int, AnalisisHumanoRegistro>>
@@ -1102,54 +865,50 @@ ORDER BY [Version] DESC;
                 CancellationToken cancellationToken = default)
         {
             await InicializarAsync(cancellationToken);
-
             const string sql = """
 WITH ultimos AS
 (
     SELECT
-        h.[DiagnosticoIAImagenAnalisisHumanoId],
-        h.[DiagnosticoIAImagenId], h.[UsuarioAnalizadorId],
-        h.[Version], h.[EstadoRegistro], h.[CalidadEvaluacion],
-        h.[EstadoGeneral], h.[CategoriaPrincipal],
-        h.[CategoriasSecundariasJson], h.[Diagnostico],
-        h.[TipoDiagnostico], h.[Severidad], h.[NivelCerteza],
-        h.[Observaciones], h.[FechaCreacionUtc], h.[FechaEnvioUtc],
+        h.DiagnosticoIAImagenAnalisisHumanoId,
+        h.DiagnosticoIAImagenId, h.UsuarioAnalizadorId,
+        h.Version, h.EstadoRegistro, h.CalidadEvaluacion,
+        h.EstadoGeneral, h.CategoriaPrincipal,
+        h.CategoriasSecundariasJson, h.Diagnostico,
+        h.TipoDiagnostico, h.Severidad, h.NivelCerteza,
+        h.Observaciones, h.FechaCreacionUtc, h.FechaEnvioUtc,
         ROW_NUMBER() OVER
         (
-            PARTITION BY h.[DiagnosticoIAImagenId]
-            ORDER BY h.[Version] DESC,
-                     h.[DiagnosticoIAImagenAnalisisHumanoId] DESC
+            PARTITION BY h.DiagnosticoIAImagenId
+            ORDER BY h.Version DESC,
+                     h.DiagnosticoIAImagenAnalisisHumanoId DESC
         ) AS rn
-    FROM [dbo].[diagnosticoIAImagenAnalisisHumano] h
-    INNER JOIN [dbo].[diagnosticoIAImagen] i
-        ON i.[DiagnosticoIAImagenId] = h.[DiagnosticoIAImagenId]
-    WHERE i.[DiagnosticoIAId] = @diagnosticoId
+    FROM dbo.diagnosticoIAImagenAnalisisHumano h
+    INNER JOIN dbo.diagnosticoIAImagen i
+        ON i.DiagnosticoIAImagenId = h.DiagnosticoIAImagenId
+    WHERE i.DiagnosticoIAId = @diagnosticoId
 )
 SELECT
-    [DiagnosticoIAImagenAnalisisHumanoId], [DiagnosticoIAImagenId],
-    [UsuarioAnalizadorId], [Version], [EstadoRegistro],
-    [CalidadEvaluacion], [EstadoGeneral], [CategoriaPrincipal],
-    [CategoriasSecundariasJson], [Diagnostico], [TipoDiagnostico],
-    [Severidad], [NivelCerteza], [Observaciones], [FechaCreacionUtc],
-    [FechaEnvioUtc]
+    DiagnosticoIAImagenAnalisisHumanoId, DiagnosticoIAImagenId,
+    UsuarioAnalizadorId, Version, EstadoRegistro,
+    CalidadEvaluacion, EstadoGeneral, CategoriaPrincipal,
+    CategoriasSecundariasJson, Diagnostico, TipoDiagnostico,
+    Severidad, NivelCerteza, Observaciones, FechaCreacionUtc,
+    FechaEnvioUtc
 FROM ultimos
 WHERE rn = 1;
 """;
 
-            await using DbCommand command = CrearComando(sql);
-            AgregarParametro(command, "@diagnosticoId", diagnosticoId);
-            await AbrirAsync(command.Connection!, cancellationToken);
-
+            await using DbCommand comando = CrearComando(sql);
+            AgregarParametro(comando, "@diagnosticoId", diagnosticoId);
+            await AbrirAsync(comando.Connection!, cancellationToken);
             var resultado = new Dictionary<int, AnalisisHumanoRegistro>();
             await using DbDataReader reader =
-                await command.ExecuteReaderAsync(cancellationToken);
-
+                await comando.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
                 AnalisisHumanoRegistro registro = LeerAnalisisHumano(reader);
                 resultado[registro.FotografiaId] = registro;
             }
-
             return resultado;
         }
 
@@ -1171,23 +930,29 @@ WHERE rn = 1;
             bool mismoUsuario,
             CancellationToken cancellationToken = default)
         {
+            if (mismoUsuario)
+            {
+                throw new InvalidOperationException(
+                    "El usuario que analizó la evidencia no puede aprobarla.");
+            }
+
             const string sql = """
-INSERT INTO [dbo].[diagnosticoIAImagenAprobacionV2]
+INSERT INTO dbo.diagnosticoIAImagenAprobacionV2
 (
-    [DiagnosticoIAImagenId], [DiagnosticoIAImagenAnalisisHumanoId],
-    [UsuarioAprobadorId], [Decision], [CalidadEvaluacionFinal],
-    [EstadoGeneralFinal], [CategoriaPrincipalFinal],
-    [CategoriasSecundariasFinalJson], [DiagnosticoFinal],
-    [TipoDiagnosticoFinal], [SeveridadFinal], [NivelCertezaFinal],
-    [Observaciones], [AutorizaPublicacionAlbum],
-    [MismoUsuarioQueAnalizo], [FechaAprobacionUtc]
+    DiagnosticoIAImagenId, DiagnosticoIAImagenAnalisisHumanoId,
+    UsuarioAprobadorId, Decision, CalidadEvaluacionFinal,
+    EstadoGeneralFinal, CategoriaPrincipalFinal,
+    CategoriasSecundariasFinalJson, DiagnosticoFinal,
+    TipoDiagnosticoFinal, SeveridadFinal, NivelCertezaFinal,
+    Observaciones, AutorizaPublicacionAlbum,
+    MismoUsuarioQueAnalizo, FechaAprobacionUtc
 )
 VALUES
 (
     @fotoId, @analisisId, @usuarioId, @decision, @calidad,
     @estadoGeneral, @categoria, @categoriasJson, @diagnostico,
     @tipo, @severidad, @certeza, @observaciones, @autorizaAlbum,
-    @mismoUsuario, SYSUTCDATETIME()
+    0, SYSUTCDATETIME()
 );
 SELECT CAST(SCOPE_IDENTITY() AS INT);
 """;
@@ -1208,8 +973,7 @@ SELECT CAST(SCOPE_IDENTITY() AS INT);
                 ("@severidad", Limitar(severidad, 30)),
                 ("@certeza", Limitar(certeza, 30)),
                 ("@observaciones", Limitar(observaciones, 3000)),
-                ("@autorizaAlbum", autorizaAlbum),
-                ("@mismoUsuario", mismoUsuario));
+                ("@autorizaAlbum", autorizaAlbum));
         }
 
         public async Task<AprobacionRegistro?> ObtenerUltimaAprobacionAsync(
@@ -1218,27 +982,25 @@ SELECT CAST(SCOPE_IDENTITY() AS INT);
         {
             const string sql = """
 SELECT TOP(1)
-    [DiagnosticoIAImagenAprobacionId], [DiagnosticoIAImagenId],
-    [DiagnosticoIAImagenAnalisisHumanoId], [UsuarioAprobadorId],
-    [Decision], [DiagnosticoFinal], [Observaciones],
-    [AutorizaPublicacionAlbum], [MismoUsuarioQueAnalizo],
-    [FechaAprobacionUtc]
-FROM [dbo].[diagnosticoIAImagenAprobacionV2]
-WHERE [DiagnosticoIAImagenId] = @fotoId
-ORDER BY [FechaAprobacionUtc] DESC,
-         [DiagnosticoIAImagenAprobacionId] DESC;
+    DiagnosticoIAImagenAprobacionId, DiagnosticoIAImagenId,
+    DiagnosticoIAImagenAnalisisHumanoId, UsuarioAprobadorId,
+    Decision, DiagnosticoFinal, Observaciones,
+    AutorizaPublicacionAlbum, MismoUsuarioQueAnalizo,
+    FechaAprobacionUtc
+FROM dbo.diagnosticoIAImagenAprobacionV2
+WHERE DiagnosticoIAImagenId = @fotoId
+ORDER BY FechaAprobacionUtc DESC,
+         DiagnosticoIAImagenAprobacionId DESC;
 """;
 
-            await using DbCommand command = CrearComando(sql);
-            AgregarParametro(command, "@fotoId", fotografiaId);
-            await AbrirAsync(command.Connection!, cancellationToken);
+            await using DbCommand comando = CrearComando(sql);
+            AgregarParametro(comando, "@fotoId", fotografiaId);
+            await AbrirAsync(comando.Connection!, cancellationToken);
             await using DbDataReader reader =
-                await command.ExecuteReaderAsync(cancellationToken);
-
-            if (!await reader.ReadAsync(cancellationToken))
-                return null;
-
-            return LeerAprobacion(reader);
+                await comando.ExecuteReaderAsync(cancellationToken);
+            return await reader.ReadAsync(cancellationToken)
+                ? LeerAprobacion(reader)
+                : null;
         }
 
         public async Task<Dictionary<int, AprobacionRegistro>>
@@ -1247,53 +1009,49 @@ ORDER BY [FechaAprobacionUtc] DESC,
                 CancellationToken cancellationToken = default)
         {
             await InicializarAsync(cancellationToken);
-
             const string sql = """
 WITH ultimas AS
 (
     SELECT
-        a.[DiagnosticoIAImagenAprobacionId],
-        a.[DiagnosticoIAImagenId],
-        a.[DiagnosticoIAImagenAnalisisHumanoId],
-        a.[UsuarioAprobadorId], a.[Decision],
-        a.[DiagnosticoFinal], a.[Observaciones],
-        a.[AutorizaPublicacionAlbum], a.[MismoUsuarioQueAnalizo],
-        a.[FechaAprobacionUtc],
+        a.DiagnosticoIAImagenAprobacionId,
+        a.DiagnosticoIAImagenId,
+        a.DiagnosticoIAImagenAnalisisHumanoId,
+        a.UsuarioAprobadorId, a.Decision,
+        a.DiagnosticoFinal, a.Observaciones,
+        a.AutorizaPublicacionAlbum, a.MismoUsuarioQueAnalizo,
+        a.FechaAprobacionUtc,
         ROW_NUMBER() OVER
         (
-            PARTITION BY a.[DiagnosticoIAImagenId]
-            ORDER BY a.[FechaAprobacionUtc] DESC,
-                     a.[DiagnosticoIAImagenAprobacionId] DESC
+            PARTITION BY a.DiagnosticoIAImagenId
+            ORDER BY a.FechaAprobacionUtc DESC,
+                     a.DiagnosticoIAImagenAprobacionId DESC
         ) AS rn
-    FROM [dbo].[diagnosticoIAImagenAprobacionV2] a
-    INNER JOIN [dbo].[diagnosticoIAImagen] i
-        ON i.[DiagnosticoIAImagenId] = a.[DiagnosticoIAImagenId]
-    WHERE i.[DiagnosticoIAId] = @diagnosticoId
+    FROM dbo.diagnosticoIAImagenAprobacionV2 a
+    INNER JOIN dbo.diagnosticoIAImagen i
+        ON i.DiagnosticoIAImagenId = a.DiagnosticoIAImagenId
+    WHERE i.DiagnosticoIAId = @diagnosticoId
 )
 SELECT
-    [DiagnosticoIAImagenAprobacionId], [DiagnosticoIAImagenId],
-    [DiagnosticoIAImagenAnalisisHumanoId], [UsuarioAprobadorId],
-    [Decision], [DiagnosticoFinal], [Observaciones],
-    [AutorizaPublicacionAlbum], [MismoUsuarioQueAnalizo],
-    [FechaAprobacionUtc]
+    DiagnosticoIAImagenAprobacionId, DiagnosticoIAImagenId,
+    DiagnosticoIAImagenAnalisisHumanoId, UsuarioAprobadorId,
+    Decision, DiagnosticoFinal, Observaciones,
+    AutorizaPublicacionAlbum, MismoUsuarioQueAnalizo,
+    FechaAprobacionUtc
 FROM ultimas
 WHERE rn = 1;
 """;
 
-            await using DbCommand command = CrearComando(sql);
-            AgregarParametro(command, "@diagnosticoId", diagnosticoId);
-            await AbrirAsync(command.Connection!, cancellationToken);
-
+            await using DbCommand comando = CrearComando(sql);
+            AgregarParametro(comando, "@diagnosticoId", diagnosticoId);
+            await AbrirAsync(comando.Connection!, cancellationToken);
             var resultado = new Dictionary<int, AprobacionRegistro>();
             await using DbDataReader reader =
-                await command.ExecuteReaderAsync(cancellationToken);
-
+                await comando.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
                 AprobacionRegistro registro = LeerAprobacion(reader);
                 resultado[registro.FotografiaId] = registro;
             }
-
             return resultado;
         }
 
@@ -1303,34 +1061,22 @@ WHERE rn = 1;
         {
             const string sql = """
 SELECT
-    [DiagnosticoIAImagenHistorialId], [DiagnosticoIAImagenId],
-    [UsuarioId], [EstadoAnterior], [EstadoNuevo], [Accion],
-    [Detalle], [FechaUtc]
-FROM [dbo].[diagnosticoIAImagenHistorialV2]
-WHERE [DiagnosticoIAImagenId] = @fotoId
-ORDER BY [FechaUtc] DESC, [DiagnosticoIAImagenHistorialId] DESC;
+    DiagnosticoIAImagenHistorialId, DiagnosticoIAImagenId,
+    UsuarioId, EstadoAnterior, EstadoNuevo, Accion,
+    Detalle, FechaUtc
+FROM dbo.diagnosticoIAImagenHistorialV2
+WHERE DiagnosticoIAImagenId = @fotoId
+ORDER BY FechaUtc DESC, DiagnosticoIAImagenHistorialId DESC;
 """;
 
-            await using DbCommand command = CrearComando(sql);
-            AgregarParametro(command, "@fotoId", fotografiaId);
-            await AbrirAsync(command.Connection!, cancellationToken);
+            await using DbCommand comando = CrearComando(sql);
+            AgregarParametro(comando, "@fotoId", fotografiaId);
+            await AbrirAsync(comando.Connection!, cancellationToken);
             var resultado = new List<HistorialFotoRegistro>();
             await using DbDataReader reader =
-                await command.ExecuteReaderAsync(cancellationToken);
-
+                await comando.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
-            {
-                resultado.Add(new HistorialFotoRegistro(
-                    reader.GetInt32(0),
-                    reader.GetInt32(1),
-                    reader.GetInt32(2),
-                    reader.GetString(3),
-                    reader.GetString(4),
-                    reader.GetString(5),
-                    reader.GetString(6),
-                    reader.GetDateTime(7)));
-            }
-
+                resultado.Add(LeerHistorial(reader));
             return resultado;
         }
 
@@ -1340,40 +1086,29 @@ ORDER BY [FechaUtc] DESC, [DiagnosticoIAImagenHistorialId] DESC;
                 CancellationToken cancellationToken = default)
         {
             await InicializarAsync(cancellationToken);
-
             const string sql = """
 SELECT
-    h.[DiagnosticoIAImagenHistorialId], h.[DiagnosticoIAImagenId],
-    h.[UsuarioId], h.[EstadoAnterior], h.[EstadoNuevo], h.[Accion],
-    h.[Detalle], h.[FechaUtc]
-FROM [dbo].[diagnosticoIAImagenHistorialV2] h
-INNER JOIN [dbo].[diagnosticoIAImagen] i
-    ON i.[DiagnosticoIAImagenId] = h.[DiagnosticoIAImagenId]
-WHERE i.[DiagnosticoIAId] = @diagnosticoId
-ORDER BY h.[DiagnosticoIAImagenId], h.[FechaUtc] DESC,
-         h.[DiagnosticoIAImagenHistorialId] DESC;
+    h.DiagnosticoIAImagenHistorialId, h.DiagnosticoIAImagenId,
+    h.UsuarioId, h.EstadoAnterior, h.EstadoNuevo, h.Accion,
+    h.Detalle, h.FechaUtc
+FROM dbo.diagnosticoIAImagenHistorialV2 h
+INNER JOIN dbo.diagnosticoIAImagen i
+    ON i.DiagnosticoIAImagenId = h.DiagnosticoIAImagenId
+WHERE i.DiagnosticoIAId = @diagnosticoId
+ORDER BY h.DiagnosticoIAImagenId, h.FechaUtc DESC,
+         h.DiagnosticoIAImagenHistorialId DESC;
 """;
 
-            await using DbCommand command = CrearComando(sql);
-            AgregarParametro(command, "@diagnosticoId", diagnosticoId);
-            await AbrirAsync(command.Connection!, cancellationToken);
-
-            var resultado = new Dictionary<int, List<HistorialFotoRegistro>>();
+            await using DbCommand comando = CrearComando(sql);
+            AgregarParametro(comando, "@diagnosticoId", diagnosticoId);
+            await AbrirAsync(comando.Connection!, cancellationToken);
+            var resultado =
+                new Dictionary<int, List<HistorialFotoRegistro>>();
             await using DbDataReader reader =
-                await command.ExecuteReaderAsync(cancellationToken);
-
+                await comando.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
-                var registro = new HistorialFotoRegistro(
-                    reader.GetInt32(0),
-                    reader.GetInt32(1),
-                    reader.GetInt32(2),
-                    reader.GetString(3),
-                    reader.GetString(4),
-                    reader.GetString(5),
-                    reader.GetString(6),
-                    reader.GetDateTime(7));
-
+                HistorialFotoRegistro registro = LeerHistorial(reader);
                 if (!resultado.TryGetValue(
                         registro.FotografiaId,
                         out List<HistorialFotoRegistro>? lista))
@@ -1381,10 +1116,8 @@ ORDER BY h.[DiagnosticoIAImagenId], h.[FechaUtc] DESC,
                     lista = [];
                     resultado[registro.FotografiaId] = lista;
                 }
-
                 lista.Add(registro);
             }
-
             return resultado;
         }
 
@@ -1392,24 +1125,25 @@ ORDER BY h.[DiagnosticoIAImagenId], h.[FechaUtc] DESC,
             CancellationToken cancellationToken = default)
         {
             await InicializarProveedorAsync(cancellationToken);
-
             const string sql = """
 SELECT TOP(1)
-    [Proveedor], [Protocolo], [BaseUrl], [Endpoint],
-    [ApiKeyProtegida], [ApiKeyMascara], [ModeloPrincipal],
-    [ModeloRespaldo], [TimeoutSegundos], [Activo],
-    [FechaModificacionUtc], [UsuarioModificacionId]
-FROM [dbo].[diagnosticoIAProveedorConfiguracion]
-WHERE [DiagnosticoIAProveedorConfiguracionId] = 1;
+    Proveedor, Protocolo, BaseUrl, Endpoint,
+    ApiKeyProtegida, ApiKeyMascara, ModeloPrincipal,
+    ModeloRespaldo, TimeoutSegundos, Activo,
+    FechaModificacionUtc, UsuarioModificacionId
+FROM dbo.diagnosticoIAProveedorConfiguracion
+WHERE DiagnosticoIAProveedorConfiguracionId = 1;
 """;
 
-            await using DbCommand command = CrearComando(sql);
-            await AbrirAsync(command.Connection!, cancellationToken);
+            await using DbCommand comando = CrearComando(sql);
+            await AbrirAsync(comando.Connection!, cancellationToken);
             await using DbDataReader reader =
-                await command.ExecuteReaderAsync(cancellationToken);
-
+                await comando.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken))
-                throw new InvalidOperationException("No existe la configuración del proveedor de IA.");
+            {
+                throw new InvalidOperationException(
+                    "No existe la configuración del proveedor de IA.");
+            }
 
             return new ProveedorConfiguracionRegistro(
                 reader.GetString(0),
@@ -1433,26 +1167,25 @@ WHERE [DiagnosticoIAProveedorConfiguracionId] = 1;
             CancellationToken cancellationToken = default)
         {
             await InicializarProveedorAsync(cancellationToken);
-
             const string sql = """
-UPDATE [dbo].[diagnosticoIAProveedorConfiguracion]
-SET [Proveedor] = @proveedor,
-    [Protocolo] = @protocolo,
-    [BaseUrl] = @baseUrl,
-    [Endpoint] = @endpoint,
-    [ApiKeyProtegida] = @apiKey,
-    [ApiKeyMascara] = @mascara,
-    [ModeloPrincipal] = @modelo,
-    [ModeloRespaldo] = @respaldo,
-    [TimeoutSegundos] = @timeout,
-    [Activo] = @activo,
-    [FechaModificacionUtc] = SYSUTCDATETIME(),
-    [UsuarioModificacionId] = @usuarioId
-WHERE [DiagnosticoIAProveedorConfiguracionId] = 1;
+UPDATE dbo.diagnosticoIAProveedorConfiguracion
+SET Proveedor = @proveedor,
+    Protocolo = @protocolo,
+    BaseUrl = @baseUrl,
+    Endpoint = @endpoint,
+    ApiKeyProtegida = @apiKey,
+    ApiKeyMascara = @mascara,
+    ModeloPrincipal = @modelo,
+    ModeloRespaldo = @respaldo,
+    TimeoutSegundos = @timeout,
+    Activo = @activo,
+    FechaModificacionUtc = SYSUTCDATETIME(),
+    UsuarioModificacionId = @usuarioId
+WHERE DiagnosticoIAProveedorConfiguracionId = 1;
 
-INSERT INTO [dbo].[diagnosticoIAProveedorConfiguracionHistorial]
+INSERT INTO dbo.diagnosticoIAProveedorConfiguracionHistorial
 (
-    [ConfiguracionJson], [UsuarioId], [FechaUtc]
+    ConfiguracionJson, UsuarioId, FechaUtc
 )
 VALUES
 (
@@ -1477,126 +1210,16 @@ VALUES
                 ("@historialJson", historialJson));
         }
 
-        public async Task<InspeccionCierreMetadatos>
-            ObtenerCierreInspeccionAsync(
-                int diagnosticoId,
-                CancellationToken cancellationToken = default)
-        {
-            const string sql = """
-SELECT
-    [CerradaTecnico],
-    [FechaCierreTecnicoUtc],
-    [UsuarioCierreTecnicoId]
-FROM [dbo].[diagnosticoIA]
-WHERE [DiagnosticoIAId] = @diagnosticoId;
-""";
-
-            await using DbCommand command = CrearComando(sql);
-            AgregarParametro(command, "@diagnosticoId", diagnosticoId);
-            await AbrirAsync(command.Connection!, cancellationToken);
-
-            await using DbDataReader reader =
-                await command.ExecuteReaderAsync(cancellationToken);
-
-            if (!await reader.ReadAsync(cancellationToken))
-                return new InspeccionCierreMetadatos(false, null, null);
-
-            return new InspeccionCierreMetadatos(
-                reader.GetBoolean(0),
-                reader.IsDBNull(1) ? null : reader.GetDateTime(1),
-                reader.IsDBNull(2) ? null : reader.GetInt32(2));
-        }
-
-        public async Task<Dictionary<int, InspeccionCierreMetadatos>>
-            ObtenerCierresInspeccionesAsync(
-                IEnumerable<int> diagnosticoIds,
-                CancellationToken cancellationToken = default)
-        {
-            int[] ids = diagnosticoIds
-                .Where(item => item > 0)
-                .Distinct()
-                .ToArray();
-
-            var resultado = ids.ToDictionary(
-                item => item,
-                _ => new InspeccionCierreMetadatos(false, null, null));
-
-            if (ids.Length == 0)
-                return resultado;
-
-            string parametros = string.Join(
-                ",",
-                ids.Select((_, indice) => $"@id{indice}"));
-
-            string sql = $"""
-SELECT
-    [DiagnosticoIAId],
-    [CerradaTecnico],
-    [FechaCierreTecnicoUtc],
-    [UsuarioCierreTecnicoId]
-FROM [dbo].[diagnosticoIA]
-WHERE [DiagnosticoIAId] IN ({parametros});
-""";
-
-            await using DbCommand command = CrearComando(sql);
-            for (int indice = 0; indice < ids.Length; indice++)
-                AgregarParametro(command, $"@id{indice}", ids[indice]);
-
-            await AbrirAsync(command.Connection!, cancellationToken);
-            await using DbDataReader reader =
-                await command.ExecuteReaderAsync(cancellationToken);
-
-            while (await reader.ReadAsync(cancellationToken))
-            {
-                resultado[reader.GetInt32(0)] = new InspeccionCierreMetadatos(
-                    reader.GetBoolean(1),
-                    reader.IsDBNull(2) ? null : reader.GetDateTime(2),
-                    reader.IsDBNull(3) ? null : reader.GetInt32(3));
-            }
-
-            return resultado;
-        }
-
-        public Task CerrarInspeccionAsync(
-            int diagnosticoId,
-            int usuarioId,
-            CancellationToken cancellationToken = default)
-        {
-            const string sql = """
-UPDATE [dbo].[diagnosticoIA]
-SET [CerradaTecnico] = 1,
-    [FechaCierreTecnicoUtc] = SYSUTCDATETIME(),
-    [UsuarioCierreTecnicoId] = @usuarioId
-WHERE [DiagnosticoIAId] = @diagnosticoId
-  AND [CerradaTecnico] = 0;
-""";
-
-            return EjecutarAsync(
-                sql,
-                cancellationToken,
-                ("@diagnosticoId", diagnosticoId),
-                ("@usuarioId", usuarioId));
-        }
-
         private DbCommand CrearComando(string sql)
         {
-            DbConnection connection = db.Database.GetDbConnection();
-            DbCommand command = connection.CreateCommand();
-
-            // Cuando EF Core ya abrió una transacción, los comandos SQL
-            // auxiliares deben participar en la misma transacción. De lo
-            // contrario SQL Server rechaza el comando por no tener asignado
-            // DbTransaction.
-            if (db.Database.CurrentTransaction is not null)
-            {
-                command.Transaction =
-                    db.Database.CurrentTransaction.GetDbTransaction();
-            }
-
-            command.CommandText = sql;
-            command.CommandType = CommandType.Text;
-            command.CommandTimeout = 180;
-            return command;
+            DbConnection conexion = db.Database.GetDbConnection();
+            DbCommand comando = conexion.CreateCommand();
+            comando.CommandText = sql;
+            comando.CommandType = CommandType.Text;
+            comando.CommandTimeout = 180;
+            comando.Transaction =
+                db.Database.CurrentTransaction?.GetDbTransaction();
+            return comando;
         }
 
         private async Task EjecutarAsync(
@@ -1604,12 +1227,11 @@ WHERE [DiagnosticoIAId] = @diagnosticoId
             CancellationToken cancellationToken,
             params (string Nombre, object? Valor)[] parametros)
         {
-            await using DbCommand command = CrearComando(sql);
+            await using DbCommand comando = CrearComando(sql);
             foreach ((string nombre, object? valor) in parametros)
-                AgregarParametro(command, nombre, valor);
-
-            await AbrirAsync(command.Connection!, cancellationToken);
-            await command.ExecuteNonQueryAsync(cancellationToken);
+                AgregarParametro(comando, nombre, valor);
+            await AbrirAsync(comando.Connection!, cancellationToken);
+            await comando.ExecuteNonQueryAsync(cancellationToken);
         }
 
         private async Task<int> EjecutarEscalarIntAsync(
@@ -1617,34 +1239,31 @@ WHERE [DiagnosticoIAId] = @diagnosticoId
             CancellationToken cancellationToken,
             params (string Nombre, object? Valor)[] parametros)
         {
-            await using DbCommand command = CrearComando(sql);
-            foreach ((string nombre, object? valor) in parametros)
-                AgregarParametro(command, nombre, valor);
-
-            await AbrirAsync(command.Connection!, cancellationToken);
-            object? valorResultado =
-                await command.ExecuteScalarAsync(cancellationToken);
-
-            return Convert.ToInt32(valorResultado);
+            await using DbCommand comando = CrearComando(sql);
+            foreach ((string nombre, object? valorParametro) in parametros)
+                AgregarParametro(comando, nombre, valorParametro);
+            await AbrirAsync(comando.Connection!, cancellationToken);
+            object? resultado = await comando.ExecuteScalarAsync(cancellationToken);
+            return Convert.ToInt32(resultado);
         }
 
         private static void AgregarParametro(
-            DbCommand command,
+            DbCommand comando,
             string nombre,
             object? valor)
         {
-            DbParameter parameter = command.CreateParameter();
-            parameter.ParameterName = nombre;
-            parameter.Value = valor ?? DBNull.Value;
-            command.Parameters.Add(parameter);
+            DbParameter parametro = comando.CreateParameter();
+            parametro.ParameterName = nombre;
+            parametro.Value = valor ?? DBNull.Value;
+            comando.Parameters.Add(parametro);
         }
 
         private static async Task AbrirAsync(
-            DbConnection connection,
+            DbConnection conexion,
             CancellationToken cancellationToken)
         {
-            if (connection.State != ConnectionState.Open)
-                await connection.OpenAsync(cancellationToken);
+            if (conexion.State != ConnectionState.Open)
+                await conexion.OpenAsync(cancellationToken);
         }
 
         private static FotoMetadatos LeerFoto(DbDataReader reader) =>
@@ -1669,36 +1288,28 @@ WHERE [DiagnosticoIAId] = @diagnosticoId
         private static AnalisisHumanoRegistro LeerAnalisisHumano(
             DbDataReader reader) =>
             new(
-                reader.GetInt32(0),
-                reader.GetInt32(1),
-                reader.GetInt32(2),
-                reader.GetInt32(3),
-                reader.GetString(4),
-                reader.GetString(5),
-                reader.GetString(6),
-                reader.GetString(7),
-                reader.GetString(8),
-                reader.GetString(9),
-                reader.GetString(10),
-                reader.GetString(11),
-                reader.GetString(12),
-                reader.GetString(13),
-                reader.GetDateTime(14),
+                reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2),
+                reader.GetInt32(3), reader.GetString(4), reader.GetString(5),
+                reader.GetString(6), reader.GetString(7), reader.GetString(8),
+                reader.GetString(9), reader.GetString(10), reader.GetString(11),
+                reader.GetString(12), reader.GetString(13), reader.GetDateTime(14),
                 reader.IsDBNull(15) ? null : reader.GetDateTime(15));
 
         private static AprobacionRegistro LeerAprobacion(
             DbDataReader reader) =>
             new(
-                reader.GetInt32(0),
-                reader.GetInt32(1),
+                reader.GetInt32(0), reader.GetInt32(1),
                 reader.IsDBNull(2) ? null : reader.GetInt32(2),
-                reader.GetInt32(3),
-                reader.GetString(4),
-                reader.GetString(5),
-                reader.GetString(6),
-                reader.GetBoolean(7),
-                reader.GetBoolean(8),
+                reader.GetInt32(3), reader.GetString(4), reader.GetString(5),
+                reader.GetString(6), reader.GetBoolean(7), reader.GetBoolean(8),
                 reader.GetDateTime(9));
+
+        private static HistorialFotoRegistro LeerHistorial(
+            DbDataReader reader) =>
+            new(
+                reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2),
+                reader.GetString(3), reader.GetString(4), reader.GetString(5),
+                reader.GetString(6), reader.GetDateTime(7));
 
         private static string Limitar(string? valor, int maximo)
         {
@@ -1764,11 +1375,6 @@ WHERE [DiagnosticoIAId] = @diagnosticoId
         string Accion,
         string Detalle,
         DateTime FechaUtc);
-
-    public sealed record InspeccionCierreMetadatos(
-        bool CerradaTecnico,
-        DateTime? FechaCierreTecnicoUtc,
-        int? UsuarioCierreTecnicoId);
 
     public sealed record ProveedorConfiguracionRegistro(
         string Proveedor,

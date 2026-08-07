@@ -15,27 +15,14 @@ namespace CONATRADEC_API.DTOs
         public List<IFormFile> Fotos { get; set; } = [];
 
         public List<string> TiposFotografia { get; set; } = [];
-
-        /// <summary>
-        /// Una fecha por fotografía, en formato yyyy-MM-dd.
-        /// </summary>
         public List<string> FechasIdentificacionCampo { get; set; } = [];
     }
 
-    /// <summary>
-    /// Agrega nuevas evidencias a una inspección ya registrada. Cada fotografía
-    /// conserva su propia fecha de identificación en campo y tipo de evidencia.
-    /// </summary>
     public sealed class InspeccionFitosanitariaAgregarFotosRequest
     {
         [Required, MinLength(1)]
         public List<IFormFile> Fotos { get; set; } = [];
-
         public List<string> TiposFotografia { get; set; } = [];
-
-        /// <summary>
-        /// Una fecha por fotografía, en formato yyyy-MM-dd.
-        /// </summary>
         public List<string> FechasIdentificacionCampo { get; set; } = [];
     }
 
@@ -66,30 +53,21 @@ namespace CONATRADEC_API.DTOs
     {
         [Range(1, int.MaxValue)]
         public int FotografiaId { get; set; }
-
         [Required, MaxLength(30)]
         public string CalidadEvaluacion { get; set; } = "NO_EVALUABLE";
-
         [Required, MaxLength(40)]
         public string EstadoGeneral { get; set; } = "INDETERMINADA";
-
         [Required, MaxLength(50)]
         public string CategoriaPrincipal { get; set; } = "NO_APLICA";
-
         public List<string> CategoriasSecundarias { get; set; } = [];
-
         [Required, MaxLength(300)]
         public string Diagnostico { get; set; } = string.Empty;
-
         [MaxLength(80)]
         public string TipoDiagnostico { get; set; } = string.Empty;
-
         [Required, MaxLength(30)]
         public string Severidad { get; set; } = "NO_EVALUABLE";
-
         [Required, MaxLength(30)]
         public string NivelCerteza { get; set; } = "NO_DETERMINADO";
-
         [MaxLength(3000)]
         public string Observaciones { get; set; } = string.Empty;
     }
@@ -98,7 +76,6 @@ namespace CONATRADEC_API.DTOs
     {
         [Required, MinLength(1)]
         public List<InspeccionFotoAnalisisHumanoItemRequest> Fotografias { get; set; } = [];
-
         public bool EnviarAprobacion { get; set; }
     }
 
@@ -106,36 +83,25 @@ namespace CONATRADEC_API.DTOs
     {
         [Range(1, int.MaxValue)]
         public int FotografiaId { get; set; }
-
         [Required, MaxLength(40)]
         public string Decision { get; set; } = string.Empty;
-
         [MaxLength(30)]
         public string CalidadEvaluacionFinal { get; set; } = string.Empty;
-
         [MaxLength(40)]
         public string EstadoGeneralFinal { get; set; } = string.Empty;
-
         [MaxLength(50)]
         public string CategoriaPrincipalFinal { get; set; } = string.Empty;
-
         public List<string> CategoriasSecundariasFinales { get; set; } = [];
-
         [MaxLength(300)]
         public string DiagnosticoFinal { get; set; } = string.Empty;
-
         [MaxLength(80)]
         public string TipoDiagnosticoFinal { get; set; } = string.Empty;
-
         [MaxLength(30)]
         public string SeveridadFinal { get; set; } = string.Empty;
-
         [MaxLength(30)]
         public string NivelCertezaFinal { get; set; } = string.Empty;
-
         [MaxLength(3000)]
         public string Observaciones { get; set; } = string.Empty;
-
         public bool AutorizaPublicacionAlbum { get; set; }
     }
 
@@ -149,15 +115,11 @@ namespace CONATRADEC_API.DTOs
     {
         [Range(1, int.MaxValue)]
         public int CategoriaAlbumBotanicoId { get; set; }
-
         [Range(1, int.MaxValue)]
         public int AlbumBotanicoCafeId { get; set; }
-
         [MaxLength(500)]
         public string Descripcion { get; set; } = string.Empty;
-
         public bool EsPortada { get; set; }
-
         public int Orden { get; set; }
     }
 
@@ -183,8 +145,10 @@ namespace CONATRADEC_API.DTOs
         public string CodigoTerreno { get; set; } = string.Empty;
         public DateTime FechaRegistroSistemaUtc { get; set; }
         public string Estado { get; set; } = string.Empty;
-        public bool CerradaTecnico { get; set; }
-        public DateTime? FechaCierreTecnicoUtc { get; set; }
+        public bool EtapaTecnicaFinalizada { get; set; }
+        public DateTime? FechaFinEtapaTecnicaUtc { get; set; }
+        public bool CerradaDefinitiva { get; set; }
+        public DateTime? FechaCierreDefinitivoUtc { get; set; }
         public int TotalFotografias { get; set; }
         public int Pendientes { get; set; }
         public int ConError { get; set; }
@@ -305,9 +269,15 @@ namespace CONATRADEC_API.DTOs
         public string Observacion { get; set; } = string.Empty;
         public string Estado { get; set; } = string.Empty;
         public DateTime FechaRegistroSistemaUtc { get; set; }
-        public bool CerradaTecnico { get; set; }
-        public DateTime? FechaCierreTecnicoUtc { get; set; }
-        public int? UsuarioCierreTecnicoId { get; set; }
+        public bool EtapaTecnicaFinalizada { get; set; }
+        public DateTime? FechaFinEtapaTecnicaUtc { get; set; }
+        public int? UsuarioFinEtapaTecnicaId { get; set; }
+        public bool CerradaDefinitiva { get; set; }
+        public DateTime? FechaCierreDefinitivoUtc { get; set; }
+        public int? UsuarioCierreDefinitivoId { get; set; }
+        public int? UsuarioAnalizadorAsignadoId { get; set; }
+        public int? UsuarioAprobadorAsignadoId { get; set; }
+        public string VersionAsignacion { get; set; } = string.Empty;
         public List<InspeccionFotoDto> Fotografias { get; set; } = [];
         public bool PuedeGestionarSolicitud { get; set; }
         public bool PuedeCerrarInspeccion { get; set; }
@@ -336,28 +306,20 @@ namespace CONATRADEC_API.DTOs
     {
         [Required, MaxLength(40)]
         public string Proveedor { get; set; } = "GEMINI";
-
         [Required, MaxLength(40)]
         public string Protocolo { get; set; } = "GEMINI_NATIVO";
-
         [Required, MaxLength(500)]
         public string BaseUrl { get; set; } = string.Empty;
-
         [Required, MaxLength(300)]
         public string Endpoint { get; set; } = string.Empty;
-
         [MaxLength(2000)]
         public string? ApiKey { get; set; }
-
         [Required, MaxLength(160)]
         public string ModeloPrincipal { get; set; } = string.Empty;
-
         [MaxLength(160)]
         public string ModeloRespaldo { get; set; } = string.Empty;
-
         [Range(15, 600)]
         public int TimeoutSegundos { get; set; } = 180;
-
         public bool Activo { get; set; } = true;
     }
 

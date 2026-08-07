@@ -1,4 +1,4 @@
-﻿using CONATRADEC_API.DTOs;
+using CONATRADEC_API.DTOs;
 using CONATRADEC_API.Infrastructure;
 using CONATRADEC_API.Models;
 using CONATRADEC_API.Services;
@@ -31,6 +31,7 @@ namespace CONATRADEC_API.Controllers
         private readonly PermisoApiService permisos;
         private readonly InspeccionFitosanitariaDatabase database;
         private readonly InspeccionFitosanitariaControlDatabaseInitializer control;
+        private readonly InspeccionFitosanitariaAsignacionDatabase asignaciones;
 
         public InspeccionFitosanitariaFlujoIndependienteController(
             DBContext db,
@@ -43,200 +44,7 @@ namespace CONATRADEC_API.Controllers
             this.permisos = permisos;
             this.control = control;
             database = new InspeccionFitosanitariaDatabase(diagnosticoDb);
-        }
-
-        /// <summary>
-        /// Bandeja liviana sin N+1. Una inspección aparece para el analizador
-        /// desde que contiene al menos una fotografía enviada. Los contadores
-        /// indican cuántas evidencias recibió y cuántas siguen con el técnico.
-        /// </summary>
-        [HttpGet("bandeja")]
-        public async Task<IActionResult> ObtenerBandeja(
-            [FromQuery] string modo = "mis",
-            [FromQuery] int? tecnicoId = null,
-            CancellationToken cancellationToken = default)
-        {
-            int? usuarioId = ObtenerUsuarioId();
-            if (!usuarioId.HasValue)
-                return Forbid();
-
-            string modoNormalizado = (modo ?? "mis")
-                .Trim()
-                .ToLowerInvariant();
-
-            IActionResult? acceso = await ValidarAccesoBandejaAsync(
-                usuarioId.Value,
-                modoNormalizado,
-                cancellationToken);
-
-            if (acceso != null)
-                return acceso;
-
-            await database.InicializarAsync(cancellationToken);
-            await control.InicializarAsync(cancellationToken);
-
-            IQueryable<DiagnosticoIA> consulta = diagnosticoDb.Diagnosticos
-                .AsNoTracking()
-                .Where(item => item.Activo);
-
-            if (modoNormalizado is not "analizador" and
-                not "aprobador" and
-                not "historial")
-            {
-                consulta = consulta.Where(item =>
-                    item.UsuarioSolicitanteId == usuarioId.Value);
-            }
-            else if (tecnicoId is > 0)
-            {
-                consulta = consulta.Where(item =>
-                    item.UsuarioSolicitanteId == tecnicoId.Value);
-            }
-
-            List<DiagnosticoIA> inspecciones = await consulta
-                .Include(item => item.Imagenes)
-                .OrderByDescending(item => item.FechaSolicitudUtc)
-                .ThenByDescending(item => item.DiagnosticoIAId)
-                .Take(300)
-                .ToListAsync(cancellationToken);
-
-            int[] ids = inspecciones
-                .Select(item => item.DiagnosticoIAId)
-                .ToArray();
-
-            int[] tecnicoIds = inspecciones
-                .Select(item => item.UsuarioSolicitanteId)
-                .Where(item => item > 0)
-                .Distinct()
-                .ToArray();
-
-            Dictionary<int, Usuario> tecnicos = await db.Set<Usuario>()
-                .AsNoTracking()
-                .Where(item => tecnicoIds.Contains(item.UsuarioId))
-                .ToDictionaryAsync(
-                    item => item.UsuarioId,
-                    cancellationToken);
-
-            Dictionary<int, List<FotoMetadatos>> fotosPorInspeccion =
-                await database.ObtenerFotosPorDiagnosticosAsync(
-                    ids,
-                    cancellationToken);
-
-            Dictionary<int, InspeccionFitosanitariaControlRegistro> controles =
-                await control.ObtenerPorInspeccionesAsync(
-                    ids,
-                    cancellationToken);
-
-            var data = new List<InspeccionFitosanitariaFlujoListaDto>();
-
-            foreach (DiagnosticoIA inspeccion in inspecciones)
-            {
-                List<FotoMetadatos> fotos =
-                    (fotosPorInspeccion.GetValueOrDefault(
-                        inspeccion.DiagnosticoIAId) ?? [])
-                    .Where(item => item.Activo)
-                    .ToList();
-
-                InspeccionFitosanitariaControlRegistro controlActual =
-                    controles.GetValueOrDefault(
-                        inspeccion.DiagnosticoIAId) ??
-                    new InspeccionFitosanitariaControlRegistro
-                    {
-                        InspeccionId = inspeccion.DiagnosticoIAId,
-                        UsuarioSolicitanteId =
-                            inspeccion.UsuarioSolicitanteId,
-                        NombreInspeccion =
-                            $"Inspección #{inspeccion.DiagnosticoIAId}",
-                        Activo = inspeccion.Activo
-                    };
-
-                bool cierreDefinitivo =
-                    controlActual.CerradaDefinitiva ||
-                    controlActual.CerradaTecnico;
-
-                bool incluir = DebeIncluirse(
-                    modoNormalizado,
-                    cierreDefinitivo,
-                    fotos);
-
-                if (!incluir)
-                    continue;
-
-                int pendientesTecnico = fotos.Count(EsPendienteTecnico);
-                int recibidasAnalizador = fotos.Count(EsRecibidaPorAnalizador);
-                int erroresIA = fotos.Count(item =>
-                    NormalizarEstado(item.Estado) ==
-                    InspeccionFitosanitariaFlujo.FotoEstados.ErrorIA);
-
-                string estado =
-                    InspeccionFitosanitariaFlujo.CalcularEstadoInspeccion(
-                        fotos.Select(item => item.Estado),
-                        cierreDefinitivo);
-
-                Usuario? tecnico = tecnicos.GetValueOrDefault(
-                    inspeccion.UsuarioSolicitanteId);
-
-                data.Add(new InspeccionFitosanitariaFlujoListaDto
-                {
-                    InspeccionId = inspeccion.DiagnosticoIAId,
-                    NombreInspeccion =
-                        string.IsNullOrWhiteSpace(
-                            controlActual.NombreInspeccion)
-                            ? $"Inspección #{inspeccion.DiagnosticoIAId}"
-                            : controlActual.NombreInspeccion.Trim(),
-                    CodigoTerreno = inspeccion.CodigoTerreno,
-                    UsuarioTecnicoId = inspeccion.UsuarioSolicitanteId,
-                    TecnicoNombreCompleto = string.IsNullOrWhiteSpace(
-                        tecnico?.nombreCompletoUsuario)
-                            ? tecnico?.nombreUsuario ??
-                              $"Técnico #{inspeccion.UsuarioSolicitanteId}"
-                            : tecnico.nombreCompletoUsuario.Trim(),
-                    TecnicoUsuario = tecnico?.nombreUsuario?.Trim() ??
-                        string.Empty,
-                    FechaRegistroSistemaUtc = inspeccion.FechaSolicitudUtc,
-                    Estado = estado,
-
-                    /*
-                     * El cliente MAUI conserva este nombre por compatibilidad,
-                     * pero en las bandejas representa el fin de la etapa técnica.
-                     */
-                    CerradaTecnico = controlActual.EtapaTecnicaFinalizada,
-                    FechaCierreTecnicoUtc =
-                        controlActual.FechaFinEtapaTecnicaUtc,
-                    TotalFotografias = fotos.Count,
-                    Pendientes = modoNormalizado == "analizador"
-                        ? pendientesTecnico
-                        : fotos.Count(item =>
-                            !InspeccionFitosanitariaFlujo.EsEstadoFinal(
-                                item.Estado) &&
-                            NormalizarEstado(item.Estado) !=
-                                InspeccionFitosanitariaFlujo.FotoEstados.ErrorIA),
-                    ConError = erroresIA,
-
-                    /*
-                     * Para el analizador Finalizadas se usa como contador de
-                     * recibidas. La página presenta el nombre correcto y evita
-                     * ampliar el contrato histórico del cliente.
-                     */
-                    Finalizadas = modoNormalizado == "analizador"
-                        ? recibidasAnalizador
-                        : fotos.Count(item =>
-                            InspeccionFitosanitariaFlujo.EsEstadoFinal(
-                                item.Estado)),
-                    UrlMiniatura = inspeccion.Imagenes
-                        .OrderBy(item => item.Orden)
-                        .Select(item => item.UrlImagen)
-                        .FirstOrDefault() ?? string.Empty
-                });
-            }
-
-            return Ok(new
-            {
-                success = true,
-                message = modoNormalizado == "analizador"
-                    ? "Inspecciones con fotografías recibidas por el analizador obtenidas correctamente."
-                    : "Inspecciones obtenidas correctamente.",
-                data
-            });
+            asignaciones = new InspeccionFitosanitariaAsignacionDatabase(diagnosticoDb);
         }
 
         /// <summary>
@@ -274,6 +82,7 @@ namespace CONATRADEC_API.Controllers
                 request.Fotografias[0];
 
             await database.InicializarAsync(cancellationToken);
+            await asignaciones.InicializarAsync(cancellationToken);
 
             await using var transaccion =
                 await diagnosticoDb.Database.BeginTransactionAsync(
@@ -335,6 +144,26 @@ namespace CONATRADEC_API.Controllers
                     {
                         success = false,
                         message = "El diagnóstico humano es obligatorio."
+                    });
+                }
+
+                /*
+                 * La asignación se toma después de validar que la fotografía
+                 * pertenece al expediente y está disponible. Así una petición
+                 * inválida no puede reservar una inspección.
+                 */
+                ResultadoAsignacionFlujo asignacionAnalizador =
+                    await asignaciones.TomarAnalizadorAsync(
+                        id,
+                        usuarioId!.Value,
+                        cancellationToken);
+
+                if (!asignacionAnalizador.Exitoso)
+                {
+                    return Conflict(new
+                    {
+                        success = false,
+                        message = asignacionAnalizador.Mensaje
                     });
                 }
 
@@ -433,6 +262,7 @@ namespace CONATRADEC_API.Controllers
             }
 
             await database.InicializarAsync(cancellationToken);
+            await asignaciones.InicializarAsync(cancellationToken);
 
             await using var transaccion =
                 await diagnosticoDb.Database.BeginTransactionAsync(
@@ -496,6 +326,36 @@ namespace CONATRADEC_API.Controllers
                     });
                 }
 
+                if (analisis.UsuarioAnalizadorId == usuarioId.Value)
+                {
+                    return Conflict(new
+                    {
+                        success = false,
+                        message =
+                            "El usuario que realizó el análisis humano no puede aprobar la misma evidencia."
+                    });
+                }
+
+                /*
+                 * La asignación se toma únicamente después de validar la
+                 * evidencia y la separación de funciones. De esta forma una
+                 * solicitud inválida no bloquea la bandeja del aprobador.
+                 */
+                ResultadoAsignacionFlujo asignacionAprobador =
+                    await asignaciones.TomarAprobadorAsync(
+                        id,
+                        usuarioId.Value,
+                        cancellationToken);
+
+                if (!asignacionAprobador.Exitoso)
+                {
+                    return Conflict(new
+                    {
+                        success = false,
+                        message = asignacionAprobador.Mensaje
+                    });
+                }
+
                 string decision = item.Decision.Trim().ToUpperInvariant();
                 string estadoNuevo = decision switch
                 {
@@ -550,7 +410,7 @@ namespace CONATRADEC_API.Controllers
                         analisis.NivelCerteza),
                     item.Observaciones,
                     decisionPositiva && item.AutorizaPublicacionAlbum,
-                    analisis.UsuarioAnalizadorId == usuarioId.Value,
+                    mismoUsuario: false,
                     cancellationToken);
 
                 await database.CambiarEstadoFotoAsync(
@@ -562,6 +422,15 @@ namespace CONATRADEC_API.Controllers
                     $"El aprobador registró la decisión individual {decision}.",
                     fechaAprobacionUtc: DateTime.UtcNow,
                     cancellationToken: cancellationToken);
+
+                if (estadoNuevo ==
+                    InspeccionFitosanitariaFlujo.FotoEstados
+                        .DevueltaAnalizador)
+                {
+                    await asignaciones.ReabrirEtapaAnalizadorAsync(
+                        id,
+                        cancellationToken);
+                }
 
                 await ActualizarEstadoInspeccionAsync(
                     inspeccion,
@@ -586,113 +455,6 @@ namespace CONATRADEC_API.Controllers
                 throw;
             }
         }
-
-        private async Task<IActionResult?> ValidarAccesoBandejaAsync(
-            int usuarioId,
-            string modo,
-            CancellationToken cancellationToken)
-        {
-            if (modo == "analizador")
-            {
-                return await ValidarPermisoAsync(
-                    usuarioId,
-                    DiagnosticoIAFlujo.InterfazAnalizador,
-                    TipoPermisoApi.Leer,
-                    cancellationToken);
-            }
-
-            if (modo == "aprobador")
-            {
-                return await ValidarPermisoAsync(
-                    usuarioId,
-                    DiagnosticoIAFlujo.InterfazAprobador,
-                    TipoPermisoApi.Leer,
-                    cancellationToken);
-            }
-
-            if (modo == "historial")
-            {
-                bool permitido =
-                    await TienePermisoAsync(
-                        usuarioId,
-                        DiagnosticoIAFlujo.InterfazSolicitud,
-                        TipoPermisoApi.Leer,
-                        cancellationToken) ||
-                    await TienePermisoAsync(
-                        usuarioId,
-                        DiagnosticoIAFlujo.InterfazAnalizador,
-                        TipoPermisoApi.Leer,
-                        cancellationToken) ||
-                    await TienePermisoAsync(
-                        usuarioId,
-                        DiagnosticoIAFlujo.InterfazAprobador,
-                        TipoPermisoApi.Leer,
-                        cancellationToken);
-
-                return permitido
-                    ? null
-                    : Forbid();
-            }
-
-            return await ValidarPermisoAsync(
-                usuarioId,
-                DiagnosticoIAFlujo.InterfazSolicitud,
-                TipoPermisoApi.Leer,
-                cancellationToken);
-        }
-
-        private static bool DebeIncluirse(
-            string modo,
-            bool cerradaDefinitiva,
-            IReadOnlyCollection<FotoMetadatos> fotos)
-        {
-            if (modo == "analizador")
-            {
-                return !cerradaDefinitiva && fotos.Any(item =>
-                    NormalizarEstado(item.Estado) is
-                        InspeccionFitosanitariaFlujo.FotoEstados
-                            .PendienteAnalizador or
-                        InspeccionFitosanitariaFlujo.FotoEstados
-                            .EnAnalisisHumano or
-                        InspeccionFitosanitariaFlujo.FotoEstados
-                            .DevueltaAnalizador or
-                        InspeccionFitosanitariaFlujo.FotoEstados
-                            .DevueltaTecnico);
-            }
-
-            if (modo == "aprobador")
-            {
-                return !cerradaDefinitiva && fotos.Any(item =>
-                    NormalizarEstado(item.Estado) ==
-                        InspeccionFitosanitariaFlujo.FotoEstados
-                            .PendienteAprobacion);
-            }
-
-            if (modo == "historial")
-            {
-                return cerradaDefinitiva &&
-                       fotos.Count > 0 &&
-                       fotos.All(item =>
-                           InspeccionFitosanitariaFlujo.EsEstadoFinal(
-                               item.Estado));
-            }
-
-            return true;
-        }
-
-        private static bool EsPendienteTecnico(FotoMetadatos foto) =>
-            !foto.Descartada && NormalizarEstado(foto.Estado) is
-                InspeccionFitosanitariaFlujo.FotoEstados.Borrador or
-                InspeccionFitosanitariaFlujo.FotoEstados.PendienteIA or
-                InspeccionFitosanitariaFlujo.FotoEstados.AnalizandoIA or
-                InspeccionFitosanitariaFlujo.FotoEstados.ErrorIA or
-                InspeccionFitosanitariaFlujo.FotoEstados
-                    .PendienteDecisionTecnico or
-                InspeccionFitosanitariaFlujo.FotoEstados
-                    .DevueltaTecnico;
-
-        private static bool EsRecibidaPorAnalizador(FotoMetadatos foto) =>
-            !foto.Descartada && !EsPendienteTecnico(foto);
 
         private static string NormalizarEstado(string? estado) =>
             (estado ?? string.Empty).Trim().ToUpperInvariant();
@@ -721,8 +483,7 @@ namespace CONATRADEC_API.Controllers
                     cancellationToken);
 
             bool cerradaDefinitiva =
-                controlActual?.CerradaDefinitiva == true ||
-                controlActual?.CerradaTecnico == true;
+                controlActual?.CerradaDefinitiva == true;
 
             string estadoNuevo =
                 InspeccionFitosanitariaFlujo.CalcularEstadoInspeccion(
@@ -750,7 +511,7 @@ namespace CONATRADEC_API.Controllers
             if (registro == null || !registro.Activo)
                 return NoEncontrado();
 
-            if (!registro.CerradaTecnico && !registro.CerradaDefinitiva)
+            if (!registro.CerradaDefinitiva)
                 return null;
 
             return Conflict(new
@@ -882,8 +643,8 @@ namespace CONATRADEC_API.Controllers
         public string TecnicoUsuario { get; set; } = string.Empty;
         public DateTime FechaRegistroSistemaUtc { get; set; }
         public string Estado { get; set; } = string.Empty;
-        public bool CerradaTecnico { get; set; }
-        public DateTime? FechaCierreTecnicoUtc { get; set; }
+        public bool EtapaTecnicaFinalizada { get; set; }
+        public DateTime? FechaFinEtapaTecnicaUtc { get; set; }
         public int TotalFotografias { get; set; }
         public int Pendientes { get; set; }
         public int ConError { get; set; }

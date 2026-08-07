@@ -24,6 +24,7 @@ namespace CONATRADEC_API.Controllers
         private readonly InspeccionFitosanitariaControlDatabaseInitializer control;
         private readonly InspeccionFitosanitariaDatabase flujoDatabase;
         private readonly InspeccionFitosanitariaDevolucionDatabase database;
+        private readonly InspeccionFitosanitariaAsignacionDatabase asignaciones;
         private readonly ILogger<InspeccionFitosanitariaRevisionController> logger;
 
         public InspeccionFitosanitariaRevisionController(
@@ -37,6 +38,7 @@ namespace CONATRADEC_API.Controllers
             this.logger = logger;
             flujoDatabase = new InspeccionFitosanitariaDatabase(db);
             database = new InspeccionFitosanitariaDevolucionDatabase(db);
+            asignaciones = new InspeccionFitosanitariaAsignacionDatabase(db);
         }
 
         [HttpGet("{id:int}/contexto")]
@@ -147,11 +149,20 @@ namespace CONATRADEC_API.Controllers
             if (registro == null || !registro.Activo)
                 return NotFound(Error("No se encontró la inspección indicada."));
 
-            if (registro.CerradaDefinitiva || registro.CerradaTecnico)
+            if (registro.CerradaDefinitiva)
             {
                 return Conflict(Error(
                     "La inspección está cerrada definitivamente y no admite devoluciones."));
             }
+
+            ResultadoAsignacionFlujo asignacionAnalizador =
+                await asignaciones.TomarAnalizadorAsync(
+                    id,
+                    usuarioId!.Value,
+                    cancellationToken);
+
+            if (!asignacionAnalizador.Exitoso)
+                return Conflict(Error(asignacionAnalizador.Mensaje));
 
             MotivoDevolucionTecnicoRespuesta? motivo =
                 await database.ObtenerMotivoAsync(
@@ -235,7 +246,7 @@ namespace CONATRADEC_API.Controllers
                     Error("Solo el técnico que creó la inspección puede resolver la devolución."));
             }
 
-            if (registro.CerradaDefinitiva || registro.CerradaTecnico)
+            if (registro.CerradaDefinitiva)
                 return Conflict(Error("La inspección está cerrada definitivamente."));
 
             request.RespuestaTecnico = respuesta;
@@ -283,8 +294,17 @@ namespace CONATRADEC_API.Controllers
             if (registro == null || !registro.Activo)
                 return NotFound(Error("No se encontró la inspección indicada."));
 
-            if (registro.CerradaDefinitiva || registro.CerradaTecnico)
+            if (registro.CerradaDefinitiva)
                 return Conflict(Error("La inspección está cerrada definitivamente."));
+
+            ResultadoAsignacionFlujo asignacionAnalizador =
+                await asignaciones.TomarAnalizadorAsync(
+                    id,
+                    usuarioId!.Value,
+                    cancellationToken);
+
+            if (!asignacionAnalizador.Exitoso)
+                return Conflict(Error(asignacionAnalizador.Mensaje));
 
             try
             {
@@ -324,6 +344,7 @@ namespace CONATRADEC_API.Controllers
             await flujoDatabase.InicializarAsync(cancellationToken);
             await control.InicializarAsync(cancellationToken);
             await database.InicializarAsync(cancellationToken);
+            await asignaciones.InicializarAsync(cancellationToken);
         }
 
         private async Task<IActionResult?> ValidarPermisoAsync(

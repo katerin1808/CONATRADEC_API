@@ -7,26 +7,30 @@ using System.Security.Claims;
 
 namespace CONATRADEC_API.Controllers
 {
+    /// <summary>
+    /// Control explícito de la etapa técnica y del cierre definitivo. El cierre
+    /// final está reservado al aprobador y nunca puede ejecutarlo el técnico
+    /// propietario por el solo hecho de haber creado la inspección.
+    /// </summary>
     [ApiController]
     [Authorize]
     [Route("api/inspecciones-fitosanitarias")]
     public sealed class InspeccionFitosanitariaControlController : ControllerBase
     {
         private readonly InspeccionFitosanitariaControlDatabaseInitializer control;
+        private readonly InspeccionFitosanitariaAsignacionDatabase asignaciones;
         private readonly PermisoApiService permisos;
 
         public InspeccionFitosanitariaControlController(
+            DiagnosticoIADbContext db,
             InspeccionFitosanitariaControlDatabaseInitializer control,
             PermisoApiService permisos)
         {
             this.control = control;
             this.permisos = permisos;
+            asignaciones = new InspeccionFitosanitariaAsignacionDatabase(db);
         }
 
-        /// <summary>
-        /// Finaliza la etapa del técnico y habilita la inspección para el
-        /// analizador. No representa el cierre definitivo del expediente.
-        /// </summary>
         [HttpPost("{id:int}/finalizar-etapa-tecnica")]
         public async Task<IActionResult> CerrarEtapaTecnica(
             int id,
@@ -40,32 +44,18 @@ namespace CONATRADEC_API.Controllers
                 await control.ObtenerAsync(id, cancellationToken);
 
             if (registro == null || !registro.Activo)
-            {
-                return NotFound(new
-                {
-                    success = false,
-                    message = "No se encontró la inspección indicada."
-                });
-            }
+                return NoEncontrado();
 
-            if (registro.CerradaDefinitiva || registro.CerradaTecnico)
+            if (registro.CerradaDefinitiva)
             {
-                return Conflict(new
-                {
-                    success = false,
-                    message =
-                        "La inspección ya está cerrada definitivamente."
-                });
+                return Conflict(Error(
+                    "La inspección ya está cerrada definitivamente."));
             }
 
             if (registro.EtapaTecnicaFinalizada)
             {
-                return Conflict(new
-                {
-                    success = false,
-                    message =
-                        "La etapa técnica ya fue finalizada y la inspección se encuentra en revisión."
-                });
+                return Conflict(Error(
+                    "La etapa técnica ya fue finalizada y la inspección se encuentra en revisión."));
             }
 
             if (registro.UsuarioSolicitanteId != usuarioId.Value)
@@ -81,7 +71,7 @@ namespace CONATRADEC_API.Controllers
             {
                 return StatusCode(
                     permiso.CodigoEstado,
-                    new { success = false, message = permiso.Mensaje });
+                    Error(permiso.Mensaje));
             }
 
             InspeccionFitosanitariaEstadoEtapaTecnica estado =
@@ -115,19 +105,15 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
-            bool cerrada = await control.CerrarEtapaTecnicaAsync(
+            bool finalizada = await control.CerrarEtapaTecnicaAsync(
                 id,
                 usuarioId.Value,
                 cancellationToken);
 
-            if (!cerrada)
+            if (!finalizada)
             {
-                return Conflict(new
-                {
-                    success = false,
-                    message =
-                        "La inspección cambió mientras se intentaba finalizar la etapa técnica. Actualice e intente nuevamente."
-                });
+                return Conflict(Error(
+                    "La inspección cambió mientras se intentaba finalizar la etapa técnica. Actualice e intente nuevamente."));
             }
 
             return Ok(new
@@ -138,7 +124,8 @@ namespace CONATRADEC_API.Controllers
                 data = new
                 {
                     inspeccionId = id,
-                    cerradaTecnico = true,
+                    etapaTecnicaFinalizada = true,
+                    fechaFinEtapaTecnicaUtc = DateTime.UtcNow,
                     estado.TotalActivas,
                     estado.TotalEnviadasRevision,
                     estado.TotalDescartadas
@@ -147,8 +134,9 @@ namespace CONATRADEC_API.Controllers
         }
 
         /// <summary>
-        /// Realiza el cierre global e irreversible después de que todas las
-        /// fotografías terminaron el análisis, la aprobación o el descarte.
+        /// Cierre irreversible reservado al aprobador asignado. El expediente
+        /// solo se sella cuando todas las fotografías activas ya tienen un
+        /// estado final independiente.
         /// </summary>
         [HttpPost("{id:int}/cerrar-definitivo")]
         public async Task<IActionResult> CerrarDefinitivamente(
@@ -159,56 +147,36 @@ namespace CONATRADEC_API.Controllers
             if (!usuarioId.HasValue)
                 return Forbid();
 
-            InspeccionFitosanitariaControlRegistro? registro =
-                await control.ObtenerAsync(id, cancellationToken);
-
-            if (registro == null || !registro.Activo)
-            {
-                return NotFound(new
-                {
-                    success = false,
-                    message = "No se encontró la inspección indicada."
-                });
-            }
-
-            if (registro.CerradaDefinitiva || registro.CerradaTecnico)
-            {
-                return Conflict(new
-                {
-                    success = false,
-                    message =
-                        "La inspección ya está cerrada definitivamente."
-                });
-            }
-
-            if (!registro.EtapaTecnicaFinalizada)
-            {
-                return Conflict(new
-                {
-                    success = false,
-                    message =
-                        "Primero debe finalizarse la etapa técnica y completarse el flujo de revisión."
-                });
-            }
-
-            bool esTecnicoPropietario =
-                registro.UsuarioSolicitanteId == usuarioId.Value;
-
             ResultadoPermisoApi permiso = await permisos.ValidarAsync(
                 usuarioId,
-                esTecnicoPropietario
-                    ? DiagnosticoIAFlujo.InterfazSolicitud
-                    : DiagnosticoIAFlujo.InterfazAprobador,
-                esTecnicoPropietario
-                    ? TipoPermisoApi.Agregar
-                    : TipoPermisoApi.Actualizar,
+                DiagnosticoIAFlujo.InterfazAprobador,
+                TipoPermisoApi.Actualizar,
                 cancellationToken);
 
             if (!permiso.Permitido)
             {
                 return StatusCode(
                     permiso.CodigoEstado,
-                    new { success = false, message = permiso.Mensaje });
+                    Error(
+                        "Solo un aprobador autorizado puede cerrar definitivamente una inspección."));
+            }
+
+            InspeccionFitosanitariaControlRegistro? registro =
+                await control.ObtenerAsync(id, cancellationToken);
+
+            if (registro == null || !registro.Activo)
+                return NoEncontrado();
+
+            if (registro.CerradaDefinitiva)
+            {
+                return Conflict(Error(
+                    "La inspección ya está cerrada definitivamente."));
+            }
+
+            if (!registro.EtapaTecnicaFinalizada)
+            {
+                return Conflict(Error(
+                    "Primero debe finalizarse la etapa técnica y completarse el flujo de revisión."));
             }
 
             InspeccionFitosanitariaEstadoCierre estado =
@@ -240,6 +208,15 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
+            ResultadoAsignacionFlujo asignacion =
+                await asignaciones.TomarAprobadorAsync(
+                    id,
+                    usuarioId.Value,
+                    cancellationToken);
+
+            if (!asignacion.Exitoso)
+                return Conflict(Error(asignacion.Mensaje));
+
             bool cerrada = await control.CerrarDefinitivamenteAsync(
                 id,
                 usuarioId.Value,
@@ -247,23 +224,20 @@ namespace CONATRADEC_API.Controllers
 
             if (!cerrada)
             {
-                return Conflict(new
-                {
-                    success = false,
-                    message =
-                        "La inspección cambió mientras se intentaba cerrar. Actualice e intente nuevamente."
-                });
+                return Conflict(Error(
+                    "La inspección cambió mientras se intentaba cerrar. Actualice e intente nuevamente."));
             }
 
             return Ok(new
             {
                 success = true,
                 message =
-                    "La inspección fue cerrada definitivamente y quedó en modo de solo lectura.",
+                    "La inspección fue cerrada definitivamente y quedó en modo de solo lectura. Las fotografías autorizadas todavía pueden copiarse al Álbum Botánico sin alterar el expediente.",
                 data = new
                 {
                     inspeccionId = id,
                     cerradaDefinitiva = true,
+                    fechaCierreDefinitivoUtc = DateTime.UtcNow,
                     estado.TotalActivas,
                     estado.TotalFinalizadas
                 }
@@ -280,5 +254,14 @@ namespace CONATRADEC_API.Controllers
                 ? id
                 : null;
         }
+
+        private IActionResult NoEncontrado() =>
+            NotFound(Error("No se encontró la inspección indicada."));
+
+        private static object Error(string mensaje) => new
+        {
+            success = false,
+            message = mensaje
+        };
     }
 }
