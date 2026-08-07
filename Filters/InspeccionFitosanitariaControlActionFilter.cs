@@ -587,7 +587,22 @@ namespace CONATRADEC_API.Filters
 
         private static bool EsRutaControlada(string ruta) =>
             CoincideRutaBase(ruta, RutaBase) ||
-            CoincideRutaBase(ruta, RutaAlbumJerarquia);
+            EsRutaAlbumVinculadaInspeccion(ruta);
+
+        /// <summary>
+        /// El Álbum Botánico administrativo utiliza las rutas /inicio,
+        /// /galeria-paginada, /subcategorias y /registros. Esas operaciones no
+        /// pertenecen al flujo de una inspección y no deben inicializar ni
+        /// validar las tablas fitosanitarias.
+        ///
+        /// Solo se controla la rama /diagnosticos, utilizada para consultar o
+        /// resolver la clasificación jerárquica de fotografías que sí forman
+        /// parte de una inspección.
+        /// </summary>
+        private static bool EsRutaAlbumVinculadaInspeccion(string ruta) =>
+            CoincideRutaBase(
+                ruta,
+                RutaAlbumJerarquia + "/diagnosticos");
 
         /// <summary>
         /// Exige una frontera real después del prefijo. Así la ruta

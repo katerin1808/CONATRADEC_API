@@ -819,10 +819,15 @@ WITH fotos AS
 SELECT
     @id,
     COUNT(f.DiagnosticoIAImagenId),
-    SUM(CASE WHEN f.DiagnosticoIAImagenId IS NOT NULL AND Descartada = 0 THEN 1 ELSE 0 END),
-    SUM(CASE WHEN Descartada = 1 OR Estado = N'DESCARTADA' THEN 1 ELSE 0 END),
     SUM(CASE
-        WHEN Descartada = 0 AND Estado IN
+        WHEN f.DiagnosticoIAImagenId IS NOT NULL
+         AND f.Descartada = 0
+        THEN 1 ELSE 0 END),
+    SUM(CASE
+        WHEN f.Descartada = 1 OR f.Estado = N'DESCARTADA'
+        THEN 1 ELSE 0 END),
+    SUM(CASE
+        WHEN f.Descartada = 0 AND f.Estado IN
         (
             N'PENDIENTE_ANALIZADOR', N'EN_ANALISIS_HUMANO',
             N'DEVUELTA_AL_ANALIZADOR', N'PENDIENTE_APROBACION',
@@ -830,29 +835,36 @@ SELECT
             N'NO_CONCLUYENTE', N'PUBLICADA_ALBUM'
         ) THEN 1 ELSE 0 END),
     SUM(CASE
-        WHEN Descartada = 0 AND Estado IN
+        WHEN f.Descartada = 0 AND f.Estado IN
         (
             N'BORRADOR', N'PENDIENTE_IA', N'ANALIZANDO_IA', N'ERROR_IA',
             N'PENDIENTE_DECISION_TECNICO', N'DEVUELTA_AL_TECNICO'
         ) THEN 1 ELSE 0 END),
-    SUM(CASE WHEN Descartada = 0 AND Estado = N'DEVUELTA_AL_TECNICO'
-        THEN 1 ELSE 0 END),
-    SUM(CASE WHEN Descartada = 0 AND Estado = N'ERROR_IA'
-        THEN 1 ELSE 0 END),
-    SUM(CASE WHEN Descartada = 0 AND Estado = N'ANALIZANDO_IA'
-        THEN 1 ELSE 0 END),
-    SUM(CASE WHEN Descartada = 0 AND Estado = N'PENDIENTE_DECISION_TECNICO'
-        THEN 1 ELSE 0 END),
-    SUM(CASE WHEN Descartada = 0 AND TieneAnalisisHumano = 1
+    SUM(CASE
+        WHEN f.Descartada = 0
+         AND f.Estado = N'DEVUELTA_AL_TECNICO'
         THEN 1 ELSE 0 END),
     SUM(CASE
-        WHEN Descartada = 0
-         AND Estado IN
+        WHEN f.Descartada = 0 AND f.Estado = N'ERROR_IA'
+        THEN 1 ELSE 0 END),
+    SUM(CASE
+        WHEN f.Descartada = 0 AND f.Estado = N'ANALIZANDO_IA'
+        THEN 1 ELSE 0 END),
+    SUM(CASE
+        WHEN f.Descartada = 0
+         AND f.Estado = N'PENDIENTE_DECISION_TECNICO'
+        THEN 1 ELSE 0 END),
+    SUM(CASE
+        WHEN f.Descartada = 0 AND f.TieneAnalisisHumano = 1
+        THEN 1 ELSE 0 END),
+    SUM(CASE
+        WHEN f.Descartada = 0
+         AND f.Estado IN
          (
              N'PENDIENTE_ANALIZADOR', N'EN_ANALISIS_HUMANO',
              N'DEVUELTA_AL_ANALIZADOR'
          )
-         AND TieneAnalisisHumano = 0
+         AND f.TieneAnalisisHumano = 0
         THEN 1 ELSE 0 END),
     CONVERT(BIT, ISNULL(d.EtapaTecnicaFinalizada, 0)),
     CONVERT(BIT, ISNULL(c.EtapaAnalizadorFinalizada, 0)),
