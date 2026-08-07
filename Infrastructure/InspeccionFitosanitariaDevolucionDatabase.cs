@@ -51,6 +51,7 @@ namespace CONATRADEC_API.Infrastructure
 
                 await InicializarTablasAsync(cancellationToken);
                 await CompletarColumnasAsync(cancellationToken);
+                await AsegurarEsquemaContextoAsync(cancellationToken);
                 await InicializarIndicesYRelacionesAsync(cancellationToken);
                 await SembrarMotivosPredeterminadosAsync(cancellationToken);
 
@@ -227,6 +228,117 @@ IF COL_LENGTH(N'dbo.diagnosticoIARevisionAnalizadorControl', N'UsuarioFinEtapaAn
 """;
 
             await db.Database.ExecuteSqlRawAsync(sql, cancellationToken);
+        }
+
+        /// <summary>
+        /// Repara la tabla auxiliar utilizada por el contexto de revisión. Las
+        /// primeras versiones del flujo podían dejar esta tabla creada sin su
+        /// identificador principal cuando una publicación se interrumpía. Cada
+        /// paso se ejecuta en un lote separado para que SQL Server no compile
+        /// referencias a columnas que todavía no existen.
+        /// </summary>
+        private async Task AsegurarEsquemaContextoAsync(
+            CancellationToken cancellationToken)
+        {
+            const string sqlAgregarIdentificador = """
+IF OBJECT_ID(N'[dbo].[diagnosticoIARevisionAnalizadorControl]', N'U') IS NOT NULL
+   AND COL_LENGTH(
+       N'dbo.diagnosticoIARevisionAnalizadorControl',
+       N'DiagnosticoIAId') IS NULL
+BEGIN
+    ALTER TABLE dbo.diagnosticoIARevisionAnalizadorControl
+        ADD DiagnosticoIAId INT NULL;
+END;
+""";
+
+            await db.Database.ExecuteSqlRawAsync(
+                sqlAgregarIdentificador,
+                cancellationToken);
+
+            const string sqlRepararRegistros = """
+IF OBJECT_ID(N'[dbo].[diagnosticoIARevisionAnalizadorControl]', N'U') IS NOT NULL
+BEGIN
+    IF COL_LENGTH(
+           N'dbo.diagnosticoIARevisionAnalizadorControl',
+           N'InspeccionId') IS NOT NULL
+    BEGIN
+        EXEC(N'
+UPDATE dbo.diagnosticoIARevisionAnalizadorControl
+SET DiagnosticoIAId = InspeccionId
+WHERE DiagnosticoIAId IS NULL;');
+    END;
+
+    DELETE controlRevision
+    FROM dbo.diagnosticoIARevisionAnalizadorControl controlRevision
+    LEFT JOIN dbo.diagnosticoIA diagnostico
+        ON diagnostico.DiagnosticoIAId =
+           controlRevision.DiagnosticoIAId
+    WHERE controlRevision.DiagnosticoIAId IS NULL
+       OR diagnostico.DiagnosticoIAId IS NULL;
+
+    ;WITH duplicados AS
+    (
+        SELECT
+            DiagnosticoIAId,
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY DiagnosticoIAId
+                ORDER BY
+                    ISNULL(FechaFinEtapaAnalizadorUtc, '19000101') DESC
+            ) AS Numero
+        FROM dbo.diagnosticoIARevisionAnalizadorControl
+    )
+    DELETE FROM duplicados
+    WHERE Numero > 1;
+
+    IF EXISTS
+    (
+        SELECT 1
+        FROM sys.columns
+        WHERE object_id = OBJECT_ID(
+            N'dbo.diagnosticoIARevisionAnalizadorControl')
+          AND name = N'DiagnosticoIAId'
+          AND is_nullable = 1
+    )
+    AND NOT EXISTS
+    (
+        SELECT 1
+        FROM dbo.diagnosticoIARevisionAnalizadorControl
+        WHERE DiagnosticoIAId IS NULL
+    )
+    BEGIN
+        EXEC(N'
+ALTER TABLE dbo.diagnosticoIARevisionAnalizadorControl
+ALTER COLUMN DiagnosticoIAId INT NOT NULL;');
+    END;
+
+    IF NOT EXISTS
+    (
+        SELECT 1
+        FROM sys.indexes indice
+        INNER JOIN sys.index_columns columnaIndice
+            ON columnaIndice.object_id = indice.object_id
+           AND columnaIndice.index_id = indice.index_id
+        INNER JOIN sys.columns columna
+            ON columna.object_id = columnaIndice.object_id
+           AND columna.column_id = columnaIndice.column_id
+        WHERE indice.object_id = OBJECT_ID(
+                  N'dbo.diagnosticoIARevisionAnalizadorControl')
+          AND indice.is_unique = 1
+          AND columna.name = N'DiagnosticoIAId'
+          AND columnaIndice.key_ordinal = 1
+    )
+    BEGIN
+        CREATE UNIQUE INDEX UX_diagIARevAnaControl_diagnostico
+            ON dbo.diagnosticoIARevisionAnalizadorControl
+               (DiagnosticoIAId);
+    END;
+END;
+""";
+
+            await db.Database.ExecuteSqlRawAsync(
+                sqlRepararRegistros,
+                cancellationToken);
         }
 
         private async Task InicializarIndicesYRelacionesAsync(
@@ -631,6 +743,32 @@ WHERE [MotivoDevolucionTecnicoId] = @id;
         {
             await InicializarAsync(cancellationToken);
 
+            try
+            {
+                return await ConstruirContextoAsync(
+                    inspeccionId,
+                    cancellationToken);
+            }
+            catch (DbException)
+            {
+                /*
+                 * Una publicación interrumpida puede haber dejado una tabla
+                 * auxiliar incompleta. Se repara y se realiza una sola segunda
+                 * lectura antes de propagar el error real al controlador.
+                 */
+                await AsegurarEsquemaContextoAsync(cancellationToken);
+
+                return await ConstruirContextoAsync(
+                    inspeccionId,
+                    cancellationToken);
+            }
+        }
+
+        private async Task<ContextoRevisionAnalizadorDto>
+            ConstruirContextoAsync(
+                int inspeccionId,
+                CancellationToken cancellationToken)
+        {
             ResumenRevisionAnalizadorDto resumen =
                 await ObtenerResumenAsync(inspeccionId, cancellationToken);
 
@@ -664,17 +802,16 @@ WITH fotos AS
                 THEN 1
             ELSE 0
         END) AS Descartada,
-        CASE WHEN EXISTS
-        (
-            SELECT 1
-            FROM dbo.diagnosticoIAImagenAnalisisHumano h
-            WHERE h.DiagnosticoIAImagenId = i.DiagnosticoIAImagenId
-              AND
-              (
-                  i.FechaAnalisisIAUtc IS NULL OR
-                  h.FechaCreacionUtc >= i.FechaAnalisisIAUtc
-              )
-        ) THEN 1 ELSE 0 END AS TieneAnalisisHumano
+        CASE
+            WHEN i.FechaAnalisisHumanoUtc IS NOT NULL
+             AND
+             (
+                 i.FechaAnalisisIAUtc IS NULL OR
+                 i.FechaAnalisisHumanoUtc >= i.FechaAnalisisIAUtc
+             )
+                THEN 1
+            ELSE 0
+        END AS TieneAnalisisHumano
     FROM dbo.diagnosticoIAImagen i
     WHERE i.DiagnosticoIAId = @id
       AND ISNULL(i.Activo, 1) = 1
@@ -1289,17 +1426,14 @@ SELECT CASE WHEN
           AND ISNULL(i.Activo, 1) = 1
           AND ISNULL(i.Descartada, 0) = 0
           AND UPPER(ISNULL(i.Estado, N'BORRADOR')) <> N'DESCARTADA'
-          AND NOT EXISTS
+          AND
           (
-              SELECT 1
-              FROM dbo.diagnosticoIAImagenAnalisisHumano h
-                   WITH (UPDLOCK, HOLDLOCK)
-              WHERE h.DiagnosticoIAImagenId = i.DiagnosticoIAImagenId
-                AND
-                (
-                    i.FechaAnalisisIAUtc IS NULL OR
-                    h.FechaCreacionUtc >= i.FechaAnalisisIAUtc
-                )
+              i.FechaAnalisisHumanoUtc IS NULL
+              OR
+              (
+                  i.FechaAnalisisIAUtc IS NOT NULL
+                  AND i.FechaAnalisisHumanoUtc < i.FechaAnalisisIAUtc
+              )
           )
     )
 THEN 1 ELSE 0 END;

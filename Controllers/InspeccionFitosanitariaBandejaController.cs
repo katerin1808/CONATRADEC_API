@@ -206,6 +206,15 @@ namespace CONATRADEC_API.Controllers
             if (hayMas)
                 items.RemoveAt(items.Count - 1);
 
+            /*
+             * Completa el usuario creador en una sola consulta por página. Esto
+             * evita depender de un JOIN que puede no devolver el nombre en bases
+             * parcialmente actualizadas y mantiene el listado libre de N+1.
+             */
+            await CompletarUsuariosCreadoresAsync(
+                items,
+                cancellationToken);
+
             InspeccionFitosanitariaBandejaItemDto? ultimo =
                 items.LastOrDefault();
 
@@ -292,7 +301,7 @@ namespace CONATRADEC_API.Controllers
                 UsuarioTecnicoId = tecnicoId.Value,
                 NombreCompleto = string.IsNullOrWhiteSpace(
                     tecnico?.nombreCompletoUsuario)
-                        ? tecnico?.nombreUsuario ?? $"Técnico #{tecnicoId.Value}"
+                        ? tecnico?.nombreUsuario ?? $"Usuario #{tecnicoId.Value}"
                         : tecnico.nombreCompletoUsuario.Trim(),
                 NombreUsuario = tecnico?.nombreUsuario?.Trim() ?? string.Empty
             };
@@ -300,7 +309,7 @@ namespace CONATRADEC_API.Controllers
             return Ok(new
             {
                 success = true,
-                message = "Técnico responsable obtenido correctamente.",
+                message = "Usuario que registró la inspección obtenido correctamente.",
                 data
             });
         }
@@ -1023,6 +1032,58 @@ ORDER BY FechaRegistroSistemaUtc DESC, InspeccionId DESC;
             {
                 if (cerrarConexion)
                     await conexion.CloseAsync();
+            }
+        }
+
+        /// <summary>
+        /// Resuelve el nombre completo del usuario que creó cada inspección en
+        /// una única consulta. El identificador almacenado en diagnóstico IA es
+        /// la fuente de verdad y no se presenta un rol artificial en la tarjeta.
+        /// </summary>
+        private async Task CompletarUsuariosCreadoresAsync(
+            ICollection<InspeccionFitosanitariaBandejaItemDto> items,
+            CancellationToken cancellationToken)
+        {
+            if (items.Count == 0)
+                return;
+
+            int[] usuarioIds = items
+                .Select(item => item.UsuarioTecnicoId)
+                .Where(id => id > 0)
+                .Distinct()
+                .ToArray();
+
+            if (usuarioIds.Length == 0)
+                return;
+
+            List<Usuario> usuarios = await db.Set<Usuario>()
+                .AsNoTracking()
+                .Where(usuario => usuarioIds.Contains(usuario.UsuarioId))
+                .ToListAsync(cancellationToken);
+
+            Dictionary<int, Usuario> usuariosPorId = usuarios
+                .ToDictionary(usuario => usuario.UsuarioId);
+
+            foreach (InspeccionFitosanitariaBandejaItemDto item in items)
+            {
+                if (!usuariosPorId.TryGetValue(
+                        item.UsuarioTecnicoId,
+                        out Usuario? usuario))
+                {
+                    continue;
+                }
+
+                string nombreCompleto =
+                    usuario.nombreCompletoUsuario?.Trim() ?? string.Empty;
+                string nombreUsuario =
+                    usuario.nombreUsuario?.Trim() ?? string.Empty;
+
+                item.TecnicoNombreCompleto =
+                    !string.IsNullOrWhiteSpace(nombreCompleto)
+                        ? nombreCompleto
+                        : nombreUsuario;
+
+                item.TecnicoUsuario = nombreUsuario;
             }
         }
 

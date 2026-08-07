@@ -89,13 +89,25 @@ namespace CONATRADEC_API.Controllers
             {
                 logger.LogError(
                     ex,
-                    "Error al preparar el contexto de revisión de la inspección {InspeccionId}.",
+                    "Error de base de datos al preparar el contexto de revisión de la inspección {InspeccionId}.",
                     id);
 
                 return StatusCode(
                     StatusCodes.Status500InternalServerError,
                     Error(
-                        "No fue posible preparar las tablas del flujo de revisión. Publique nuevamente todos los archivos del backend incluidos en la corrección y reinicie la API."));
+                        "No fue posible preparar el contexto de revisión. Reinicie la API después de publicar la corrección para que el esquema incompleto sea reparado automáticamente."));
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(
+                    ex,
+                    "Error inesperado al preparar el contexto de revisión de la inspección {InspeccionId}.",
+                    id);
+
+                return StatusCode(
+                    StatusCodes.Status500InternalServerError,
+                    Error(
+                        "No fue posible cargar el flujo de revisión de esta inspección. Revise el registro del backend asociado al identificador mostrado."));
             }
         }
 
