@@ -5,9 +5,13 @@ using System.ComponentModel.DataAnnotations.Schema;
 namespace CONATRADEC_API.Models
 {
     /// <summary>
-    /// Contexto aislado para incorporar la jerarquía
-    /// Categoría -> Subcategoría -> Ficha sin alterar la lógica existente
-    /// del álbum ni del diagnóstico fitosanitario.
+    /// Contexto del Álbum Botánico y su vínculo con la inspección
+    /// fitosanitaria. La estructura oficial del álbum es:
+    /// Categoría -> Subcategoría específica -> Fotografías.
+    ///
+    /// AlbumBotanicoCafe representa la subcategoría específica porque ya
+    /// conserva el nombre, nombre científico, descripción, síntomas,
+    /// recomendaciones y fotografías del diagnóstico.
     /// </summary>
     public sealed class AlbumJerarquiaDbContext : DbContext
     {
@@ -20,9 +24,10 @@ namespace CONATRADEC_API.Models
         public DbSet<CategoriaAlbumJerarquia> Categorias =>
             Set<CategoriaAlbumJerarquia>();
 
-        public DbSet<SubcategoriaAlbumBotanico> Subcategorias =>
-            Set<SubcategoriaAlbumBotanico>();
+        public DbSet<AlbumBotanicoCafeJerarquia> Subcategorias =>
+            Set<AlbumBotanicoCafeJerarquia>();
 
+        // Alias conservado para no romper servicios existentes.
         public DbSet<AlbumBotanicoCafeJerarquia> RegistrosAlbum =>
             Set<AlbumBotanicoCafeJerarquia>();
 
@@ -47,9 +52,6 @@ namespace CONATRADEC_API.Models
             modelBuilder.Entity<CategoriaAlbumJerarquia>()
                 .ToTable("CategoriaAlbumBotanico", "dbo");
 
-            modelBuilder.Entity<SubcategoriaAlbumBotanico>()
-                .ToTable("SubcategoriaAlbumBotanico", "dbo");
-
             modelBuilder.Entity<AlbumBotanicoCafeJerarquia>()
                 .ToTable("AlbumBotanicoCafe", "dbo");
 
@@ -68,34 +70,21 @@ namespace CONATRADEC_API.Models
             modelBuilder.Entity<DiagnosticoIAClasificacionJerarquia>()
                 .ToTable("diagnosticoIAClasificacionJerarquia", "dbo");
 
-            modelBuilder.Entity<CategoriaAlbumJerarquia>()
-                .HasMany(item => item.Subcategorias)
-                .WithOne(item => item.Categoria)
+            modelBuilder.Entity<AlbumBotanicoCafeJerarquia>()
+                .HasOne(item => item.Categoria)
+                .WithMany(item => item.Subcategorias)
                 .HasForeignKey(item => item.CategoriaAlbumBotanicoId)
                 .OnDelete(DeleteBehavior.Restrict);
 
-            modelBuilder.Entity<SubcategoriaAlbumBotanico>()
+            modelBuilder.Entity<AlbumBotanicoCafeJerarquia>()
                 .HasIndex(item => new
                 {
                     item.CategoriaAlbumBotanicoId,
-                    item.NombreSubcategoria
-                })
-                .IsUnique();
-
-            modelBuilder.Entity<AlbumBotanicoCafeJerarquia>()
-                .HasOne(item => item.Categoria)
-                .WithMany(item => item.Registros)
-                .HasForeignKey(item => item.CategoriaAlbumBotanicoId)
-                .OnDelete(DeleteBehavior.Restrict);
-
-            modelBuilder.Entity<AlbumBotanicoCafeJerarquia>()
-                .HasOne(item => item.Subcategoria)
-                .WithMany(item => item.Registros)
-                .HasForeignKey(item => item.SubcategoriaAlbumBotanicoId)
-                .OnDelete(DeleteBehavior.Restrict);
+                    item.Titulo
+                });
 
             modelBuilder.Entity<AlbumBotanicoCafeFotoJerarquia>()
-                .HasOne(item => item.Registro)
+                .HasOne(item => item.Subcategoria)
                 .WithMany(item => item.Fotos)
                 .HasForeignKey(item => item.AlbumBotanicoCafeId)
                 .OnDelete(DeleteBehavior.Cascade);
@@ -123,6 +112,34 @@ namespace CONATRADEC_API.Models
                 .HasForeignKey<DiagnosticoIAClasificacionJerarquia>(
                     item => item.DiagnosticoIAImagenId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<DiagnosticoIAClasificacionJerarquia>()
+                .HasOne<CategoriaAlbumJerarquia>()
+                .WithMany()
+                .HasForeignKey(item =>
+                    item.CategoriaAlbumBotanicoIdSugerida)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<DiagnosticoIAClasificacionJerarquia>()
+                .HasOne<CategoriaAlbumJerarquia>()
+                .WithMany()
+                .HasForeignKey(item =>
+                    item.CategoriaAlbumBotanicoIdSeleccionada)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<DiagnosticoIAClasificacionJerarquia>()
+                .HasOne<AlbumBotanicoCafeJerarquia>()
+                .WithMany()
+                .HasForeignKey(item =>
+                    item.AlbumBotanicoCafeIdSugerido)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<DiagnosticoIAClasificacionJerarquia>()
+                .HasOne<AlbumBotanicoCafeJerarquia>()
+                .WithMany()
+                .HasForeignKey(item =>
+                    item.AlbumBotanicoCafeIdSeleccionado)
+                .OnDelete(DeleteBehavior.Restrict);
         }
     }
 
@@ -147,39 +164,14 @@ namespace CONATRADEC_API.Models
         [Column("activo")]
         public bool Activo { get; set; } = true;
 
-        public ICollection<SubcategoriaAlbumBotanico> Subcategorias { get; set; } =
-            new List<SubcategoriaAlbumBotanico>();
-
-        public ICollection<AlbumBotanicoCafeJerarquia> Registros { get; set; } =
+        public ICollection<AlbumBotanicoCafeJerarquia> Subcategorias { get; set; } =
             new List<AlbumBotanicoCafeJerarquia>();
     }
 
-    [Table("SubcategoriaAlbumBotanico", Schema = "dbo")]
-    public sealed class SubcategoriaAlbumBotanico
-    {
-        [Key]
-        public int SubcategoriaAlbumBotanicoId { get; set; }
-
-        public int CategoriaAlbumBotanicoId { get; set; }
-
-        [Required, MaxLength(120)]
-        public string NombreSubcategoria { get; set; } = string.Empty;
-
-        [MaxLength(600)]
-        public string? Descripcion { get; set; }
-
-        public bool Activo { get; set; } = true;
-
-        public DateTime FechaCreacionUtc { get; set; } = DateTime.UtcNow;
-
-        public DateTime? FechaActualizacionUtc { get; set; }
-
-        public CategoriaAlbumJerarquia Categoria { get; set; } = null!;
-
-        public ICollection<AlbumBotanicoCafeJerarquia> Registros { get; set; } =
-            new List<AlbumBotanicoCafeJerarquia>();
-    }
-
+    /// <summary>
+    /// Subcategoría específica del álbum, por ejemplo Mancha de hierro,
+    /// Roya del café, Broca o Deficiencia de nitrógeno.
+    /// </summary>
     [Table("AlbumBotanicoCafe", Schema = "dbo")]
     public sealed class AlbumBotanicoCafeJerarquia
     {
@@ -189,9 +181,6 @@ namespace CONATRADEC_API.Models
 
         [Column("categoriaAlbumBotanicoId")]
         public int CategoriaAlbumBotanicoId { get; set; }
-
-        [Column("subcategoriaAlbumBotanicoId")]
-        public int? SubcategoriaAlbumBotanicoId { get; set; }
 
         [Required, MaxLength(200)]
         [Column("titulo")]
@@ -227,7 +216,7 @@ namespace CONATRADEC_API.Models
         public DateTime FechaCreacion { get; set; } = DateTime.Now;
 
         public CategoriaAlbumJerarquia Categoria { get; set; } = null!;
-        public SubcategoriaAlbumBotanico? Subcategoria { get; set; }
+
         public ICollection<AlbumBotanicoCafeFotoJerarquia> Fotos { get; set; } =
             new List<AlbumBotanicoCafeFotoJerarquia>();
     }
@@ -257,7 +246,7 @@ namespace CONATRADEC_API.Models
         [Column("activo")]
         public bool Activo { get; set; } = true;
 
-        public AlbumBotanicoCafeJerarquia Registro { get; set; } = null!;
+        public AlbumBotanicoCafeJerarquia Subcategoria { get; set; } = null!;
     }
 
     [Table("diagnosticoIA", Schema = "dbo")]
@@ -355,6 +344,10 @@ namespace CONATRADEC_API.Models
         public DiagnosticoIAImagenJerarquiaReferencia Fotografia { get; set; } = null!;
     }
 
+    /// <summary>
+    /// Trazabilidad de la clasificación del álbum dentro del flujo de
+    /// inspección. Solo conserva categoría y subcategoría específica.
+    /// </summary>
     [Table("diagnosticoIAClasificacionJerarquia", Schema = "dbo")]
     public sealed class DiagnosticoIAClasificacionJerarquia
     {
@@ -364,17 +357,13 @@ namespace CONATRADEC_API.Models
         public int DiagnosticoIAImagenId { get; set; }
 
         public int? CategoriaAlbumBotanicoIdSugerida { get; set; }
-        public int? SubcategoriaAlbumBotanicoIdSugerida { get; set; }
         public int? AlbumBotanicoCafeIdSugerido { get; set; }
 
         [MaxLength(150)]
         public string CategoriaSugerida { get; set; } = string.Empty;
 
-        [MaxLength(150)]
-        public string SubcategoriaSugerida { get; set; } = string.Empty;
-
         [MaxLength(200)]
-        public string FichaSugerida { get; set; } = string.Empty;
+        public string SubcategoriaSugerida { get; set; } = string.Empty;
 
         [MaxLength(200)]
         public string NombreCientificoSugerido { get; set; } = string.Empty;
@@ -383,21 +372,16 @@ namespace CONATRADEC_API.Models
         public string MotivoSugerencia { get; set; } = string.Empty;
 
         public int? CategoriaAlbumBotanicoIdSeleccionada { get; set; }
-        public int? SubcategoriaAlbumBotanicoIdSeleccionada { get; set; }
         public int? AlbumBotanicoCafeIdSeleccionado { get; set; }
 
         [MaxLength(150)]
         public string CategoriaSeleccionada { get; set; } = string.Empty;
 
-        [MaxLength(150)]
-        public string SubcategoriaSeleccionada { get; set; } = string.Empty;
-
         [MaxLength(200)]
-        public string FichaSeleccionada { get; set; } = string.Empty;
+        public string SubcategoriaSeleccionada { get; set; } = string.Empty;
 
         public bool ProponeCategoria { get; set; }
         public bool ProponeSubcategoria { get; set; }
-        public bool ProponeFicha { get; set; }
 
         [MaxLength(40)]
         public string Estado { get; set; } = "SUGERIDA_IA";

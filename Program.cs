@@ -133,6 +133,9 @@ builder.Services.AddScoped<PermisoApiService>();
 builder.Services.AddScoped<NoticiasDatabaseInitializer>();
 builder.Services.AddScoped<BusquedaTextoCompletoNoticiasService>();
 
+// Jerarquía administrativa del Álbum Botánico.
+builder.Services.AddScoped<AlbumJerarquiaDatabaseInitializer>();
+
 builder.Services.AddScoped<DispositivoConexionService>();
 builder.Services.AddScoped<DispositivosConexionDatabaseInitializer>();
 builder.Services.AddScoped<UmbralesAlertasService>();
@@ -241,6 +244,13 @@ builder.Services.AddDbContext<ActualizacionesDbContext>(
     });
 
 builder.Services.AddDbContext<DiagnosticoIADbContext>(
+    options =>
+    {
+        options.UseSqlServer(connectionString);
+    });
+
+// Contexto aislado utilizado por AlbumJerarquiaController.
+builder.Services.AddDbContext<AlbumJerarquiaDbContext>(
     options =>
     {
         options.UseSqlServer(connectionString);
@@ -419,6 +429,13 @@ await using (
             .GetRequiredService<InspeccionFitosanitariaControlDatabaseInitializer>();
 
     await inspeccionControlInitializer.InicializarAsync();
+
+    // Crea o repara la jerarquía del Álbum Botánico antes de atender solicitudes.
+    AlbumJerarquiaDatabaseInitializer albumJerarquiaInitializer =
+        scope.ServiceProvider
+            .GetRequiredService<AlbumJerarquiaDatabaseInitializer>();
+
+    await albumJerarquiaInitializer.InicializarAsync();
 
     DispositivosConexionDatabaseInitializer dispositivosInitializer =
         scope.ServiceProvider

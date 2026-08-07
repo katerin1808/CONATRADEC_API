@@ -6,14 +6,16 @@ using Microsoft.EntityFrameworkCore;
 using System.Globalization;
 using System.Security.Claims;
 using System.Text;
-using System.Text.Json;
 
 namespace CONATRADEC_API.Controllers
 {
     /// <summary>
-    /// Administra el nivel intermedio del Álbum Botánico y la clasificación
-    /// jerárquica de cada fotografía:
-    /// Categoría -> Subcategoría -> Ficha específica.
+    /// Administra la estructura limpia del Álbum Botánico:
+    /// Categoría -> Subcategoría específica -> Fotografías.
+    ///
+    /// AlbumBotanicoCafe representa la subcategoría específica. Los nombres
+    /// antiguos de algunos DTO y rutas se mantienen únicamente para
+    /// compatibilidad con versiones anteriores de la aplicación.
     /// </summary>
     [ApiController]
     [Authorize]
@@ -36,11 +38,6 @@ namespace CONATRADEC_API.Controllers
             this.permisos = permisos;
         }
 
-        /// <summary>
-        /// Carga inicial optimizada del álbum: capítulos, subcategorías y la
-        /// primera página de fichas. Todo se resuelve en tres consultas SQL,
-        /// sin consultas individuales por tarjeta.
-        /// </summary>
         [HttpGet("inicio")]
         public async Task<IActionResult> Inicio(
             [FromQuery] int tamanoPagina = 6,
@@ -68,39 +65,32 @@ namespace CONATRADEC_API.Controllers
                     descripcion = item.Descripcion,
                     rutaImagenPortada = item.RutaImagenPortada,
                     activo = item.Activo,
-                    totalRegistros = item.Registros.Count(registro =>
+                    totalRegistros = item.Subcategorias.Count(registro =>
                         registro.Activo),
-                    totalRegistrosActivos = item.Registros.Count(registro =>
+                    totalRegistrosActivos = item.Subcategorias.Count(registro =>
                         registro.Activo)
                 })
                 .ToListAsync(cancellationToken);
 
-            var subcategorias = await db.Subcategorias
-                .AsNoTracking()
-                .Where(item => item.Activo && item.Categoria.Activo)
-                .OrderBy(item => item.Categoria.NombreCategoria)
-                .ThenBy(item => item.NombreSubcategoria)
-                .Select(item => new SubcategoriaAlbumDto
-                {
-                    SubcategoriaAlbumBotanicoId =
-                        item.SubcategoriaAlbumBotanicoId,
-                    CategoriaAlbumBotanicoId =
-                        item.CategoriaAlbumBotanicoId,
-                    Categoria = item.Categoria.NombreCategoria,
-                    NombreSubcategoria = item.NombreSubcategoria,
-                    Descripcion = item.Descripcion,
-                    Activo = item.Activo,
-                    TotalRegistros = item.Registros.Count(registro =>
-                        registro.Activo)
-                })
-                .ToListAsync(cancellationToken);
+            List<SubcategoriaAlbumDto> subcategorias =
+                await ConstruirConsultaSubcategorias(incluirInactivas: false)
+                    .OrderBy(item => item.Categoria.NombreCategoria)
+                    .ThenBy(item => item.Titulo)
+                    .Select(item => new SubcategoriaAlbumDto
+                    {
+                        SubcategoriaAlbumBotanicoId = item.AlbumBotanicoCafeId,
+                        CategoriaAlbumBotanicoId = item.CategoriaAlbumBotanicoId,
+                        Categoria = item.Categoria.NombreCategoria,
+                        NombreSubcategoria = item.Titulo,
+                        Descripcion = item.Descripcion,
+                        Activo = item.Activo,
+                        TotalRegistros = item.Fotos.Count(foto => foto.Activo)
+                    })
+                    .ToListAsync(cancellationToken);
 
-            IQueryable<AlbumBotanicoCafeJerarquia> query = db.RegistrosAlbum
+            IQueryable<AlbumBotanicoCafeJerarquia> query = db.Subcategorias
                 .AsNoTracking()
-                .Where(item =>
-                    item.Activo &&
-                    item.Categoria.Activo &&
-                    (item.Subcategoria == null || item.Subcategoria.Activo));
+                .Where(item => item.Activo && item.Categoria.Activo);
 
             object galeria = await ConstruirPaginaGaleriaAsync(
                 query,
@@ -111,7 +101,7 @@ namespace CONATRADEC_API.Controllers
             return Ok(new
             {
                 success = true,
-                message = "Álbum botánico jerárquico cargado correctamente.",
+                message = "Álbum botánico cargado correctamente.",
                 data = new
                 {
                     categorias,
@@ -121,10 +111,6 @@ namespace CONATRADEC_API.Controllers
             });
         }
 
-        /// <summary>
-        /// Página filtrada por categoría y subcategoría. La paginación se
-        /// ejecuta en SQL Server y solo devuelve la fotografía de portada.
-        /// </summary>
         [HttpGet("galeria-paginada")]
         public async Task<IActionResult> GaleriaPaginada(
             [FromQuery] int? categoriaId = null,
@@ -146,15 +132,13 @@ namespace CONATRADEC_API.Controllers
             pagina = Math.Max(1, pagina);
             tamanoPagina = Math.Clamp(tamanoPagina, 1, 30);
 
-            IQueryable<AlbumBotanicoCafeJerarquia> query = db.RegistrosAlbum
+            IQueryable<AlbumBotanicoCafeJerarquia> query = db.Subcategorias
                 .AsNoTracking();
 
             if (!incluirInactivos)
             {
                 query = query.Where(item =>
-                    item.Activo &&
-                    item.Categoria.Activo &&
-                    (item.Subcategoria == null || item.Subcategoria.Activo));
+                    item.Activo && item.Categoria.Activo);
             }
 
             if (categoriaId is > 0)
@@ -166,8 +150,7 @@ namespace CONATRADEC_API.Controllers
             if (subcategoriaId is > 0)
             {
                 query = query.Where(item =>
-                    item.SubcategoriaAlbumBotanicoId ==
-                        subcategoriaId.Value);
+                    item.AlbumBotanicoCafeId == subcategoriaId.Value);
             }
 
             if (!string.IsNullOrWhiteSpace(buscar))
@@ -179,8 +162,6 @@ namespace CONATRADEC_API.Controllers
                     (item.NombreCientifico != null &&
                      item.NombreCientifico.Contains(texto)) ||
                     item.Descripcion.Contains(texto) ||
-                    (item.Subcategoria != null &&
-                     item.Subcategoria.NombreSubcategoria.Contains(texto)) ||
                     item.Categoria.NombreCategoria.Contains(texto));
             }
 
@@ -193,11 +174,15 @@ namespace CONATRADEC_API.Controllers
             return Ok(new
             {
                 success = true,
-                message = "Página jerárquica del álbum obtenida correctamente.",
+                message = "Subcategorías del álbum obtenidas correctamente.",
                 data
             });
         }
 
+        /// <summary>
+        /// Ruta conservada para compatibilidad. Devuelve directamente los
+        /// registros AlbumBotanicoCafe como subcategorías específicas.
+        /// </summary>
         [HttpGet("subcategorias")]
         public async Task<IActionResult> ListarSubcategorias(
             [FromQuery] int? categoriaId = null,
@@ -212,36 +197,27 @@ namespace CONATRADEC_API.Controllers
             if (acceso != null)
                 return acceso;
 
-            IQueryable<SubcategoriaAlbumBotanico> query = db.Subcategorias
-                .AsNoTracking();
+            IQueryable<AlbumBotanicoCafeJerarquia> query =
+                ConstruirConsultaSubcategorias(incluirInactivas);
 
-            if (categoriaId.HasValue && categoriaId.Value > 0)
+            if (categoriaId is > 0)
             {
                 query = query.Where(item =>
                     item.CategoriaAlbumBotanicoId == categoriaId.Value);
             }
 
-            if (!incluirInactivas)
-            {
-                query = query.Where(item =>
-                    item.Activo && item.Categoria.Activo);
-            }
-
-            var data = await query
+            List<SubcategoriaAlbumDto> data = await query
                 .OrderBy(item => item.Categoria.NombreCategoria)
-                .ThenBy(item => item.NombreSubcategoria)
+                .ThenBy(item => item.Titulo)
                 .Select(item => new SubcategoriaAlbumDto
                 {
-                    SubcategoriaAlbumBotanicoId =
-                        item.SubcategoriaAlbumBotanicoId,
-                    CategoriaAlbumBotanicoId =
-                        item.CategoriaAlbumBotanicoId,
+                    SubcategoriaAlbumBotanicoId = item.AlbumBotanicoCafeId,
+                    CategoriaAlbumBotanicoId = item.CategoriaAlbumBotanicoId,
                     Categoria = item.Categoria.NombreCategoria,
-                    NombreSubcategoria = item.NombreSubcategoria,
+                    NombreSubcategoria = item.Titulo,
                     Descripcion = item.Descripcion,
                     Activo = item.Activo,
-                    TotalRegistros = item.Registros.Count(registro =>
-                        incluirInactivas || registro.Activo)
+                    TotalRegistros = item.Fotos.Count(foto => foto.Activo)
                 })
                 .ToListAsync(cancellationToken);
 
@@ -253,6 +229,10 @@ namespace CONATRADEC_API.Controllers
             });
         }
 
+        /// <summary>
+        /// Creación básica para clientes anteriores. La administración normal
+        /// usa el formulario completo de AlbumBotanicoCafe.
+        /// </summary>
         [HttpPost("subcategorias")]
         public async Task<IActionResult> CrearSubcategoria(
             [FromBody] GuardarSubcategoriaAlbumRequest request,
@@ -276,16 +256,19 @@ namespace CONATRADEC_API.Controllers
             if (categoria == null)
                 return ErrorValidacion("La categoría no existe o está inactiva.");
 
-            string nombre = Limpiar(request.NombreSubcategoria, 120);
-            string? descripcion = LimpiarOpcional(request.Descripcion, 600);
+            string nombre = Limpiar(request.NombreSubcategoria, 200);
+            string descripcion = Limpiar(request.Descripcion, 4000);
 
             if (nombre.Length < 3)
                 return ErrorValidacion("Ingrese un nombre de subcategoría válido.");
 
+            if (descripcion.Length < 3)
+                descripcion = $"Subcategoría específica {nombre}.";
+
             bool duplicada = await db.Subcategorias.AnyAsync(item =>
                 item.CategoriaAlbumBotanicoId ==
                     categoria.CategoriaAlbumBotanicoId &&
-                item.NombreSubcategoria == nombre,
+                item.Titulo == nombre,
                 cancellationToken);
 
             if (duplicada)
@@ -298,13 +281,13 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
-            var entidad = new SubcategoriaAlbumBotanico
+            var entidad = new AlbumBotanicoCafeJerarquia
             {
                 CategoriaAlbumBotanicoId = categoria.CategoriaAlbumBotanicoId,
-                NombreSubcategoria = nombre,
+                Titulo = nombre,
                 Descripcion = descripcion,
                 Activo = true,
-                FechaCreacionUtc = DateTime.UtcNow
+                FechaCreacion = DateTime.Now
             };
 
             db.Subcategorias.Add(entidad);
@@ -314,18 +297,7 @@ namespace CONATRADEC_API.Controllers
             {
                 success = true,
                 message = "Subcategoría creada correctamente.",
-                data = new SubcategoriaAlbumDto
-                {
-                    SubcategoriaAlbumBotanicoId =
-                        entidad.SubcategoriaAlbumBotanicoId,
-                    CategoriaAlbumBotanicoId =
-                        entidad.CategoriaAlbumBotanicoId,
-                    Categoria = categoria.NombreCategoria,
-                    NombreSubcategoria = entidad.NombreSubcategoria,
-                    Descripcion = entidad.Descripcion,
-                    Activo = entidad.Activo,
-                    TotalRegistros = 0
-                }
+                data = CrearSubcategoriaDto(entidad, categoria.NombreCategoria)
             });
         }
 
@@ -343,13 +315,19 @@ namespace CONATRADEC_API.Controllers
             if (acceso != null)
                 return acceso;
 
-            SubcategoriaAlbumBotanico? entidad = await db.Subcategorias
+            AlbumBotanicoCafeJerarquia? entidad = await db.Subcategorias
                 .FirstOrDefaultAsync(item =>
-                    item.SubcategoriaAlbumBotanicoId == id,
+                    item.AlbumBotanicoCafeId == id,
                     cancellationToken);
 
             if (entidad == null)
-                return NotFound(new { success = false, message = "La subcategoría no fue encontrada." });
+            {
+                return NotFound(new
+                {
+                    success = false,
+                    message = "La subcategoría no fue encontrada."
+                });
+            }
 
             bool categoriaValida = await db.Categorias.AnyAsync(item =>
                 item.CategoriaAlbumBotanicoId ==
@@ -360,16 +338,15 @@ namespace CONATRADEC_API.Controllers
             if (!categoriaValida)
                 return ErrorValidacion("La categoría no existe o está inactiva.");
 
-            string nombre = Limpiar(request.NombreSubcategoria, 120);
-
+            string nombre = Limpiar(request.NombreSubcategoria, 200);
             if (nombre.Length < 3)
                 return ErrorValidacion("Ingrese un nombre de subcategoría válido.");
 
             bool duplicada = await db.Subcategorias.AnyAsync(item =>
-                item.SubcategoriaAlbumBotanicoId != id &&
+                item.AlbumBotanicoCafeId != id &&
                 item.CategoriaAlbumBotanicoId ==
                     request.CategoriaAlbumBotanicoId &&
-                item.NombreSubcategoria == nombre,
+                item.Titulo == nombre,
                 cancellationToken);
 
             if (duplicada)
@@ -384,9 +361,11 @@ namespace CONATRADEC_API.Controllers
 
             entidad.CategoriaAlbumBotanicoId =
                 request.CategoriaAlbumBotanicoId;
-            entidad.NombreSubcategoria = nombre;
-            entidad.Descripcion = LimpiarOpcional(request.Descripcion, 600);
-            entidad.FechaActualizacionUtc = DateTime.UtcNow;
+            entidad.Titulo = nombre;
+
+            string descripcion = Limpiar(request.Descripcion, 4000);
+            if (!string.IsNullOrWhiteSpace(descripcion))
+                entidad.Descripcion = descripcion;
 
             await db.SaveChangesAsync(cancellationToken);
 
@@ -411,35 +390,40 @@ namespace CONATRADEC_API.Controllers
             if (acceso != null)
                 return acceso;
 
-            SubcategoriaAlbumBotanico? entidad = await db.Subcategorias
+            AlbumBotanicoCafeJerarquia? entidad = await db.Subcategorias
                 .FirstOrDefaultAsync(item =>
-                    item.SubcategoriaAlbumBotanicoId == id,
+                    item.AlbumBotanicoCafeId == id,
                     cancellationToken);
 
             if (entidad == null)
-                return NotFound(new { success = false, message = "La subcategoría no fue encontrada." });
-
-            if (!activo)
             {
-                bool tieneRegistrosActivos = await db.RegistrosAlbum.AnyAsync(
-                    item =>
-                        item.SubcategoriaAlbumBotanicoId == id &&
-                        item.Activo,
+                return NotFound(new
+                {
+                    success = false,
+                    message = "La subcategoría no fue encontrada."
+                });
+            }
+
+            if (activo)
+            {
+                bool categoriaActiva = await db.Categorias.AnyAsync(item =>
+                    item.CategoriaAlbumBotanicoId ==
+                        entidad.CategoriaAlbumBotanicoId &&
+                    item.Activo,
                     cancellationToken);
 
-                if (tieneRegistrosActivos)
+                if (!categoriaActiva)
                 {
                     return Conflict(new
                     {
                         success = false,
                         message =
-                            "No puede desactivar la subcategoría mientras existan fichas activas asociadas."
+                            "No puede activar la subcategoría mientras su categoría esté inactiva."
                     });
                 }
             }
 
             entidad.Activo = activo;
-            entidad.FechaActualizacionUtc = DateTime.UtcNow;
             await db.SaveChangesAsync(cancellationToken);
 
             return Ok(new
@@ -468,8 +452,7 @@ namespace CONATRADEC_API.Controllers
                 return acceso;
 
             HashSet<int> identificadores = ParsearIds(ids);
-
-            IQueryable<AlbumBotanicoCafeJerarquia> query = db.RegistrosAlbum
+            IQueryable<AlbumBotanicoCafeJerarquia> query = db.Subcategorias
                 .AsNoTracking();
 
             if (identificadores.Count > 0)
@@ -478,42 +461,34 @@ namespace CONATRADEC_API.Controllers
                     identificadores.Contains(item.AlbumBotanicoCafeId));
             }
 
-            if (categoriaId.HasValue && categoriaId.Value > 0)
+            if (categoriaId is > 0)
             {
                 query = query.Where(item =>
                     item.CategoriaAlbumBotanicoId == categoriaId.Value);
             }
 
-            if (subcategoriaId.HasValue && subcategoriaId.Value > 0)
+            if (subcategoriaId is > 0)
             {
                 query = query.Where(item =>
-                    item.SubcategoriaAlbumBotanicoId == subcategoriaId.Value);
+                    item.AlbumBotanicoCafeId == subcategoriaId.Value);
             }
 
             if (!incluirInactivos)
             {
                 query = query.Where(item =>
-                    item.Activo &&
-                    item.Categoria.Activo &&
-                    (item.Subcategoria == null || item.Subcategoria.Activo));
+                    item.Activo && item.Categoria.Activo);
             }
 
-            var data = await query
+            List<AlbumRegistroJerarquiaDto> data = await query
                 .OrderBy(item => item.Categoria.NombreCategoria)
-                .ThenBy(item => item.Subcategoria != null
-                    ? item.Subcategoria.NombreSubcategoria
-                    : string.Empty)
                 .ThenBy(item => item.Titulo)
                 .Select(item => new AlbumRegistroJerarquiaDto
                 {
                     AlbumBotanicoCafeId = item.AlbumBotanicoCafeId,
                     CategoriaAlbumBotanicoId = item.CategoriaAlbumBotanicoId,
                     Categoria = item.Categoria.NombreCategoria,
-                    SubcategoriaAlbumBotanicoId =
-                        item.SubcategoriaAlbumBotanicoId,
-                    Subcategoria = item.Subcategoria != null
-                        ? item.Subcategoria.NombreSubcategoria
-                        : string.Empty,
+                    SubcategoriaAlbumBotanicoId = item.AlbumBotanicoCafeId,
+                    Subcategoria = item.Titulo,
                     Titulo = item.Titulo,
                     NombreCientifico = item.NombreCientifico,
                     Descripcion = item.Descripcion,
@@ -524,11 +499,16 @@ namespace CONATRADEC_API.Controllers
             return Ok(new
             {
                 success = true,
-                message = "Jerarquía de las fichas obtenida correctamente.",
+                message = "Subcategorías específicas obtenidas correctamente.",
                 data
             });
         }
 
+        /// <summary>
+        /// Compatibilidad con clientes que guardaban una ficha y luego la
+        /// asignaban al nivel intermedio. Ahora la subcategoría es el propio
+        /// registro, por lo que la operación solo valida la identidad.
+        /// </summary>
         [HttpPut("registros/{id:int}/subcategoria")]
         public async Task<IActionResult> AsignarSubcategoriaRegistro(
             int id,
@@ -543,41 +523,34 @@ namespace CONATRADEC_API.Controllers
             if (acceso != null)
                 return acceso;
 
-            AlbumBotanicoCafeJerarquia? registro = await db.RegistrosAlbum
-                .FirstOrDefaultAsync(item =>
-                    item.AlbumBotanicoCafeId == id,
-                    cancellationToken);
+            bool existe = await db.Subcategorias.AnyAsync(item =>
+                item.AlbumBotanicoCafeId == id,
+                cancellationToken);
 
-            if (registro == null)
-                return NotFound(new { success = false, message = "La ficha no fue encontrada." });
-
-            SubcategoriaAlbumBotanico? subcategoria = await db.Subcategorias
-                .AsNoTracking()
-                .FirstOrDefaultAsync(item =>
-                    item.SubcategoriaAlbumBotanicoId ==
-                        request.SubcategoriaAlbumBotanicoId &&
-                    item.Activo,
-                    cancellationToken);
-
-            if (subcategoria == null)
-                return ErrorValidacion("La subcategoría no existe o está inactiva.");
-
-            if (subcategoria.CategoriaAlbumBotanicoId !=
-                registro.CategoriaAlbumBotanicoId)
+            if (!existe)
             {
-                return ErrorValidacion(
-                    "La subcategoría seleccionada no pertenece a la categoría de la ficha.");
+                return NotFound(new
+                {
+                    success = false,
+                    message = "La subcategoría no fue encontrada."
+                });
             }
 
-            registro.SubcategoriaAlbumBotanicoId =
-                subcategoria.SubcategoriaAlbumBotanicoId;
-
-            await db.SaveChangesAsync(cancellationToken);
+            if (request.SubcategoriaAlbumBotanicoId > 0 &&
+                request.SubcategoriaAlbumBotanicoId != id)
+            {
+                return Conflict(new
+                {
+                    success = false,
+                    message =
+                        "El álbum ya no utiliza un nivel intermedio. El identificador debe corresponder a la misma subcategoría específica."
+                });
+            }
 
             return Ok(new
             {
                 success = true,
-                message = "Subcategoría asignada correctamente."
+                message = "La subcategoría ya se encuentra vinculada correctamente."
             });
         }
 
@@ -586,17 +559,6 @@ namespace CONATRADEC_API.Controllers
             int diagnosticoId,
             CancellationToken cancellationToken = default)
         {
-            int? usuarioId = ObtenerUsuarioId();
-
-            if (!usuarioId.HasValue)
-            {
-                return Unauthorized(new
-                {
-                    success = false,
-                    message = "No se encontró el usuario autenticado."
-                });
-            }
-
             IActionResult? acceso = await ValidarLecturaDiagnosticoAsync(
                 cancellationToken);
 
@@ -611,7 +573,13 @@ namespace CONATRADEC_API.Controllers
                     cancellationToken);
 
             if (!existe)
-                return NotFound(new { success = false, message = "La inspección no fue encontrada." });
+            {
+                return NotFound(new
+                {
+                    success = false,
+                    message = "La inspección no fue encontrada."
+                });
+            }
 
             List<CategoriaLigera> categorias = await db.Categorias
                 .AsNoTracking()
@@ -623,16 +591,20 @@ namespace CONATRADEC_API.Controllers
                 })
                 .ToListAsync(cancellationToken);
 
-            List<SubcategoriaLigera> subcategorias = await db.Subcategorias
+            List<AlbumRegistroJerarquiaDto> subcategorias = await db.Subcategorias
                 .AsNoTracking()
                 .Where(item => item.Activo && item.Categoria.Activo)
-                .Select(item => new SubcategoriaLigera
+                .Select(item => new AlbumRegistroJerarquiaDto
                 {
-                    SubcategoriaAlbumBotanicoId =
-                        item.SubcategoriaAlbumBotanicoId,
-                    CategoriaAlbumBotanicoId =
-                        item.CategoriaAlbumBotanicoId,
-                    NombreSubcategoria = item.NombreSubcategoria
+                    AlbumBotanicoCafeId = item.AlbumBotanicoCafeId,
+                    CategoriaAlbumBotanicoId = item.CategoriaAlbumBotanicoId,
+                    Categoria = item.Categoria.NombreCategoria,
+                    SubcategoriaAlbumBotanicoId = item.AlbumBotanicoCafeId,
+                    Subcategoria = item.Titulo,
+                    Titulo = item.Titulo,
+                    NombreCientifico = item.NombreCientifico,
+                    Descripcion = item.Descripcion,
+                    Activo = item.Activo
                 })
                 .ToListAsync(cancellationToken);
 
@@ -652,57 +624,24 @@ namespace CONATRADEC_API.Controllers
                 })
                 .ToListAsync(cancellationToken);
 
-            var idsFicha = filas
-                .Where(item => item.Resultado != null)
-                .SelectMany(item => new int?[]
-                {
-                    item.Jerarquia?.AlbumBotanicoCafeIdSeleccionado,
-                    item.Jerarquia?.AlbumBotanicoCafeIdSugerido,
-                    item.Resultado!.AlbumBotanicoCafeIdSeleccionado,
-                    item.Resultado!.AlbumBotanicoCafeIdSugerido
-                })
-                .Where(item => item.HasValue && item.Value > 0)
-                .Select(item => item!.Value)
-                .Distinct()
-                .ToList();
+            Dictionary<int, AlbumRegistroJerarquiaDto> porId =
+                subcategorias.ToDictionary(
+                    item => item.AlbumBotanicoCafeId);
 
-            Dictionary<int, AlbumRegistroJerarquiaDto> fichas =
-                await db.RegistrosAlbum
-                    .AsNoTracking()
-                    .Where(item => idsFicha.Contains(item.AlbumBotanicoCafeId))
-                    .Select(item => new AlbumRegistroJerarquiaDto
-                    {
-                        AlbumBotanicoCafeId = item.AlbumBotanicoCafeId,
-                        CategoriaAlbumBotanicoId = item.CategoriaAlbumBotanicoId,
-                        Categoria = item.Categoria.NombreCategoria,
-                        SubcategoriaAlbumBotanicoId =
-                            item.SubcategoriaAlbumBotanicoId,
-                        Subcategoria = item.Subcategoria != null
-                            ? item.Subcategoria.NombreSubcategoria
-                            : string.Empty,
-                        Titulo = item.Titulo,
-                        NombreCientifico = item.NombreCientifico,
-                        Descripcion = item.Descripcion,
-                        Activo = item.Activo
-                    })
-                    .ToDictionaryAsync(
-                        item => item.AlbumBotanicoCafeId,
-                        cancellationToken);
-
-            var data = filas.Select(item =>
-                ConstruirJerarquiaFoto(
+            List<JerarquiaDiagnosticoFotoDto> data = filas
+                .Select(item => ConstruirJerarquiaFoto(
                     item.Foto,
                     item.Resultado,
                     item.Jerarquia,
                     categorias,
                     subcategorias,
-                    fichas))
+                    porId))
                 .ToList();
 
             return Ok(new
             {
                 success = true,
-                message = "Clasificación jerárquica obtenida correctamente.",
+                message = "Clasificación del Álbum Botánico obtenida correctamente.",
                 data
             });
         }
@@ -715,7 +654,6 @@ namespace CONATRADEC_API.Controllers
             CancellationToken cancellationToken = default)
         {
             int? usuarioId = ObtenerUsuarioId();
-
             if (!usuarioId.HasValue)
             {
                 return Unauthorized(new
@@ -779,7 +717,7 @@ namespace CONATRADEC_API.Controllers
                 {
                     success = false,
                     message =
-                        "La clasificación jerárquica no puede modificarse en el estado actual de la inspección."
+                        "La clasificación no puede modificarse en el estado actual de la inspección."
                 });
             }
 
@@ -797,6 +735,203 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
+            string motivo = Limpiar(request.Motivo, 1200);
+            if (!esAprobador && motivo.Length < 8)
+            {
+                return ErrorValidacion(
+                    "Explique por qué la clasificación seleccionada representa la fotografía.");
+            }
+
+            CategoriaAlbumJerarquia? categoria = null;
+            if (request.CategoriaAlbumBotanicoId is > 0)
+            {
+                categoria = await db.Categorias.FirstOrDefaultAsync(item =>
+                    item.CategoriaAlbumBotanicoId ==
+                        request.CategoriaAlbumBotanicoId.Value &&
+                    item.Activo,
+                    cancellationToken);
+
+                if (categoria == null)
+                    return ErrorValidacion("La categoría seleccionada no existe o está inactiva.");
+            }
+
+            string categoriaPropuesta = Limpiar(request.CategoriaPropuesta, 100);
+
+            if (categoria == null && esAprobador)
+            {
+                if (!request.ProponerCategoria || categoriaPropuesta.Length < 3)
+                {
+                    return ErrorValidacion(
+                        "Seleccione una categoría existente o proponga una nueva.");
+                }
+
+                IActionResult? permisoAlbum = await ValidarPermisoAsync(
+                    InterfazAlbum,
+                    TipoPermisoApi.Agregar,
+                    cancellationToken);
+
+                if (permisoAlbum != null)
+                    return permisoAlbum;
+
+                categoria = await db.Categorias.FirstOrDefaultAsync(item =>
+                    item.NombreCategoria == categoriaPropuesta,
+                    cancellationToken);
+
+                if (categoria == null)
+                {
+                    categoria = new CategoriaAlbumJerarquia
+                    {
+                        NombreCategoria = categoriaPropuesta,
+                        Descripcion = LimpiarOpcional(motivo, 500),
+                        Activo = true
+                    };
+
+                    db.Categorias.Add(categoria);
+                    await db.SaveChangesAsync(cancellationToken);
+                }
+                else if (!categoria.Activo)
+                {
+                    return Conflict(new
+                    {
+                        success = false,
+                        message =
+                            "Ya existe una categoría inactiva con ese nombre. Actívela desde el Álbum Botánico."
+                    });
+                }
+            }
+
+            int? categoriaIdFinal = categoria?.CategoriaAlbumBotanicoId;
+            string categoriaNombreFinal = categoria?.NombreCategoria
+                ?? categoriaPropuesta;
+
+            int? subcategoriaIdSolicitada =
+                request.AlbumBotanicoCafeId is > 0
+                    ? request.AlbumBotanicoCafeId
+                    : request.SubcategoriaAlbumBotanicoId;
+
+            AlbumBotanicoCafeJerarquia? subcategoria = null;
+            if (subcategoriaIdSolicitada is > 0)
+            {
+                subcategoria = await db.Subcategorias.FirstOrDefaultAsync(item =>
+                    item.AlbumBotanicoCafeId ==
+                        subcategoriaIdSolicitada.Value &&
+                    item.Activo,
+                    cancellationToken);
+
+                if (subcategoria == null)
+                    return ErrorValidacion("La subcategoría seleccionada no existe o está inactiva.");
+
+                if (categoriaIdFinal.HasValue &&
+                    subcategoria.CategoriaAlbumBotanicoId !=
+                        categoriaIdFinal.Value)
+                {
+                    return ErrorValidacion(
+                        "La subcategoría seleccionada no pertenece a la categoría indicada.");
+                }
+
+                categoria ??= await db.Categorias.FirstAsync(item =>
+                    item.CategoriaAlbumBotanicoId ==
+                        subcategoria.CategoriaAlbumBotanicoId,
+                    cancellationToken);
+
+                categoriaIdFinal = subcategoria.CategoriaAlbumBotanicoId;
+                categoriaNombreFinal = categoria.NombreCategoria;
+            }
+
+            string subcategoriaPropuesta = PrimerTexto(
+                request.SubcategoriaPropuesta,
+                request.FichaPropuesta,
+                foto.ResultadoIA.ClasificacionAlbumSugerida,
+                foto.ResultadoIA.DiagnosticoProbable);
+            subcategoriaPropuesta = Limpiar(
+                LimpiarNombreDiagnostico(subcategoriaPropuesta),
+                200);
+
+            string nombreCientifico = Limpiar(
+                request.NombreCientifico,
+                200);
+            string descripcion = Limpiar(request.Descripcion, 4000);
+
+            if (subcategoria == null && esAprobador)
+            {
+                if (!request.ProponerSubcategoria ||
+                    subcategoriaPropuesta.Length < 3)
+                {
+                    return ErrorValidacion(
+                        "Seleccione una subcategoría existente o proponga una nueva.");
+                }
+
+                if (!categoriaIdFinal.HasValue)
+                {
+                    return ErrorValidacion(
+                        "La nueva subcategoría necesita una categoría oficial.");
+                }
+
+                if (descripcion.Length < 8)
+                {
+                    descripcion = PrimerTexto(
+                        foto.ResultadoIA.MotivoClasificacionAlbum,
+                        motivo,
+                        $"Subcategoría específica {subcategoriaPropuesta}.");
+                }
+
+                IActionResult? permisoAlbum = await ValidarPermisoAsync(
+                    InterfazAlbum,
+                    TipoPermisoApi.Agregar,
+                    cancellationToken);
+
+                if (permisoAlbum != null)
+                    return permisoAlbum;
+
+                subcategoria = await db.Subcategorias.FirstOrDefaultAsync(item =>
+                    item.CategoriaAlbumBotanicoId ==
+                        categoriaIdFinal.Value &&
+                    item.Titulo == subcategoriaPropuesta,
+                    cancellationToken);
+
+                if (subcategoria == null)
+                {
+                    subcategoria = new AlbumBotanicoCafeJerarquia
+                    {
+                        CategoriaAlbumBotanicoId = categoriaIdFinal.Value,
+                        Titulo = subcategoriaPropuesta,
+                        NombreCientifico =
+                            LimpiarOpcional(nombreCientifico, 200),
+                        Descripcion = descripcion,
+                        Sintomas = LimpiarOpcional(request.Sintomas, 4000),
+                        Observaciones =
+                            "Subcategoría creada desde una clasificación fitosanitaria aprobada.",
+                        Activo = true,
+                        FechaCreacion = DateTime.Now
+                    };
+
+                    db.Subcategorias.Add(subcategoria);
+                    await db.SaveChangesAsync(cancellationToken);
+                }
+                else if (!subcategoria.Activo)
+                {
+                    return Conflict(new
+                    {
+                        success = false,
+                        message =
+                            "Ya existe una subcategoría inactiva con ese nombre. Actívela desde el Álbum Botánico."
+                    });
+                }
+            }
+
+            int? subcategoriaIdFinal = subcategoria?.AlbumBotanicoCafeId;
+            string subcategoriaNombreFinal = subcategoria?.Titulo
+                ?? subcategoriaPropuesta;
+            string cientificoFinal = PrimerTexto(
+                subcategoria?.NombreCientifico,
+                nombreCientifico,
+                foto.ResultadoIA.NombreCientificoSugerido,
+                ExtraerNombreCientifico(foto.ResultadoIA.DiagnosticoProbable));
+
+            bool nivelesExistentes =
+                categoriaIdFinal.HasValue &&
+                subcategoriaIdFinal.HasValue;
+
             DiagnosticoIAClasificacionJerarquia jerarquia =
                 await db.ClasificacionesJerarquia
                     .FirstOrDefaultAsync(item =>
@@ -810,311 +945,18 @@ namespace CONATRADEC_API.Controllers
             if (jerarquia.DiagnosticoIAClasificacionJerarquiaId == 0)
                 db.ClasificacionesJerarquia.Add(jerarquia);
 
-            string motivo = Limpiar(request.Motivo, 1200);
-
-            if (!esAprobador && motivo.Length < 8)
-            {
-                return ErrorValidacion(
-                    "Explique por qué la jerarquía seleccionada representa la fotografía.");
-            }
-
-            CategoriaAlbumJerarquia? categoria = null;
-            SubcategoriaAlbumBotanico? subcategoria = null;
-            AlbumBotanicoCafeJerarquia? ficha = null;
-
-            if (request.CategoriaAlbumBotanicoId is > 0)
-            {
-                categoria = await db.Categorias.FirstOrDefaultAsync(item =>
-                    item.CategoriaAlbumBotanicoId ==
-                        request.CategoriaAlbumBotanicoId.Value &&
-                    item.Activo,
-                    cancellationToken);
-
-                if (categoria == null)
-                    return ErrorValidacion("La categoría seleccionada no existe o está inactiva.");
-            }
-
-            string categoriaPropuesta =
-                Limpiar(request.CategoriaPropuesta, 100);
-
-            if (categoria == null)
-            {
-                if (!request.ProponerCategoria || categoriaPropuesta.Length < 3)
-                {
-                    return ErrorValidacion(
-                        "Seleccione una categoría existente o proponga una nueva.");
-                }
-
-                if (esAprobador)
-                {
-                    IActionResult? permisoAlbum = await ValidarPermisoAsync(
-                        InterfazAlbum,
-                        TipoPermisoApi.Agregar,
-                        cancellationToken);
-
-                    if (permisoAlbum != null)
-                        return permisoAlbum;
-
-                    categoria = await db.Categorias.FirstOrDefaultAsync(item =>
-                        item.NombreCategoria == categoriaPropuesta,
-                        cancellationToken);
-
-                    if (categoria == null)
-                    {
-                        categoria = new CategoriaAlbumJerarquia
-                        {
-                            NombreCategoria = categoriaPropuesta,
-                            Descripcion = LimpiarOpcional(motivo, 500),
-                            Activo = true
-                        };
-
-                        db.Categorias.Add(categoria);
-                        await db.SaveChangesAsync(cancellationToken);
-                    }
-                    else if (!categoria.Activo)
-                    {
-                        return Conflict(new
-                        {
-                            success = false,
-                            message =
-                                "Ya existe una categoría inactiva con ese nombre. Actívela desde el Álbum Botánico."
-                        });
-                    }
-                }
-            }
-
-            int? categoriaIdFinal = categoria?.CategoriaAlbumBotanicoId;
-            string categoriaNombreFinal = categoria?.NombreCategoria
-                ?? categoriaPropuesta;
-
-            if (request.SubcategoriaAlbumBotanicoId is > 0)
-            {
-                if (!categoriaIdFinal.HasValue)
-                {
-                    return ErrorValidacion(
-                        "Una subcategoría existente necesita una categoría existente.");
-                }
-
-                subcategoria = await db.Subcategorias.FirstOrDefaultAsync(item =>
-                    item.SubcategoriaAlbumBotanicoId ==
-                        request.SubcategoriaAlbumBotanicoId.Value &&
-                    item.CategoriaAlbumBotanicoId == categoriaIdFinal.Value &&
-                    item.Activo,
-                    cancellationToken);
-
-                if (subcategoria == null)
-                {
-                    return ErrorValidacion(
-                        "La subcategoría seleccionada no pertenece a la categoría o está inactiva.");
-                }
-            }
-
-            string subcategoriaPropuesta =
-                Limpiar(request.SubcategoriaPropuesta, 120);
-
-            if (subcategoria == null)
-            {
-                if (!request.ProponerSubcategoria ||
-                    subcategoriaPropuesta.Length < 3)
-                {
-                    return ErrorValidacion(
-                        "Seleccione una subcategoría existente o proponga una nueva.");
-                }
-
-                if (esAprobador)
-                {
-                    if (!categoriaIdFinal.HasValue)
-                    {
-                        return ErrorValidacion(
-                            "La nueva subcategoría necesita una categoría oficial.");
-                    }
-
-                    IActionResult? permisoAlbum = await ValidarPermisoAsync(
-                        InterfazAlbum,
-                        TipoPermisoApi.Agregar,
-                        cancellationToken);
-
-                    if (permisoAlbum != null)
-                        return permisoAlbum;
-
-                    subcategoria = await db.Subcategorias.FirstOrDefaultAsync(item =>
-                        item.CategoriaAlbumBotanicoId == categoriaIdFinal.Value &&
-                        item.NombreSubcategoria == subcategoriaPropuesta,
-                        cancellationToken);
-
-                    if (subcategoria == null)
-                    {
-                        subcategoria = new SubcategoriaAlbumBotanico
-                        {
-                            CategoriaAlbumBotanicoId = categoriaIdFinal.Value,
-                            NombreSubcategoria = subcategoriaPropuesta,
-                            Descripcion = LimpiarOpcional(motivo, 600),
-                            Activo = true,
-                            FechaCreacionUtc = DateTime.UtcNow
-                        };
-
-                        db.Subcategorias.Add(subcategoria);
-                        await db.SaveChangesAsync(cancellationToken);
-                    }
-                    else if (!subcategoria.Activo)
-                    {
-                        return Conflict(new
-                        {
-                            success = false,
-                            message =
-                                "Ya existe una subcategoría inactiva con ese nombre. Actívela desde el Álbum Botánico."
-                        });
-                    }
-                }
-            }
-
-            int? subcategoriaIdFinal =
-                subcategoria?.SubcategoriaAlbumBotanicoId;
-            string subcategoriaNombreFinal =
-                subcategoria?.NombreSubcategoria ?? subcategoriaPropuesta;
-
-            if (request.AlbumBotanicoCafeId is > 0)
-            {
-                ficha = await db.RegistrosAlbum.FirstOrDefaultAsync(item =>
-                    item.AlbumBotanicoCafeId ==
-                        request.AlbumBotanicoCafeId.Value &&
-                    item.Activo,
-                    cancellationToken);
-
-                if (ficha == null)
-                    return ErrorValidacion("La ficha seleccionada no existe o está inactiva.");
-
-                if (categoriaIdFinal.HasValue &&
-                    ficha.CategoriaAlbumBotanicoId != categoriaIdFinal.Value)
-                {
-                    return ErrorValidacion(
-                        "La ficha seleccionada no pertenece a la categoría indicada.");
-                }
-
-                if (subcategoriaIdFinal.HasValue &&
-                    ficha.SubcategoriaAlbumBotanicoId != subcategoriaIdFinal.Value)
-                {
-                    return ErrorValidacion(
-                        "La ficha seleccionada no pertenece a la subcategoría indicada.");
-                }
-
-                categoria ??= await db.Categorias.FirstAsync(item =>
-                    item.CategoriaAlbumBotanicoId ==
-                        ficha.CategoriaAlbumBotanicoId,
-                    cancellationToken);
-
-                categoriaIdFinal = ficha.CategoriaAlbumBotanicoId;
-                categoriaNombreFinal = categoria.NombreCategoria;
-
-                if (ficha.SubcategoriaAlbumBotanicoId is > 0)
-                {
-                    subcategoria ??= await db.Subcategorias.FirstAsync(item =>
-                        item.SubcategoriaAlbumBotanicoId ==
-                            ficha.SubcategoriaAlbumBotanicoId.Value,
-                        cancellationToken);
-
-                    subcategoriaIdFinal =
-                        subcategoria.SubcategoriaAlbumBotanicoId;
-                    subcategoriaNombreFinal =
-                        subcategoria.NombreSubcategoria;
-                }
-            }
-
-            string fichaPropuesta = Limpiar(request.FichaPropuesta, 200);
-            string nombreCientifico =
-                Limpiar(request.NombreCientifico, 200);
-            string descripcion = Limpiar(request.Descripcion, 4000);
-
-            if (ficha == null)
-            {
-                if (!request.ProponerFicha || fichaPropuesta.Length < 3)
-                {
-                    return ErrorValidacion(
-                        "Seleccione una ficha existente o proponga una nueva.");
-                }
-
-                if (esAprobador)
-                {
-                    if (!categoriaIdFinal.HasValue ||
-                        !subcategoriaIdFinal.HasValue)
-                    {
-                        return ErrorValidacion(
-                            "La nueva ficha necesita una categoría y subcategoría oficiales.");
-                    }
-
-                    if (descripcion.Length < 8)
-                    {
-                        return ErrorValidacion(
-                            "Ingrese una descripción válida para la nueva ficha.");
-                    }
-
-                    IActionResult? permisoAlbum = await ValidarPermisoAsync(
-                        InterfazAlbum,
-                        TipoPermisoApi.Agregar,
-                        cancellationToken);
-
-                    if (permisoAlbum != null)
-                        return permisoAlbum;
-
-                    ficha = await db.RegistrosAlbum.FirstOrDefaultAsync(item =>
-                        item.CategoriaAlbumBotanicoId == categoriaIdFinal.Value &&
-                        item.SubcategoriaAlbumBotanicoId ==
-                            subcategoriaIdFinal.Value &&
-                        item.Titulo == fichaPropuesta &&
-                        item.Activo,
-                        cancellationToken);
-
-                    if (ficha == null)
-                    {
-                        ficha = new AlbumBotanicoCafeJerarquia
-                        {
-                            CategoriaAlbumBotanicoId = categoriaIdFinal.Value,
-                            SubcategoriaAlbumBotanicoId =
-                                subcategoriaIdFinal.Value,
-                            Titulo = fichaPropuesta,
-                            NombreCientifico =
-                                LimpiarOpcional(nombreCientifico, 200),
-                            Descripcion = descripcion,
-                            Sintomas = LimpiarOpcional(request.Sintomas, 4000),
-                            Observaciones =
-                                "Ficha creada desde una clasificación jerárquica aprobada.",
-                            Activo = true,
-                            FechaCreacion = DateTime.Now
-                        };
-
-                        db.RegistrosAlbum.Add(ficha);
-                        await db.SaveChangesAsync(cancellationToken);
-                    }
-                }
-            }
-
-            int? fichaIdFinal = ficha?.AlbumBotanicoCafeId;
-            string fichaNombreFinal = ficha?.Titulo ?? fichaPropuesta;
-            string cientificoFinal = PrimerTexto(
-                ficha?.NombreCientifico,
-                nombreCientifico,
-                foto.ResultadoIA.NombreCientificoSugerido);
-
-            bool nivelesExistentes =
-                categoriaIdFinal.HasValue &&
-                subcategoriaIdFinal.HasValue &&
-                fichaIdFinal.HasValue;
-
             if (!esAprobador)
             {
                 jerarquia.CategoriaAlbumBotanicoIdSugerida =
                     categoriaIdFinal;
-                jerarquia.SubcategoriaAlbumBotanicoIdSugerida =
+                jerarquia.AlbumBotanicoCafeIdSugerido =
                     subcategoriaIdFinal;
-                jerarquia.AlbumBotanicoCafeIdSugerido = fichaIdFinal;
                 jerarquia.CategoriaSugerida = categoriaNombreFinal;
                 jerarquia.SubcategoriaSugerida = subcategoriaNombreFinal;
-                jerarquia.FichaSugerida = fichaNombreFinal;
                 jerarquia.NombreCientificoSugerido = cientificoFinal;
                 jerarquia.MotivoSugerencia = motivo;
                 jerarquia.ProponeCategoria = !categoriaIdFinal.HasValue;
                 jerarquia.ProponeSubcategoria = !subcategoriaIdFinal.HasValue;
-                jerarquia.ProponeFicha = !fichaIdFinal.HasValue;
                 jerarquia.Estado = nivelesExistentes
                     ? "RESUELTA_ANALIZADOR"
                     : "PROPUESTA_ANALIZADOR";
@@ -1124,9 +966,11 @@ namespace CONATRADEC_API.Controllers
 
                 resultado.CategoriaAlbumBotanicoIdSugerida =
                     categoriaIdFinal;
-                resultado.AlbumBotanicoCafeIdSugerido = fichaIdFinal;
+                resultado.AlbumBotanicoCafeIdSugerido =
+                    subcategoriaIdFinal;
                 resultado.CategoriaAlbumSugerida = categoriaNombreFinal;
-                resultado.ClasificacionAlbumSugerida = fichaNombreFinal;
+                resultado.ClasificacionAlbumSugerida =
+                    subcategoriaNombreFinal;
                 resultado.NombreCientificoSugerido = cientificoFinal;
                 resultado.CoincideCatalogoAlbum = nivelesExistentes;
                 resultado.RequiereDecisionClasificacion = !nivelesExistentes;
@@ -1139,26 +983,20 @@ namespace CONATRADEC_API.Controllers
             {
                 if (!nivelesExistentes ||
                     categoria == null ||
-                    subcategoria == null ||
-                    ficha == null)
+                    subcategoria == null)
                 {
                     return ErrorValidacion(
-                        "El aprobador debe dejar una categoría, subcategoría y ficha oficiales seleccionadas o creadas.");
+                        "El aprobador debe dejar una categoría y una subcategoría específica oficiales seleccionadas o creadas.");
                 }
 
                 jerarquia.CategoriaAlbumBotanicoIdSeleccionada =
                     categoria.CategoriaAlbumBotanicoId;
-                jerarquia.SubcategoriaAlbumBotanicoIdSeleccionada =
-                    subcategoria.SubcategoriaAlbumBotanicoId;
                 jerarquia.AlbumBotanicoCafeIdSeleccionado =
-                    ficha.AlbumBotanicoCafeId;
+                    subcategoria.AlbumBotanicoCafeId;
                 jerarquia.CategoriaSeleccionada = categoria.NombreCategoria;
-                jerarquia.SubcategoriaSeleccionada =
-                    subcategoria.NombreSubcategoria;
-                jerarquia.FichaSeleccionada = ficha.Titulo;
+                jerarquia.SubcategoriaSeleccionada = subcategoria.Titulo;
                 jerarquia.ProponeCategoria = false;
                 jerarquia.ProponeSubcategoria = false;
-                jerarquia.ProponeFicha = false;
                 jerarquia.Estado = "RESUELTA_APROBADOR";
 
                 DiagnosticoIAImagenResultadoJerarquiaReferencia resultado =
@@ -1167,10 +1005,11 @@ namespace CONATRADEC_API.Controllers
                 resultado.CategoriaAlbumBotanicoIdSeleccionada =
                     categoria.CategoriaAlbumBotanicoId;
                 resultado.AlbumBotanicoCafeIdSeleccionado =
-                    ficha.AlbumBotanicoCafeId;
+                    subcategoria.AlbumBotanicoCafeId;
                 resultado.CategoriaAlbumSeleccionada =
                     categoria.NombreCategoria;
-                resultado.ClasificacionAlbumSeleccionada = ficha.Titulo;
+                resultado.ClasificacionAlbumSeleccionada =
+                    subcategoria.Titulo;
                 resultado.RequiereDecisionClasificacion = false;
                 resultado.EstadoClasificacionAlbum =
                     "RESUELTA_POR_APROBADOR";
@@ -1185,10 +1024,10 @@ namespace CONATRADEC_API.Controllers
             {
                 success = true,
                 message = esAprobador
-                    ? "La clasificación jerárquica quedó resuelta y vinculada con el Álbum Botánico."
+                    ? "La clasificación quedó vinculada con el Álbum Botánico."
                     : nivelesExistentes
-                        ? "La fotografía quedó vinculada con una jerarquía existente del Álbum Botánico."
-                        : "La propuesta jerárquica fue guardada para decisión del aprobador."
+                        ? "La fotografía quedó vinculada con una subcategoría existente del Álbum Botánico."
+                        : "La propuesta fue guardada para decisión del aprobador."
             });
         }
 
@@ -1197,8 +1036,8 @@ namespace CONATRADEC_API.Controllers
             DiagnosticoIAImagenResultadoJerarquiaReferencia? resultado,
             DiagnosticoIAClasificacionJerarquia? guardada,
             IReadOnlyCollection<CategoriaLigera> categorias,
-            IReadOnlyCollection<SubcategoriaLigera> subcategorias,
-            IReadOnlyDictionary<int, AlbumRegistroJerarquiaDto> fichas)
+            IReadOnlyCollection<AlbumRegistroJerarquiaDto> subcategorias,
+            IReadOnlyDictionary<int, AlbumRegistroJerarquiaDto> porId)
         {
             if (resultado == null)
             {
@@ -1210,20 +1049,20 @@ namespace CONATRADEC_API.Controllers
                 };
             }
 
-            int? fichaId =
+            int? subcategoriaId =
                 guardada?.AlbumBotanicoCafeIdSeleccionado ??
                 guardada?.AlbumBotanicoCafeIdSugerido ??
                 resultado.AlbumBotanicoCafeIdSeleccionado ??
                 resultado.AlbumBotanicoCafeIdSugerido;
 
-            fichas.TryGetValue(
-                fichaId ?? 0,
-                out AlbumRegistroJerarquiaDto? fichaExistente);
+            porId.TryGetValue(
+                subcategoriaId ?? 0,
+                out AlbumRegistroJerarquiaDto? existente);
 
             string categoria = PrimerTexto(
                 guardada?.CategoriaSeleccionada,
                 guardada?.CategoriaSugerida,
-                fichaExistente?.Categoria,
+                existente?.Categoria,
                 resultado.CategoriaAlbumSeleccionada,
                 resultado.CategoriaAlbumSugerida,
                 MapearCategoria(resultado));
@@ -1231,7 +1070,7 @@ namespace CONATRADEC_API.Controllers
             int? categoriaId =
                 guardada?.CategoriaAlbumBotanicoIdSeleccionada ??
                 guardada?.CategoriaAlbumBotanicoIdSugerida ??
-                fichaExistente?.CategoriaAlbumBotanicoId ??
+                existente?.CategoriaAlbumBotanicoId ??
                 resultado.CategoriaAlbumBotanicoIdSeleccionada ??
                 resultado.CategoriaAlbumBotanicoIdSugerida ??
                 BuscarCategoriaId(categoria, categorias);
@@ -1239,35 +1078,30 @@ namespace CONATRADEC_API.Controllers
             string subcategoria = PrimerTexto(
                 guardada?.SubcategoriaSeleccionada,
                 guardada?.SubcategoriaSugerida,
-                fichaExistente?.Subcategoria,
-                SugerirSubcategoria(resultado, foto.TipoFotografia));
+                existente?.Titulo,
+                resultado.ClasificacionAlbumSeleccionada,
+                resultado.ClasificacionAlbumSugerida,
+                SugerirSubcategoriaEspecifica(resultado));
 
-            int? subcategoriaId =
-                guardada?.SubcategoriaAlbumBotanicoIdSeleccionada ??
-                guardada?.SubcategoriaAlbumBotanicoIdSugerida ??
-                fichaExistente?.SubcategoriaAlbumBotanicoId ??
-                BuscarSubcategoriaId(
+            if (!subcategoriaId.HasValue)
+            {
+                subcategoriaId = BuscarSubcategoriaId(
                     categoriaId,
                     subcategoria,
                     subcategorias);
 
-            string ficha = PrimerTexto(
-                guardada?.FichaSeleccionada,
-                guardada?.FichaSugerida,
-                fichaExistente?.Titulo,
-                resultado.ClasificacionAlbumSeleccionada,
-                resultado.ClasificacionAlbumSugerida,
-                resultado.DiagnosticoProbable);
+                if (subcategoriaId.HasValue)
+                    porId.TryGetValue(subcategoriaId.Value, out existente);
+            }
 
             string cientifico = PrimerTexto(
                 guardada?.NombreCientificoSugerido,
-                fichaExistente?.NombreCientifico,
+                existente?.NombreCientifico,
                 resultado.NombreCientificoSugerido,
                 ExtraerNombreCientifico(resultado.DiagnosticoProbable));
 
             bool categoriaExiste = categoriaId.HasValue;
-            bool subcategoriaExiste = subcategoriaId.HasValue;
-            bool fichaExiste = fichaExistente != null;
+            bool subcategoriaExiste = existente != null;
 
             string motivo = PrimerTexto(
                 guardada?.MotivoSugerencia,
@@ -1275,10 +1109,8 @@ namespace CONATRADEC_API.Controllers
                 ConstruirMotivo(
                     categoriaExiste,
                     subcategoriaExiste,
-                    fichaExiste,
                     categoria,
-                    subcategoria,
-                    ficha));
+                    subcategoria));
 
             return new JerarquiaDiagnosticoFotoDto
             {
@@ -1287,20 +1119,107 @@ namespace CONATRADEC_API.Controllers
                 TieneClasificacion =
                     resultado.ImagenValida && resultado.ParecePlantaCafe,
                 CategoriaAlbumBotanicoId = categoriaId,
-                SubcategoriaAlbumBotanicoId = subcategoriaId,
-                AlbumBotanicoCafeId = fichaExistente?.AlbumBotanicoCafeId,
+                SubcategoriaAlbumBotanicoId = existente?.AlbumBotanicoCafeId,
+                AlbumBotanicoCafeId = existente?.AlbumBotanicoCafeId,
                 Categoria = categoria,
                 Subcategoria = subcategoria,
-                Ficha = ficha,
+                Ficha = subcategoria,
                 NombreCientifico = cientifico,
                 Motivo = motivo,
                 CategoriaEsPropuesta = !categoriaExiste,
                 SubcategoriaEsPropuesta = !subcategoriaExiste,
-                FichaEsPropuesta = !fichaExiste,
+                FichaEsPropuesta = !subcategoriaExiste,
                 Estado = guardada?.Estado ??
-                    (fichaExiste && subcategoriaExiste
+                    (subcategoriaExiste
                         ? "COINCIDENCIA_CATALOGO"
                         : "SUGERIDA_IA")
+            };
+        }
+
+        private IQueryable<AlbumBotanicoCafeJerarquia>
+            ConstruirConsultaSubcategorias(bool incluirInactivas)
+        {
+            IQueryable<AlbumBotanicoCafeJerarquia> query = db.Subcategorias
+                .AsNoTracking();
+
+            if (!incluirInactivas)
+            {
+                query = query.Where(item =>
+                    item.Activo && item.Categoria.Activo);
+            }
+
+            return query;
+        }
+
+        private static SubcategoriaAlbumDto CrearSubcategoriaDto(
+            AlbumBotanicoCafeJerarquia item,
+            string categoria) =>
+            new()
+            {
+                SubcategoriaAlbumBotanicoId = item.AlbumBotanicoCafeId,
+                CategoriaAlbumBotanicoId = item.CategoriaAlbumBotanicoId,
+                Categoria = categoria,
+                NombreSubcategoria = item.Titulo,
+                Descripcion = item.Descripcion,
+                Activo = item.Activo,
+                TotalRegistros = 0
+            };
+
+        private static async Task<object> ConstruirPaginaGaleriaAsync(
+            IQueryable<AlbumBotanicoCafeJerarquia> query,
+            int pagina,
+            int tamanoPagina,
+            CancellationToken cancellationToken)
+        {
+            int totalRegistros = await query.CountAsync(cancellationToken);
+            int omitir = (pagina - 1) * tamanoPagina;
+
+            List<AlbumGaleriaJerarquiaFila> items = await query
+                .OrderByDescending(item => item.Activo)
+                .ThenBy(item => item.Categoria.NombreCategoria)
+                .ThenBy(item => item.Titulo)
+                .Skip(omitir)
+                .Take(tamanoPagina)
+                .Select(item => new AlbumGaleriaJerarquiaFila
+                {
+                    AlbumBotanicoCafeId = item.AlbumBotanicoCafeId,
+                    CategoriaAlbumBotanicoId =
+                        item.CategoriaAlbumBotanicoId,
+                    Categoria = item.Categoria.NombreCategoria,
+                    SubcategoriaAlbumBotanicoId = item.AlbumBotanicoCafeId,
+                    Subcategoria = item.Titulo,
+                    Titulo = item.Titulo,
+                    NombreCientifico = item.NombreCientifico,
+                    DescripcionCorta = item.Descripcion.Length > 180
+                        ? item.Descripcion.Substring(0, 180) + "..."
+                        : item.Descripcion,
+                    FotoPortada = item.Fotos
+                        .Where(foto => foto.Activo)
+                        .OrderByDescending(foto => foto.EsPortada)
+                        .ThenBy(foto => foto.Orden)
+                        .Select(foto => foto.RutaFoto)
+                        .FirstOrDefault(),
+                    TotalFotos = item.Fotos.Count(foto => foto.Activo),
+                    Activo = item.Activo,
+                    CategoriaActiva = item.Categoria.Activo,
+                    SubcategoriaActiva = item.Activo,
+                    FechaCreacion = item.FechaCreacion
+                })
+                .ToListAsync(cancellationToken);
+
+            int totalPaginas = totalRegistros == 0
+                ? 0
+                : (int)Math.Ceiling(
+                    totalRegistros / (double)tamanoPagina);
+
+            return new
+            {
+                items,
+                paginaActual = pagina,
+                tamanoPagina,
+                totalRegistros,
+                totalPaginas,
+                tieneMas = pagina < totalPaginas
             };
         }
 
@@ -1312,16 +1231,12 @@ namespace CONATRADEC_API.Controllers
 
             if (texto.Contains("PLAGA"))
                 return "Plagas";
-
             if (texto.Contains("ENFERMED"))
                 return "Enfermedades";
-
             if (texto.Contains("DEFICI") || texto.Contains("NUTRIC"))
                 return "Alteraciones nutricionales";
-
             if (texto.Contains("ESTRES") || texto.Contains("DANO_NO_BIOTICO"))
                 return "Estrés abiótico";
-
             if (texto.Contains("SANA"))
                 return "Plantas sanas";
 
@@ -1329,161 +1244,46 @@ namespace CONATRADEC_API.Controllers
                 .Replace('_', ' ');
         }
 
-        private static string SugerirSubcategoria(
-            DiagnosticoIAImagenResultadoJerarquiaReferencia resultado,
-            string tipoFotografia)
+        private static string SugerirSubcategoriaEspecifica(
+            DiagnosticoIAImagenResultadoJerarquiaReferencia resultado) =>
+            LimpiarNombreDiagnostico(PrimerTexto(
+                resultado.ClasificacionAlbumSeleccionada,
+                resultado.ClasificacionAlbumSugerida,
+                resultado.DiagnosticoProbable,
+                resultado.TipoDiagnostico.Replace('_', ' ')));
+
+        private static string LimpiarNombreDiagnostico(string? valor)
         {
-            string texto = NormalizarComparacion(
-                $"{resultado.CategoriaPrincipal} " +
-                $"{resultado.TipoDiagnostico} " +
-                $"{resultado.DiagnosticoProbable} " +
-                $"{resultado.CategoriasSecundariasJson}");
+            string texto = (valor ?? string.Empty).Trim();
+            int parentesis = texto.IndexOf('(');
 
-            string categoria = MapearCategoria(resultado);
+            if (parentesis > 0)
+                texto = texto[..parentesis].Trim();
 
-            if (EsIgual(categoria, "Plagas"))
-            {
-                if (ContieneAlguno(texto, "ACARO", "ARANITA", "TARSONEM"))
-                    return "Ácaros";
+            int separador = texto.IndexOf(" - ", StringComparison.Ordinal);
+            if (separador > 0)
+                texto = texto[..separador].Trim();
 
-                if (ContieneAlguno(texto, "NEMATOD"))
-                    return "Nematodos";
-
-                if (ContieneAlguno(texto, "BABOSA", "CARACOL", "MOLUSC"))
-                    return "Moluscos";
-
-                if (ContieneAlguno(
-                        texto,
-                        "INSECT",
-                        "MINADOR",
-                        "BROCA",
-                        "COCHINILLA",
-                        "PULGON",
-                        "TRIPS",
-                        "MOSCA",
-                        "GUSANO",
-                        "LARVA",
-                        "ESCARABAJO"))
-                {
-                    return "Insectos";
-                }
-
-                return "Otras plagas";
-            }
-
-            if (EsIgual(categoria, "Enfermedades"))
-            {
-                if (ContieneAlguno(
-                        texto,
-                        "HONGO",
-                        "FUNG",
-                        "ROYA",
-                        "CERCOSPORA",
-                        "MANCHA DE HIERRO",
-                        "OJO DE GALLO",
-                        "ANTRACNOSIS",
-                        "PHOMA",
-                        "MYCENA"))
-                {
-                    return "Enfermedades fúngicas";
-                }
-
-                if (ContieneAlguno(texto, "BACTER"))
-                    return "Enfermedades bacterianas";
-
-                if (ContieneAlguno(texto, "VIRUS", "VIRAL"))
-                    return "Enfermedades virales";
-
-                return "Otras enfermedades";
-            }
-
-            if (EsIgual(categoria, "Alteraciones nutricionales"))
-            {
-                if (ContieneAlguno(
-                        texto,
-                        "NITROGEN",
-                        "FOSFOR",
-                        "POTAS",
-                        "CALCIO",
-                        "MAGNES",
-                        "AZUFRE"))
-                {
-                    return "Deficiencias de macronutrientes";
-                }
-
-                if (ContieneAlguno(
-                        texto,
-                        "HIERRO",
-                        "ZINC",
-                        "BORO",
-                        "MANGAN",
-                        "COBRE",
-                        "MOLIBD"))
-                {
-                    return "Deficiencias de micronutrientes";
-                }
-
-                return "Otras alteraciones nutricionales";
-            }
-
-            if (EsIgual(categoria, "Estrés abiótico"))
-            {
-                if (ContieneAlguno(texto, "AGUA", "SEQUIA", "HIDRIC", "ENCHARCAM"))
-                    return "Estrés hídrico";
-
-                if (ContieneAlguno(texto, "CALOR", "FRIO", "TEMPERAT"))
-                    return "Estrés térmico";
-
-                if (ContieneAlguno(texto, "HERBIC", "QUIMIC", "FITOTOX"))
-                    return "Daño químico";
-
-                return "Otros daños no bióticos";
-            }
-
-            if (EsIgual(categoria, "Plantas sanas"))
-            {
-                string parte = NormalizarComparacion(
-                    $"{resultado.PartePlanta} {tipoFotografia}");
-
-                if (parte.Contains("HOJA"))
-                    return "Hojas sanas";
-                if (parte.Contains("FRUTO"))
-                    return "Frutos sanos";
-                if (parte.Contains("TALLO") || parte.Contains("RAMA"))
-                    return "Tallos y ramas sanas";
-
-                return "Planta completa";
-            }
-
-            return PrimerTexto(
-                resultado.TipoDiagnostico.Replace('_', ' '),
-                "Sin subcategoría definida");
+            return texto;
         }
 
         private static string ConstruirMotivo(
             bool categoriaExiste,
             bool subcategoriaExiste,
-            bool fichaExiste,
             string categoria,
-            string subcategoria,
-            string ficha)
+            string subcategoria)
         {
             if (!categoriaExiste)
             {
-                return $"No existe una categoría activa compatible. Se propone crear {categoria}, luego {subcategoria} y la ficha {ficha}.";
+                return $"No existe una categoría activa compatible. Se propone crear {categoria} y la subcategoría específica {subcategoria}.";
             }
 
             if (!subcategoriaExiste)
             {
-                return $"La categoría {categoria} existe, pero no hay una subcategoría activa compatible. Se propone crear {subcategoria} y después la ficha {ficha}.";
+                return $"La categoría {categoria} existe, pero no hay una subcategoría específica compatible. Se propone crear {subcategoria}.";
             }
 
-            if (!fichaExiste)
-            {
-                return $"La categoría {categoria} y la subcategoría {subcategoria} existen, pero no hay una ficha compatible. Se propone crear {ficha}.";
-            }
-
-            return $"La fotografía coincide con {categoria} → {subcategoria} → {ficha}.";
+            return $"La fotografía coincide con {categoria} → {subcategoria}.";
         }
 
         private static int? BuscarCategoriaId(
@@ -1504,88 +1304,23 @@ namespace CONATRADEC_API.Controllers
         private static int? BuscarSubcategoriaId(
             int? categoriaId,
             string nombre,
-            IEnumerable<SubcategoriaLigera> subcategorias)
+            IEnumerable<AlbumRegistroJerarquiaDto> subcategorias)
         {
             if (!categoriaId.HasValue)
                 return null;
 
             string buscado = NormalizarComparacion(nombre);
 
-            foreach (SubcategoriaLigera subcategoria in subcategorias)
+            foreach (AlbumRegistroJerarquiaDto subcategoria in subcategorias)
             {
                 if (subcategoria.CategoriaAlbumBotanicoId == categoriaId.Value &&
-                    NormalizarComparacion(subcategoria.NombreSubcategoria) == buscado)
+                    NormalizarComparacion(subcategoria.Titulo) == buscado)
                 {
-                    return subcategoria.SubcategoriaAlbumBotanicoId;
+                    return subcategoria.AlbumBotanicoCafeId;
                 }
             }
 
             return null;
-        }
-
-        private static async Task<object> ConstruirPaginaGaleriaAsync(
-            IQueryable<AlbumBotanicoCafeJerarquia> query,
-            int pagina,
-            int tamanoPagina,
-            CancellationToken cancellationToken)
-        {
-            int totalRegistros = await query.CountAsync(cancellationToken);
-            int omitir = (pagina - 1) * tamanoPagina;
-
-            List<AlbumGaleriaJerarquiaFila> items = await query
-                .OrderByDescending(item => item.Activo)
-                .ThenBy(item => item.Categoria.NombreCategoria)
-                .ThenBy(item => item.Subcategoria != null
-                    ? item.Subcategoria.NombreSubcategoria
-                    : string.Empty)
-                .ThenBy(item => item.Titulo)
-                .Skip(omitir)
-                .Take(tamanoPagina)
-                .Select(item => new AlbumGaleriaJerarquiaFila
-                {
-                    AlbumBotanicoCafeId = item.AlbumBotanicoCafeId,
-                    CategoriaAlbumBotanicoId =
-                        item.CategoriaAlbumBotanicoId,
-                    Categoria = item.Categoria.NombreCategoria,
-                    SubcategoriaAlbumBotanicoId =
-                        item.SubcategoriaAlbumBotanicoId,
-                    Subcategoria = item.Subcategoria != null
-                        ? item.Subcategoria.NombreSubcategoria
-                        : string.Empty,
-                    Titulo = item.Titulo,
-                    NombreCientifico = item.NombreCientifico,
-                    DescripcionCorta = item.Descripcion.Length > 180
-                        ? item.Descripcion.Substring(0, 180) + "..."
-                        : item.Descripcion,
-                    FotoPortada = item.Fotos
-                        .Where(foto => foto.Activo)
-                        .OrderByDescending(foto => foto.EsPortada)
-                        .ThenBy(foto => foto.Orden)
-                        .Select(foto => foto.RutaFoto)
-                        .FirstOrDefault(),
-                    TotalFotos = item.Fotos.Count(foto => foto.Activo),
-                    Activo = item.Activo,
-                    CategoriaActiva = item.Categoria.Activo,
-                    SubcategoriaActiva = item.Subcategoria == null ||
-                        item.Subcategoria.Activo,
-                    FechaCreacion = item.FechaCreacion
-                })
-                .ToListAsync(cancellationToken);
-
-            int totalPaginas = totalRegistros == 0
-                ? 0
-                : (int)Math.Ceiling(
-                    totalRegistros / (double)tamanoPagina);
-
-            return new
-            {
-                items,
-                paginaActual = pagina,
-                tamanoPagina,
-                totalRegistros,
-                totalPaginas,
-                tieneMas = pagina < totalPaginas
-            };
         }
 
         private async Task<IActionResult?> ValidarLecturaDiagnosticoAsync(
@@ -1616,7 +1351,7 @@ namespace CONATRADEC_API.Controllers
                 {
                     success = false,
                     message =
-                        "No tiene permiso para consultar esta clasificación jerárquica."
+                        "No tiene permiso para consultar esta clasificación."
                 });
         }
 
@@ -1714,19 +1449,6 @@ namespace CONATRADEC_API.Controllers
                 .Normalize(NormalizationForm.FormC);
         }
 
-        private static bool ContieneAlguno(
-            string texto,
-            params string[] valores) =>
-            valores.Any(valor => texto.Contains(
-                NormalizarComparacion(valor),
-                StringComparison.Ordinal));
-
-        private static bool EsIgual(string izquierda, string derecha) =>
-            string.Equals(
-                NormalizarComparacion(izquierda),
-                NormalizarComparacion(derecha),
-                StringComparison.Ordinal);
-
         private static string ExtraerNombreCientifico(string? diagnostico)
         {
             string texto = diagnostico ?? string.Empty;
@@ -1812,6 +1534,7 @@ namespace CONATRADEC_API.Controllers
         public bool FichaEsPropuesta { get; set; }
         public string Estado { get; set; } = string.Empty;
     }
+
     public sealed class AlbumGaleriaJerarquiaFila
     {
         public int AlbumBotanicoCafeId { get; set; }
@@ -1835,12 +1558,4 @@ namespace CONATRADEC_API.Controllers
         public int CategoriaAlbumBotanicoId { get; set; }
         public string NombreCategoria { get; set; } = string.Empty;
     }
-
-    internal sealed class SubcategoriaLigera
-    {
-        public int SubcategoriaAlbumBotanicoId { get; set; }
-        public int CategoriaAlbumBotanicoId { get; set; }
-        public string NombreSubcategoria { get; set; } = string.Empty;
-    }
-
 }

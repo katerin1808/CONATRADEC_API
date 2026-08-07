@@ -1,17 +1,15 @@
 using CONATRADEC_API.Models;
 using Microsoft.EntityFrameworkCore;
-using System.Data.Common;
 
 namespace CONATRADEC_API.Infrastructure
 {
     /// <summary>
-    /// Inicializa de forma idempotente la jerarquía del Álbum Botánico:
-    /// Categoría -> Subcategoría -> Ficha -> Fotografías.
+    /// Asegura que el Álbum Botánico utilice únicamente la estructura:
+    /// Categoría -> Subcategoría específica -> Fotografías.
     ///
-    /// La inicialización conserva toda la información existente, crea las
-    /// subcategorías base y clasifica las fichas anteriores usando reglas
-    /// conservadoras. Los administradores pueden corregir después cualquier
-    /// asignación desde el formulario del álbum.
+    /// AlbumBotanicoCafe es la subcategoría específica. La migración conserva
+    /// sus datos y fotografías, elimina la tabla intermedia anterior y limpia
+    /// las columnas históricas que representaban un tercer nivel.
     /// </summary>
     public sealed class AlbumJerarquiaDatabaseInitializer
     {
@@ -30,314 +28,756 @@ namespace CONATRADEC_API.Infrastructure
             CancellationToken cancellationToken = default)
         {
             const string sql = """
-IF OBJECT_ID(N'dbo.SubcategoriaAlbumBotanico', N'U') IS NULL
-BEGIN
-    CREATE TABLE dbo.SubcategoriaAlbumBotanico
-    (
-        SubcategoriaAlbumBotanicoId INT IDENTITY(1,1) NOT NULL
-            CONSTRAINT PK_SubcategoriaAlbumBotanico PRIMARY KEY,
-        CategoriaAlbumBotanicoId INT NOT NULL,
-        NombreSubcategoria NVARCHAR(120) NOT NULL,
-        Descripcion NVARCHAR(600) NULL,
-        Activo BIT NOT NULL
-            CONSTRAINT DF_SubcategoriaAlbumBotanico_Activo DEFAULT (1),
-        FechaCreacionUtc DATETIME2 NOT NULL
-            CONSTRAINT DF_SubcategoriaAlbumBotanico_FechaCreacionUtc
-            DEFAULT (SYSUTCDATETIME()),
-        FechaActualizacionUtc DATETIME2 NULL,
-        CONSTRAINT FK_SubcategoriaAlbumBotanico_Categoria
-            FOREIGN KEY (CategoriaAlbumBotanicoId)
-            REFERENCES dbo.CategoriaAlbumBotanico(categoriaAlbumBotanicoId)
-    );
-END;
+/*
+    CONATRADEC - Migración limpia del Álbum Botánico
 
-IF NOT EXISTS
-(
-    SELECT 1
-    FROM sys.indexes
-    WHERE name = N'UX_SubcategoriaAlbumBotanico_Categoria_Nombre'
-      AND object_id = OBJECT_ID(N'dbo.SubcategoriaAlbumBotanico')
-)
-BEGIN
-    CREATE UNIQUE INDEX UX_SubcategoriaAlbumBotanico_Categoria_Nombre
-        ON dbo.SubcategoriaAlbumBotanico
+    Estructura física y funcional final:
+        CategoriaAlbumBotanico
+            -> AlbumBotanicoCafe (subcategoría específica)
+                -> AlbumBotanicoCafeFoto
+
+    AlbumBotanicoCafe conserva el nombre común, nombre científico,
+    descripción, síntomas, causas, recomendaciones y observaciones. Por eso
+    representa directamente la subcategoría específica.
+
+    La migración es idempotente. Conserva categorías, subcategorías
+    específicas, fotografías y trazabilidad de inspecciones. Elimina el nivel
+    intermedio artificial y las columnas históricas que lo representaban.
+*/
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+
+BEGIN TRY
+    BEGIN TRANSACTION;
+
+    /*
+        1. Asegura la tabla limpia de trazabilidad para la clasificación:
+           Categoría -> Subcategoría específica.
+    */
+    IF OBJECT_ID(N'dbo.diagnosticoIAClasificacionJerarquia', N'U') IS NULL
+    BEGIN
+        CREATE TABLE dbo.diagnosticoIAClasificacionJerarquia
         (
-            CategoriaAlbumBotanicoId,
-            NombreSubcategoria
+            DiagnosticoIAClasificacionJerarquiaId INT IDENTITY(1,1) NOT NULL
+                CONSTRAINT PK_diagnosticoIAClasificacionJerarquia PRIMARY KEY,
+            DiagnosticoIAImagenId INT NOT NULL,
+            CategoriaAlbumBotanicoIdSugerida INT NULL,
+            AlbumBotanicoCafeIdSugerido INT NULL,
+            CategoriaSugerida NVARCHAR(150) NOT NULL
+                CONSTRAINT DF_diagnosticoIAJerarquia_CategoriaSugerida
+                DEFAULT (N''),
+            SubcategoriaSugerida NVARCHAR(200) NOT NULL
+                CONSTRAINT DF_diagnosticoIAJerarquia_SubcategoriaSugerida
+                DEFAULT (N''),
+            NombreCientificoSugerido NVARCHAR(200) NOT NULL
+                CONSTRAINT DF_diagnosticoIAJerarquia_NombreCientifico
+                DEFAULT (N''),
+            MotivoSugerencia NVARCHAR(1200) NOT NULL
+                CONSTRAINT DF_diagnosticoIAJerarquia_Motivo
+                DEFAULT (N''),
+            CategoriaAlbumBotanicoIdSeleccionada INT NULL,
+            AlbumBotanicoCafeIdSeleccionado INT NULL,
+            CategoriaSeleccionada NVARCHAR(150) NOT NULL
+                CONSTRAINT DF_diagnosticoIAJerarquia_CategoriaSeleccionada
+                DEFAULT (N''),
+            SubcategoriaSeleccionada NVARCHAR(200) NOT NULL
+                CONSTRAINT DF_diagnosticoIAJerarquia_SubcategoriaSeleccionada
+                DEFAULT (N''),
+            ProponeCategoria BIT NOT NULL
+                CONSTRAINT DF_diagnosticoIAJerarquia_ProponeCategoria
+                DEFAULT (0),
+            ProponeSubcategoria BIT NOT NULL
+                CONSTRAINT DF_diagnosticoIAJerarquia_ProponeSubcategoria
+                DEFAULT (0),
+            Estado NVARCHAR(40) NOT NULL
+                CONSTRAINT DF_diagnosticoIAJerarquia_Estado
+                DEFAULT (N'SUGERIDA_IA'),
+            UsuarioActualizacionId INT NULL,
+            FechaActualizacionUtc DATETIME2 NOT NULL
+                CONSTRAINT DF_diagnosticoIAJerarquia_Fecha
+                DEFAULT (SYSUTCDATETIME())
         );
-END;
+    END;
 
-IF COL_LENGTH(N'dbo.AlbumBotanicoCafe', N'subcategoriaAlbumBotanicoId') IS NULL
-BEGIN
-    ALTER TABLE dbo.AlbumBotanicoCafe
-        ADD subcategoriaAlbumBotanicoId INT NULL;
-END;
+    /* Completa instalaciones que tengan una versión parcial de la tabla. */
+    IF COL_LENGTH(
+        N'dbo.diagnosticoIAClasificacionJerarquia',
+        N'CategoriaAlbumBotanicoIdSugerida') IS NULL
+    BEGIN
+        ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia
+            ADD CategoriaAlbumBotanicoIdSugerida INT NULL;
+    END;
 
-IF NOT EXISTS
-(
-    SELECT 1
-    FROM sys.foreign_keys
-    WHERE name = N'FK_AlbumBotanicoCafe_SubcategoriaAlbumBotanico'
-)
-BEGIN
-    ALTER TABLE dbo.AlbumBotanicoCafe WITH CHECK
-        ADD CONSTRAINT FK_AlbumBotanicoCafe_SubcategoriaAlbumBotanico
-        FOREIGN KEY (subcategoriaAlbumBotanicoId)
-        REFERENCES dbo.SubcategoriaAlbumBotanico(SubcategoriaAlbumBotanicoId);
-END;
+    IF COL_LENGTH(
+        N'dbo.diagnosticoIAClasificacionJerarquia',
+        N'AlbumBotanicoCafeIdSugerido') IS NULL
+    BEGIN
+        ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia
+            ADD AlbumBotanicoCafeIdSugerido INT NULL;
+    END;
 
-IF NOT EXISTS
-(
-    SELECT 1
-    FROM sys.indexes
-    WHERE name = N'IX_AlbumBotanicoCafe_SubcategoriaAlbumBotanicoId'
-      AND object_id = OBJECT_ID(N'dbo.AlbumBotanicoCafe')
-)
-BEGIN
-    CREATE INDEX IX_AlbumBotanicoCafe_SubcategoriaAlbumBotanicoId
-        ON dbo.AlbumBotanicoCafe(subcategoriaAlbumBotanicoId);
-END;
+    IF COL_LENGTH(
+        N'dbo.diagnosticoIAClasificacionJerarquia',
+        N'CategoriaSugerida') IS NULL
+    BEGIN
+        ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia
+            ADD CategoriaSugerida NVARCHAR(150) NOT NULL
+                CONSTRAINT DF_diagnosticoIAJerarquia_CategoriaSugerida
+                DEFAULT (N'');
+    END;
 
-IF OBJECT_ID(N'dbo.diagnosticoIAClasificacionJerarquia', N'U') IS NULL
-BEGIN
-    CREATE TABLE dbo.diagnosticoIAClasificacionJerarquia
+    IF COL_LENGTH(
+        N'dbo.diagnosticoIAClasificacionJerarquia',
+        N'SubcategoriaSugerida') IS NULL
+    BEGIN
+        ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia
+            ADD SubcategoriaSugerida NVARCHAR(200) NOT NULL
+                CONSTRAINT DF_diagnosticoIAJerarquia_SubcategoriaSugerida
+                DEFAULT (N'');
+    END;
+
+    IF COL_LENGTH(
+        N'dbo.diagnosticoIAClasificacionJerarquia',
+        N'NombreCientificoSugerido') IS NULL
+    BEGIN
+        ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia
+            ADD NombreCientificoSugerido NVARCHAR(200) NOT NULL
+                CONSTRAINT DF_diagnosticoIAJerarquia_NombreCientifico
+                DEFAULT (N'');
+    END;
+
+    IF COL_LENGTH(
+        N'dbo.diagnosticoIAClasificacionJerarquia',
+        N'MotivoSugerencia') IS NULL
+    BEGIN
+        ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia
+            ADD MotivoSugerencia NVARCHAR(1200) NOT NULL
+                CONSTRAINT DF_diagnosticoIAJerarquia_Motivo
+                DEFAULT (N'');
+    END;
+
+    IF COL_LENGTH(
+        N'dbo.diagnosticoIAClasificacionJerarquia',
+        N'CategoriaAlbumBotanicoIdSeleccionada') IS NULL
+    BEGIN
+        ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia
+            ADD CategoriaAlbumBotanicoIdSeleccionada INT NULL;
+    END;
+
+    IF COL_LENGTH(
+        N'dbo.diagnosticoIAClasificacionJerarquia',
+        N'AlbumBotanicoCafeIdSeleccionado') IS NULL
+    BEGIN
+        ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia
+            ADD AlbumBotanicoCafeIdSeleccionado INT NULL;
+    END;
+
+    IF COL_LENGTH(
+        N'dbo.diagnosticoIAClasificacionJerarquia',
+        N'CategoriaSeleccionada') IS NULL
+    BEGIN
+        ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia
+            ADD CategoriaSeleccionada NVARCHAR(150) NOT NULL
+                CONSTRAINT DF_diagnosticoIAJerarquia_CategoriaSeleccionada
+                DEFAULT (N'');
+    END;
+
+    IF COL_LENGTH(
+        N'dbo.diagnosticoIAClasificacionJerarquia',
+        N'SubcategoriaSeleccionada') IS NULL
+    BEGIN
+        ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia
+            ADD SubcategoriaSeleccionada NVARCHAR(200) NOT NULL
+                CONSTRAINT DF_diagnosticoIAJerarquia_SubcategoriaSeleccionada
+                DEFAULT (N'');
+    END;
+
+    IF COL_LENGTH(
+        N'dbo.diagnosticoIAClasificacionJerarquia',
+        N'ProponeCategoria') IS NULL
+    BEGIN
+        ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia
+            ADD ProponeCategoria BIT NOT NULL
+                CONSTRAINT DF_diagnosticoIAJerarquia_ProponeCategoria
+                DEFAULT (0);
+    END;
+
+    IF COL_LENGTH(
+        N'dbo.diagnosticoIAClasificacionJerarquia',
+        N'ProponeSubcategoria') IS NULL
+    BEGIN
+        ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia
+            ADD ProponeSubcategoria BIT NOT NULL
+                CONSTRAINT DF_diagnosticoIAJerarquia_ProponeSubcategoria
+                DEFAULT (0);
+    END;
+
+    IF COL_LENGTH(
+        N'dbo.diagnosticoIAClasificacionJerarquia',
+        N'Estado') IS NULL
+    BEGIN
+        ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia
+            ADD Estado NVARCHAR(40) NOT NULL
+                CONSTRAINT DF_diagnosticoIAJerarquia_Estado
+                DEFAULT (N'SUGERIDA_IA');
+    END;
+
+    IF COL_LENGTH(
+        N'dbo.diagnosticoIAClasificacionJerarquia',
+        N'UsuarioActualizacionId') IS NULL
+    BEGIN
+        ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia
+            ADD UsuarioActualizacionId INT NULL;
+    END;
+
+    IF COL_LENGTH(
+        N'dbo.diagnosticoIAClasificacionJerarquia',
+        N'FechaActualizacionUtc') IS NULL
+    BEGIN
+        ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia
+            ADD FechaActualizacionUtc DATETIME2 NOT NULL
+                CONSTRAINT DF_diagnosticoIAJerarquia_Fecha
+                DEFAULT (SYSUTCDATETIME());
+    END;
+
+    /*
+        Amplía los nombres específicos a 200 caracteres antes de copiar los
+        valores históricos de ficha.
+    */
+    UPDATE dbo.diagnosticoIAClasificacionJerarquia
+    SET SubcategoriaSugerida = N''
+    WHERE SubcategoriaSugerida IS NULL;
+
+    UPDATE dbo.diagnosticoIAClasificacionJerarquia
+    SET SubcategoriaSeleccionada = N''
+    WHERE SubcategoriaSeleccionada IS NULL;
+
+    ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia
+        ALTER COLUMN SubcategoriaSugerida NVARCHAR(200) NOT NULL;
+
+    ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia
+        ALTER COLUMN SubcategoriaSeleccionada NVARCHAR(200) NOT NULL;
+
+    /*
+        2. Traslada valores históricos de "ficha" a la subcategoría específica
+           antes de eliminar las columnas del nivel anterior.
+    */
+    IF COL_LENGTH(
+        N'dbo.diagnosticoIAClasificacionJerarquia',
+        N'FichaSugerida') IS NOT NULL
+    BEGIN
+        EXEC sys.sp_executesql N'
+            UPDATE dbo.diagnosticoIAClasificacionJerarquia
+            SET SubcategoriaSugerida = COALESCE(
+                NULLIF(LTRIM(RTRIM(FichaSugerida)), N''''),
+                NULLIF(LTRIM(RTRIM(SubcategoriaSugerida)), N''''),
+                N'''');';
+    END;
+
+    IF COL_LENGTH(
+        N'dbo.diagnosticoIAClasificacionJerarquia',
+        N'FichaSeleccionada') IS NOT NULL
+    BEGIN
+        EXEC sys.sp_executesql N'
+            UPDATE dbo.diagnosticoIAClasificacionJerarquia
+            SET SubcategoriaSeleccionada = COALESCE(
+                NULLIF(LTRIM(RTRIM(FichaSeleccionada)), N''''),
+                NULLIF(LTRIM(RTRIM(SubcategoriaSeleccionada)), N''''),
+                N'''');';
+    END;
+
+    IF COL_LENGTH(
+        N'dbo.diagnosticoIAClasificacionJerarquia',
+        N'ProponeFicha') IS NOT NULL
+    BEGIN
+        EXEC sys.sp_executesql N'
+            UPDATE dbo.diagnosticoIAClasificacionJerarquia
+            SET ProponeSubcategoria = CASE
+                WHEN ProponeFicha = 1 OR ProponeSubcategoria = 1 THEN 1
+                ELSE 0
+            END;';
+    END;
+
+    /*
+        3. Elimina restricciones e índices vinculados al nivel intermedio de
+           AlbumBotanicoCafe.
+    */
+    DECLARE @sql NVARCHAR(MAX) = N'';
+
+    SELECT @sql = @sql +
+        N'ALTER TABLE ' +
+        QUOTENAME(OBJECT_SCHEMA_NAME(fk.parent_object_id)) + N'.' +
+        QUOTENAME(OBJECT_NAME(fk.parent_object_id)) +
+        N' DROP CONSTRAINT ' + QUOTENAME(fk.name) + N';' + CHAR(10)
+    FROM sys.foreign_keys fk
+    WHERE fk.referenced_object_id =
+            OBJECT_ID(N'dbo.SubcategoriaAlbumBotanico')
+       OR (
+            fk.parent_object_id = OBJECT_ID(N'dbo.AlbumBotanicoCafe')
+            AND EXISTS
+            (
+                SELECT 1
+                FROM sys.foreign_key_columns columna
+                WHERE columna.constraint_object_id = fk.object_id
+                  AND COL_NAME(
+                        columna.parent_object_id,
+                        columna.parent_column_id) =
+                        N'subcategoriaAlbumBotanicoId'
+            )
+       );
+
+    IF LEN(@sql) > 0
+        EXEC sys.sp_executesql @sql;
+
+    SET @sql = N'';
+
+    SELECT @sql = @sql +
+        N'DROP INDEX ' + QUOTENAME(indice.name) +
+        N' ON dbo.AlbumBotanicoCafe;' + CHAR(10)
+    FROM sys.indexes indice
+    WHERE indice.object_id = OBJECT_ID(N'dbo.AlbumBotanicoCafe')
+      AND indice.is_primary_key = 0
+      AND indice.is_unique_constraint = 0
+      AND EXISTS
+      (
+          SELECT 1
+          FROM sys.index_columns columnaIndice
+          INNER JOIN sys.columns columna
+              ON columna.object_id = columnaIndice.object_id
+             AND columna.column_id = columnaIndice.column_id
+          WHERE columnaIndice.object_id = indice.object_id
+            AND columnaIndice.index_id = indice.index_id
+            AND columna.name = N'subcategoriaAlbumBotanicoId'
+      );
+
+    IF LEN(@sql) > 0
+        EXEC sys.sp_executesql @sql;
+
+    /* Restricciones DEFAULT de la columna que será retirada. */
+    SET @sql = N'';
+
+    SELECT @sql = @sql +
+        N'ALTER TABLE dbo.AlbumBotanicoCafe DROP CONSTRAINT ' +
+        QUOTENAME(restriccion.name) + N';' + CHAR(10)
+    FROM sys.default_constraints restriccion
+    INNER JOIN sys.columns columna
+        ON columna.object_id = restriccion.parent_object_id
+       AND columna.column_id = restriccion.parent_column_id
+    WHERE restriccion.parent_object_id =
+            OBJECT_ID(N'dbo.AlbumBotanicoCafe')
+      AND columna.name = N'subcategoriaAlbumBotanicoId';
+
+    IF LEN(@sql) > 0
+        EXEC sys.sp_executesql @sql;
+
+    /* Restricciones CHECK que mencionen la columna anterior. */
+    SET @sql = N'';
+
+    SELECT @sql = @sql +
+        N'ALTER TABLE dbo.AlbumBotanicoCafe DROP CONSTRAINT ' +
+        QUOTENAME(restriccion.name) + N';' + CHAR(10)
+    FROM sys.check_constraints restriccion
+    WHERE restriccion.parent_object_id =
+            OBJECT_ID(N'dbo.AlbumBotanicoCafe')
+      AND restriccion.definition LIKE
+            N'%subcategoriaAlbumBotanicoId%';
+
+    IF LEN(@sql) > 0
+        EXEC sys.sp_executesql @sql;
+
+    /*
+        4. Elimina la columna y la tabla intermedia. A partir de aquí no existe
+           grupo oculto ni nivel adicional en el esquema del álbum.
+    */
+    IF COL_LENGTH(
+        N'dbo.AlbumBotanicoCafe',
+        N'subcategoriaAlbumBotanicoId') IS NOT NULL
+    BEGIN
+        ALTER TABLE dbo.AlbumBotanicoCafe
+            DROP COLUMN subcategoriaAlbumBotanicoId;
+    END;
+
+    IF OBJECT_ID(N'dbo.SubcategoriaAlbumBotanico', N'U') IS NOT NULL
+    BEGIN
+        DROP TABLE dbo.SubcategoriaAlbumBotanico;
+    END;
+
+    /*
+        5. Limpia la trazabilidad y elimina las columnas históricas que
+           representaban el nivel "ficha".
+    */
+    IF OBJECT_ID(
+        N'dbo.diagnosticoIAClasificacionJerarquia',
+        N'U') IS NOT NULL
+    BEGIN
+        UPDATE clasificacion
+        SET CategoriaAlbumBotanicoIdSugerida = NULL
+        FROM dbo.diagnosticoIAClasificacionJerarquia clasificacion
+        WHERE clasificacion.CategoriaAlbumBotanicoIdSugerida IS NOT NULL
+          AND NOT EXISTS
+          (
+              SELECT 1
+              FROM dbo.CategoriaAlbumBotanico categoria
+              WHERE categoria.categoriaAlbumBotanicoId =
+                    clasificacion.CategoriaAlbumBotanicoIdSugerida
+          );
+
+        UPDATE clasificacion
+        SET CategoriaAlbumBotanicoIdSeleccionada = NULL
+        FROM dbo.diagnosticoIAClasificacionJerarquia clasificacion
+        WHERE clasificacion.CategoriaAlbumBotanicoIdSeleccionada IS NOT NULL
+          AND NOT EXISTS
+          (
+              SELECT 1
+              FROM dbo.CategoriaAlbumBotanico categoria
+              WHERE categoria.categoriaAlbumBotanicoId =
+                    clasificacion.CategoriaAlbumBotanicoIdSeleccionada
+          );
+
+        UPDATE clasificacion
+        SET AlbumBotanicoCafeIdSugerido = NULL
+        FROM dbo.diagnosticoIAClasificacionJerarquia clasificacion
+        WHERE clasificacion.AlbumBotanicoCafeIdSugerido IS NOT NULL
+          AND NOT EXISTS
+          (
+              SELECT 1
+              FROM dbo.AlbumBotanicoCafe subcategoria
+              WHERE subcategoria.albumBotanicoCafeId =
+                    clasificacion.AlbumBotanicoCafeIdSugerido
+          );
+
+        UPDATE clasificacion
+        SET AlbumBotanicoCafeIdSeleccionado = NULL
+        FROM dbo.diagnosticoIAClasificacionJerarquia clasificacion
+        WHERE clasificacion.AlbumBotanicoCafeIdSeleccionado IS NOT NULL
+          AND NOT EXISTS
+          (
+              SELECT 1
+              FROM dbo.AlbumBotanicoCafe subcategoria
+              WHERE subcategoria.albumBotanicoCafeId =
+                    clasificacion.AlbumBotanicoCafeIdSeleccionado
+          );
+    END;
+
+    DECLARE @columnasLegadas TABLE
     (
-        DiagnosticoIAClasificacionJerarquiaId INT IDENTITY(1,1) NOT NULL
-            CONSTRAINT PK_diagnosticoIAClasificacionJerarquia PRIMARY KEY,
-        DiagnosticoIAImagenId INT NOT NULL,
-        CategoriaAlbumBotanicoIdSugerida INT NULL,
-        SubcategoriaAlbumBotanicoIdSugerida INT NULL,
-        AlbumBotanicoCafeIdSugerido INT NULL,
-        CategoriaSugerida NVARCHAR(150) NOT NULL
-            CONSTRAINT DF_diagnosticoIAJerarquia_CategoriaSugerida DEFAULT (N''),
-        SubcategoriaSugerida NVARCHAR(150) NOT NULL
-            CONSTRAINT DF_diagnosticoIAJerarquia_SubcategoriaSugerida DEFAULT (N''),
-        FichaSugerida NVARCHAR(200) NOT NULL
-            CONSTRAINT DF_diagnosticoIAJerarquia_FichaSugerida DEFAULT (N''),
-        NombreCientificoSugerido NVARCHAR(200) NOT NULL
-            CONSTRAINT DF_diagnosticoIAJerarquia_NombreCientifico DEFAULT (N''),
-        MotivoSugerencia NVARCHAR(1200) NOT NULL
-            CONSTRAINT DF_diagnosticoIAJerarquia_Motivo DEFAULT (N''),
-        CategoriaAlbumBotanicoIdSeleccionada INT NULL,
-        SubcategoriaAlbumBotanicoIdSeleccionada INT NULL,
-        AlbumBotanicoCafeIdSeleccionado INT NULL,
-        CategoriaSeleccionada NVARCHAR(150) NOT NULL
-            CONSTRAINT DF_diagnosticoIAJerarquia_CategoriaSeleccionada DEFAULT (N''),
-        SubcategoriaSeleccionada NVARCHAR(150) NOT NULL
-            CONSTRAINT DF_diagnosticoIAJerarquia_SubcategoriaSeleccionada DEFAULT (N''),
-        FichaSeleccionada NVARCHAR(200) NOT NULL
-            CONSTRAINT DF_diagnosticoIAJerarquia_FichaSeleccionada DEFAULT (N''),
-        ProponeCategoria BIT NOT NULL
-            CONSTRAINT DF_diagnosticoIAJerarquia_ProponeCategoria DEFAULT (0),
-        ProponeSubcategoria BIT NOT NULL
-            CONSTRAINT DF_diagnosticoIAJerarquia_ProponeSubcategoria DEFAULT (0),
-        ProponeFicha BIT NOT NULL
-            CONSTRAINT DF_diagnosticoIAJerarquia_ProponeFicha DEFAULT (0),
-        Estado NVARCHAR(40) NOT NULL
-            CONSTRAINT DF_diagnosticoIAJerarquia_Estado DEFAULT (N'SUGERIDA_IA'),
-        UsuarioActualizacionId INT NULL,
-        FechaActualizacionUtc DATETIME2 NOT NULL
-            CONSTRAINT DF_diagnosticoIAJerarquia_Fecha DEFAULT (SYSUTCDATETIME()),
-        CONSTRAINT FK_diagnosticoIAJerarquia_Imagen
+        Nombre SYSNAME NOT NULL
+    );
+
+    INSERT INTO @columnasLegadas (Nombre)
+    VALUES
+        (N'SubcategoriaAlbumBotanicoIdSugerida'),
+        (N'FichaSugerida'),
+        (N'SubcategoriaAlbumBotanicoIdSeleccionada'),
+        (N'FichaSeleccionada'),
+        (N'ProponeFicha');
+
+    /* Elimina llaves foráneas asociadas a las columnas legadas. */
+    SET @sql = N'';
+
+    SELECT @sql = @sql +
+        N'ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia ' +
+        N'DROP CONSTRAINT ' + QUOTENAME(fk.name) +
+        N';' + CHAR(10)
+    FROM sys.foreign_keys fk
+    WHERE fk.parent_object_id =
+            OBJECT_ID(N'dbo.diagnosticoIAClasificacionJerarquia')
+      AND EXISTS
+      (
+          SELECT 1
+          FROM sys.foreign_key_columns columnaFk
+          INNER JOIN sys.columns columna
+              ON columna.object_id = columnaFk.parent_object_id
+             AND columna.column_id = columnaFk.parent_column_id
+          INNER JOIN @columnasLegadas legada
+              ON legada.Nombre = columna.name
+          WHERE columnaFk.constraint_object_id = fk.object_id
+      );
+
+    IF LEN(@sql) > 0
+        EXEC sys.sp_executesql @sql;
+
+    /* Elimina CHECK asociados a las columnas legadas. */
+    SET @sql = N'';
+
+    SELECT @sql = @sql +
+        N'ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia ' +
+        N'DROP CONSTRAINT ' + QUOTENAME(restriccion.name) +
+        N';' + CHAR(10)
+    FROM sys.check_constraints restriccion
+    INNER JOIN @columnasLegadas legada
+        ON restriccion.definition LIKE N'%' + legada.Nombre + N'%'
+    WHERE restriccion.parent_object_id =
+        OBJECT_ID(N'dbo.diagnosticoIAClasificacionJerarquia');
+
+    IF LEN(@sql) > 0
+        EXEC sys.sp_executesql @sql;
+
+    /* Elimina DEFAULT asociados a las columnas legadas. */
+    SET @sql = N'';
+
+    SELECT @sql = @sql +
+        N'ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia ' +
+        N'DROP CONSTRAINT ' + QUOTENAME(restriccion.name) +
+        N';' + CHAR(10)
+    FROM sys.default_constraints restriccion
+    INNER JOIN sys.columns columna
+        ON columna.object_id = restriccion.parent_object_id
+       AND columna.column_id = restriccion.parent_column_id
+    INNER JOIN @columnasLegadas legada
+        ON legada.Nombre = columna.name
+    WHERE restriccion.parent_object_id =
+        OBJECT_ID(N'dbo.diagnosticoIAClasificacionJerarquia');
+
+    IF LEN(@sql) > 0
+        EXEC sys.sp_executesql @sql;
+
+    /* Elimina índices que dependan de las columnas legadas. */
+    SET @sql = N'';
+
+    SELECT @sql = @sql +
+        N'DROP INDEX ' + QUOTENAME(indice.name) +
+        N' ON dbo.diagnosticoIAClasificacionJerarquia;' + CHAR(10)
+    FROM sys.indexes indice
+    WHERE indice.object_id =
+            OBJECT_ID(N'dbo.diagnosticoIAClasificacionJerarquia')
+      AND indice.is_primary_key = 0
+      AND indice.is_unique_constraint = 0
+      AND EXISTS
+      (
+          SELECT 1
+          FROM sys.index_columns columnaIndice
+          INNER JOIN sys.columns columna
+              ON columna.object_id = columnaIndice.object_id
+             AND columna.column_id = columnaIndice.column_id
+          INNER JOIN @columnasLegadas legada
+              ON legada.Nombre = columna.name
+          WHERE columnaIndice.object_id = indice.object_id
+            AND columnaIndice.index_id = indice.index_id
+      );
+
+    IF LEN(@sql) > 0
+        EXEC sys.sp_executesql @sql;
+
+    IF COL_LENGTH(
+        N'dbo.diagnosticoIAClasificacionJerarquia',
+        N'SubcategoriaAlbumBotanicoIdSugerida') IS NOT NULL
+    BEGIN
+        ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia
+            DROP COLUMN SubcategoriaAlbumBotanicoIdSugerida;
+    END;
+
+    IF COL_LENGTH(
+        N'dbo.diagnosticoIAClasificacionJerarquia',
+        N'FichaSugerida') IS NOT NULL
+    BEGIN
+        ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia
+            DROP COLUMN FichaSugerida;
+    END;
+
+    IF COL_LENGTH(
+        N'dbo.diagnosticoIAClasificacionJerarquia',
+        N'SubcategoriaAlbumBotanicoIdSeleccionada') IS NOT NULL
+    BEGIN
+        ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia
+            DROP COLUMN SubcategoriaAlbumBotanicoIdSeleccionada;
+    END;
+
+    IF COL_LENGTH(
+        N'dbo.diagnosticoIAClasificacionJerarquia',
+        N'FichaSeleccionada') IS NOT NULL
+    BEGIN
+        ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia
+            DROP COLUMN FichaSeleccionada;
+    END;
+
+    IF COL_LENGTH(
+        N'dbo.diagnosticoIAClasificacionJerarquia',
+        N'ProponeFicha') IS NOT NULL
+    BEGIN
+        ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia
+            DROP COLUMN ProponeFicha;
+    END;
+
+    /*
+        Elimina únicamente filas auxiliares inválidas o duplicadas de la
+        trazabilidad. No elimina inspecciones, categorías, subcategorías ni
+        fotografías del Álbum Botánico.
+    */
+    IF OBJECT_ID(N'dbo.diagnosticoIAImagen', N'U') IS NOT NULL
+    BEGIN
+        DELETE clasificacion
+        FROM dbo.diagnosticoIAClasificacionJerarquia clasificacion
+        WHERE NOT EXISTS
+        (
+            SELECT 1
+            FROM dbo.diagnosticoIAImagen fotografia
+            WHERE fotografia.DiagnosticoIAImagenId =
+                clasificacion.DiagnosticoIAImagenId
+        );
+    END;
+
+    ;WITH duplicados AS
+    (
+        SELECT
+            DiagnosticoIAClasificacionJerarquiaId,
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY DiagnosticoIAImagenId
+                ORDER BY
+                    FechaActualizacionUtc DESC,
+                    DiagnosticoIAClasificacionJerarquiaId DESC
+            ) AS NumeroFila
+        FROM dbo.diagnosticoIAClasificacionJerarquia
+    )
+    DELETE FROM duplicados
+    WHERE NumeroFila > 1;
+
+    /*
+        6. Índices y relaciones de la estructura final.
+    */
+    IF OBJECT_ID(N'dbo.AlbumBotanicoCafe', N'U') IS NOT NULL
+       AND NOT EXISTS
+       (
+           SELECT 1
+           FROM sys.indexes
+           WHERE object_id = OBJECT_ID(N'dbo.AlbumBotanicoCafe')
+             AND name = N'IX_AlbumBotanicoCafe_Categoria_Titulo'
+       )
+    BEGIN
+        CREATE INDEX IX_AlbumBotanicoCafe_Categoria_Titulo
+            ON dbo.AlbumBotanicoCafe
+            (
+                categoriaAlbumBotanicoId,
+                titulo
+            )
+            INCLUDE
+            (
+                activo,
+                nombreCientifico,
+                fechaCreacion
+            );
+    END;
+
+    IF NOT EXISTS
+    (
+        SELECT 1
+        FROM sys.indexes
+        WHERE object_id =
+                OBJECT_ID(N'dbo.diagnosticoIAClasificacionJerarquia')
+          AND name = N'UX_diagnosticoIAJerarquia_Imagen'
+    )
+    BEGIN
+        CREATE UNIQUE INDEX UX_diagnosticoIAJerarquia_Imagen
+            ON dbo.diagnosticoIAClasificacionJerarquia
+            (
+                DiagnosticoIAImagenId
+            );
+    END;
+
+    IF OBJECT_ID(N'dbo.diagnosticoIAImagen', N'U') IS NOT NULL
+       AND NOT EXISTS
+       (
+           SELECT 1
+           FROM sys.foreign_keys
+           WHERE parent_object_id =
+                    OBJECT_ID(N'dbo.diagnosticoIAClasificacionJerarquia')
+             AND referenced_object_id =
+                    OBJECT_ID(N'dbo.diagnosticoIAImagen')
+       )
+    BEGIN
+        ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia WITH CHECK
+            ADD CONSTRAINT FK_diagnosticoIAJerarquia_Imagen
             FOREIGN KEY (DiagnosticoIAImagenId)
             REFERENCES dbo.diagnosticoIAImagen(DiagnosticoIAImagenId)
-            ON DELETE CASCADE
-    );
-END;
+            ON DELETE CASCADE;
+    END;
 
-IF NOT EXISTS
-(
-    SELECT 1
-    FROM sys.indexes
-    WHERE name = N'UX_diagnosticoIAJerarquia_Imagen'
-      AND object_id = OBJECT_ID(N'dbo.diagnosticoIAClasificacionJerarquia')
-)
-BEGIN
-    CREATE UNIQUE INDEX UX_diagnosticoIAJerarquia_Imagen
-        ON dbo.diagnosticoIAClasificacionJerarquia(DiagnosticoIAImagenId);
-END;
+    IF OBJECT_ID(N'dbo.CategoriaAlbumBotanico', N'U') IS NOT NULL
+       AND NOT EXISTS
+       (
+           SELECT 1
+           FROM sys.foreign_keys
+           WHERE name =
+                N'FK_diagnosticoIAJerarquia_CategoriaSugerida'
+       )
+    BEGIN
+        ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia WITH CHECK
+            ADD CONSTRAINT FK_diagnosticoIAJerarquia_CategoriaSugerida
+            FOREIGN KEY (CategoriaAlbumBotanicoIdSugerida)
+            REFERENCES dbo.CategoriaAlbumBotanico(categoriaAlbumBotanicoId);
+    END;
 
-/*
- * Catálogo base. Solo se insertan nombres que todavía no existen dentro de
- * la categoría correspondiente. Las comparaciones se hacen por el nombre de
- * la categoría para respetar los identificadores actuales de cada instalación.
- */
-DECLARE @Semillas TABLE
-(
-    PatronCategoria NVARCHAR(100) NOT NULL,
-    NombreSubcategoria NVARCHAR(120) NOT NULL,
-    Descripcion NVARCHAR(600) NULL,
-    Orden INT NOT NULL
-);
+    IF OBJECT_ID(N'dbo.CategoriaAlbumBotanico', N'U') IS NOT NULL
+       AND NOT EXISTS
+       (
+           SELECT 1
+           FROM sys.foreign_keys
+           WHERE name =
+                N'FK_diagnosticoIAJerarquia_CategoriaSeleccionada'
+       )
+    BEGIN
+        ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia WITH CHECK
+            ADD CONSTRAINT FK_diagnosticoIAJerarquia_CategoriaSeleccionada
+            FOREIGN KEY (CategoriaAlbumBotanicoIdSeleccionada)
+            REFERENCES dbo.CategoriaAlbumBotanico(categoriaAlbumBotanicoId);
+    END;
 
-INSERT INTO @Semillas
-(
-    PatronCategoria,
-    NombreSubcategoria,
-    Descripcion,
-    Orden
-)
-VALUES
-(N'ENFERMED', N'Enfermedades fúngicas', N'Enfermedades causadas o asociadas a hongos fitopatógenos.', 10),
-(N'ENFERMED', N'Enfermedades bacterianas', N'Enfermedades causadas o asociadas a bacterias.', 20),
-(N'ENFERMED', N'Enfermedades virales', N'Enfermedades causadas o asociadas a virus.', 30),
-(N'ENFERMED', N'Otras enfermedades', N'Enfermedades que requieren una clasificación más específica.', 90),
-(N'PLAGA', N'Insectos', N'Plagas de origen insectil.', 10),
-(N'PLAGA', N'Ácaros', N'Plagas causadas por ácaros.', 20),
-(N'PLAGA', N'Nematodos', N'Plagas y daños asociados a nematodos.', 30),
-(N'PLAGA', N'Moluscos', N'Daños asociados a babosas, caracoles y otros moluscos.', 40),
-(N'PLAGA', N'Otras plagas', N'Plagas que requieren una clasificación más específica.', 90),
-(N'NUTRIC', N'Deficiencias de macronutrientes', N'Deficiencias de N, P, K, Ca, Mg o S.', 10),
-(N'NUTRIC', N'Deficiencias de micronutrientes', N'Deficiencias de Fe, Zn, B, Mn, Cu, Mo u otros micronutrientes.', 20),
-(N'NUTRIC', N'Otras alteraciones nutricionales', N'Desequilibrios nutricionales no clasificados en los grupos anteriores.', 90),
-(N'DEFICI', N'Deficiencias de macronutrientes', N'Deficiencias de N, P, K, Ca, Mg o S.', 10),
-(N'DEFICI', N'Deficiencias de micronutrientes', N'Deficiencias de Fe, Zn, B, Mn, Cu, Mo u otros micronutrientes.', 20),
-(N'DEFICI', N'Otras alteraciones nutricionales', N'Desequilibrios nutricionales no clasificados en los grupos anteriores.', 90),
-(N'ESTRES', N'Estrés hídrico', N'Daños por sequía, exceso de agua o encharcamiento.', 10),
-(N'ESTRES', N'Estrés térmico', N'Daños asociados a temperaturas extremas.', 20),
-(N'ESTRES', N'Daño químico', N'Daños por herbicidas, fitotoxicidad u otras sustancias.', 30),
-(N'ESTRES', N'Otros daños no bióticos', N'Daños abióticos que requieren una clasificación más específica.', 90),
-(N'SANA', N'Planta completa', N'Plantas completas sin síntomas visibles relevantes.', 10),
-(N'SANA', N'Hojas sanas', N'Hojas sin síntomas visibles relevantes.', 20),
-(N'SANA', N'Frutos sanos', N'Frutos sin síntomas visibles relevantes.', 30),
-(N'SANA', N'Tallos y ramas sanas', N'Tallos y ramas sin síntomas visibles relevantes.', 40),
-(N'MECAN', N'Daño por manejo', N'Daños físicos asociados al manejo, poda o labores culturales.', 10),
-(N'MECAN', N'Daño climático', N'Daños físicos por viento, granizo, lluvia u otros eventos.', 20),
-(N'MECAN', N'Otro daño físico', N'Daños físicos que requieren una clasificación más específica.', 90);
+    IF OBJECT_ID(N'dbo.AlbumBotanicoCafe', N'U') IS NOT NULL
+       AND NOT EXISTS
+       (
+           SELECT 1
+           FROM sys.foreign_keys
+           WHERE name =
+                N'FK_diagnosticoIAJerarquia_SubcategoriaSugerida'
+       )
+    BEGIN
+        ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia WITH CHECK
+            ADD CONSTRAINT FK_diagnosticoIAJerarquia_SubcategoriaSugerida
+            FOREIGN KEY (AlbumBotanicoCafeIdSugerido)
+            REFERENCES dbo.AlbumBotanicoCafe(albumBotanicoCafeId);
+    END;
 
-INSERT INTO dbo.SubcategoriaAlbumBotanico
-(
-    CategoriaAlbumBotanicoId,
-    NombreSubcategoria,
-    Descripcion,
-    Activo,
-    FechaCreacionUtc
-)
-SELECT DISTINCT
-    c.categoriaAlbumBotanicoId,
-    s.NombreSubcategoria,
-    s.Descripcion,
-    1,
-    SYSUTCDATETIME()
-FROM dbo.CategoriaAlbumBotanico c
-INNER JOIN @Semillas s
-    ON UPPER(c.nombreCategoria) LIKE N'%' + s.PatronCategoria + N'%'
-WHERE c.activo = 1
-  AND NOT EXISTS
-  (
-      SELECT 1
-      FROM dbo.SubcategoriaAlbumBotanico existente
-      WHERE existente.CategoriaAlbumBotanicoId = c.categoriaAlbumBotanicoId
-        AND UPPER(LTRIM(RTRIM(existente.NombreSubcategoria))) =
-            UPPER(LTRIM(RTRIM(s.NombreSubcategoria)))
-  );
+    IF OBJECT_ID(N'dbo.AlbumBotanicoCafe', N'U') IS NOT NULL
+       AND NOT EXISTS
+       (
+           SELECT 1
+           FROM sys.foreign_keys
+           WHERE name =
+                N'FK_diagnosticoIAJerarquia_SubcategoriaSeleccionada'
+       )
+    BEGIN
+        ALTER TABLE dbo.diagnosticoIAClasificacionJerarquia WITH CHECK
+            ADD CONSTRAINT FK_diagnosticoIAJerarquia_SubcategoriaSeleccionada
+            FOREIGN KEY (AlbumBotanicoCafeIdSeleccionado)
+            REFERENCES dbo.AlbumBotanicoCafe(albumBotanicoCafeId);
+    END;
 
-/*
- * Normalización inicial de fichas existentes. Se asigna únicamente cuando la
- * ficha todavía no tiene subcategoría. Si no hay una coincidencia específica,
- * se utiliza la subcategoría genérica de la categoría correspondiente.
- */
-UPDATE registro
-SET subcategoriaAlbumBotanicoId = candidato.SubcategoriaAlbumBotanicoId
-FROM dbo.AlbumBotanicoCafe registro
-CROSS APPLY
-(
-    SELECT TOP (1)
-        sub.SubcategoriaAlbumBotanicoId
-    FROM dbo.SubcategoriaAlbumBotanico sub
-    WHERE sub.CategoriaAlbumBotanicoId = registro.categoriaAlbumBotanicoId
-      AND sub.Activo = 1
-    ORDER BY
-        CASE
-            WHEN UPPER(registro.titulo) LIKE N'%MINADOR%'
-                 AND sub.NombreSubcategoria = N'Insectos' THEN 1
-            WHEN UPPER(registro.titulo) LIKE N'%BROCA%'
-                 AND sub.NombreSubcategoria = N'Insectos' THEN 1
-            WHEN UPPER(registro.titulo) LIKE N'%COCHINILLA%'
-                 AND sub.NombreSubcategoria = N'Insectos' THEN 1
-            WHEN UPPER(registro.titulo) LIKE N'%PULGON%'
-                 AND sub.NombreSubcategoria = N'Insectos' THEN 1
-            WHEN UPPER(registro.titulo) LIKE N'%TRIPS%'
-                 AND sub.NombreSubcategoria = N'Insectos' THEN 1
-            WHEN UPPER(registro.titulo) LIKE N'%ACARO%'
-                 AND sub.NombreSubcategoria = N'Ácaros' THEN 1
-            WHEN UPPER(registro.titulo) LIKE N'%ARAÑ%'
-                 AND sub.NombreSubcategoria = N'Ácaros' THEN 1
-            WHEN UPPER(registro.titulo) LIKE N'%NEMATOD%'
-                 AND sub.NombreSubcategoria = N'Nematodos' THEN 1
-            WHEN UPPER(registro.titulo) LIKE N'%ROYA%'
-                 AND sub.NombreSubcategoria = N'Enfermedades fúngicas' THEN 1
-            WHEN UPPER(registro.titulo) LIKE N'%MANCHA DE HIERRO%'
-                 AND sub.NombreSubcategoria = N'Enfermedades fúngicas' THEN 1
-            WHEN UPPER(registro.titulo) LIKE N'%CERCOSPORA%'
-                 AND sub.NombreSubcategoria = N'Enfermedades fúngicas' THEN 1
-            WHEN UPPER(registro.titulo) LIKE N'%OJO DE GALLO%'
-                 AND sub.NombreSubcategoria = N'Enfermedades fúngicas' THEN 1
-            WHEN UPPER(registro.titulo) LIKE N'%ANTRACNOSIS%'
-                 AND sub.NombreSubcategoria = N'Enfermedades fúngicas' THEN 1
-            WHEN UPPER(registro.titulo) LIKE N'%PHOMA%'
-                 AND sub.NombreSubcategoria = N'Enfermedades fúngicas' THEN 1
-            WHEN UPPER(registro.titulo) LIKE N'%BACTER%'
-                 AND sub.NombreSubcategoria = N'Enfermedades bacterianas' THEN 1
-            WHEN UPPER(registro.titulo) LIKE N'%VIR%'
-                 AND sub.NombreSubcategoria = N'Enfermedades virales' THEN 1
-            WHEN UPPER(registro.titulo) LIKE N'%NITROGEN%'
-                 AND sub.NombreSubcategoria = N'Deficiencias de macronutrientes' THEN 1
-            WHEN UPPER(registro.titulo) LIKE N'%FOSFOR%'
-                 AND sub.NombreSubcategoria = N'Deficiencias de macronutrientes' THEN 1
-            WHEN UPPER(registro.titulo) LIKE N'%POTAS%'
-                 AND sub.NombreSubcategoria = N'Deficiencias de macronutrientes' THEN 1
-            WHEN UPPER(registro.titulo) LIKE N'%HIERRO%'
-                 AND sub.NombreSubcategoria = N'Deficiencias de micronutrientes' THEN 1
-            WHEN UPPER(registro.titulo) LIKE N'%ZINC%'
-                 AND sub.NombreSubcategoria = N'Deficiencias de micronutrientes' THEN 1
-            WHEN UPPER(registro.titulo) LIKE N'%BORO%'
-                 AND sub.NombreSubcategoria = N'Deficiencias de micronutrientes' THEN 1
-            WHEN UPPER(registro.titulo) LIKE N'%SANA%'
-                 AND sub.NombreSubcategoria = N'Planta completa' THEN 1
-            WHEN sub.NombreSubcategoria IN
-            (
-                N'Otras enfermedades',
-                N'Otras plagas',
-                N'Otras alteraciones nutricionales',
-                N'Otros daños no bióticos',
-                N'Otro daño físico',
-                N'Planta completa'
-            ) THEN 50
-            ELSE 100
-        END,
-        sub.SubcategoriaAlbumBotanicoId
-) candidato
-WHERE registro.subcategoriaAlbumBotanicoId IS NULL;
+    COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0
+        ROLLBACK TRANSACTION;
+
+    THROW;
+END CATCH;
+
 """;
 
             try
             {
-                DbConnection connection = db.Database.GetDbConnection();
-                bool debeCerrar =
-                    connection.State != System.Data.ConnectionState.Open;
+                await db.Database.ExecuteSqlRawAsync(
+                    sql,
+                    cancellationToken);
 
-                if (debeCerrar)
-                    await connection.OpenAsync(cancellationToken);
-
-                try
-                {
-                    await using DbCommand command = connection.CreateCommand();
-                    command.CommandText = sql;
-                    command.CommandTimeout = 180;
-                    await command.ExecuteNonQueryAsync(cancellationToken);
-                }
-                finally
-                {
-                    if (debeCerrar)
-                        await connection.CloseAsync();
-                }
+                logger.LogInformation(
+                    "Álbum Botánico preparado con la estructura Categoría -> Subcategoría específica -> Fotografías.");
             }
             catch (Exception ex)
             {
                 logger.LogError(
                     ex,
-                    "No fue posible inicializar la jerarquía del Álbum Botánico.");
+                    "No fue posible preparar la estructura limpia del Álbum Botánico.");
                 throw;
             }
         }

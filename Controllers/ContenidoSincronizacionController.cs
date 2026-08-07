@@ -11,8 +11,7 @@ namespace CONATRADEC_API.Controllers
 {
     /// <summary>
     /// Expone una huella liviana de cada módulo sincronizable. La versión del
-    /// álbum incluye categorías, subcategorías, fichas y fotografías para que
-    /// cualquier cambio de jerarquía invalide correctamente la copia offline.
+    /// álbum incluye categorías, subcategorías específicas y fotografías.
     /// </summary>
     [ApiController]
     [Route("api/contenido-sincronizacion")]
@@ -229,29 +228,12 @@ namespace CONATRADEC_API.Controllers
             var subcategorias = await albumJerarquiaDb.Subcategorias
                 .AsNoTracking()
                 .Where(item => item.Activo && item.Categoria.Activo)
-                .OrderBy(item => item.SubcategoriaAlbumBotanicoId)
-                .Select(item => new
-                {
-                    item.SubcategoriaAlbumBotanicoId,
-                    item.CategoriaAlbumBotanicoId,
-                    item.NombreSubcategoria,
-                    item.Descripcion,
-                    item.Activo,
-                    item.FechaCreacionUtc,
-                    item.FechaActualizacionUtc
-                })
-                .ToListAsync(cancellationToken);
-
-            var registros = await albumJerarquiaDb.RegistrosAlbum
-                .AsNoTracking()
-                .Where(item => item.Activo && item.Categoria.Activo)
                 .OrderBy(item => item.AlbumBotanicoCafeId)
                 .Select(item => new
                 {
-                    item.AlbumBotanicoCafeId,
+                    subcategoriaAlbumBotanicoId = item.AlbumBotanicoCafeId,
                     item.CategoriaAlbumBotanicoId,
-                    item.SubcategoriaAlbumBotanicoId,
-                    item.Titulo,
+                    nombreSubcategoria = item.Titulo,
                     item.NombreCientifico,
                     item.Descripcion,
                     item.Caracteristicas,
@@ -268,13 +250,13 @@ namespace CONATRADEC_API.Controllers
                 .AsNoTracking()
                 .Where(item =>
                     item.Activo &&
-                    item.Registro.Activo &&
-                    item.Registro.Categoria.Activo)
+                    item.Subcategoria.Activo &&
+                    item.Subcategoria.Categoria.Activo)
                 .OrderBy(item => item.AlbumBotanicoCafeFotoId)
                 .Select(item => new
                 {
                     item.AlbumBotanicoCafeFotoId,
-                    item.AlbumBotanicoCafeId,
+                    subcategoriaAlbumBotanicoId = item.AlbumBotanicoCafeId,
                     item.RutaFoto,
                     item.DescripcionFoto,
                     item.EsPortada,
@@ -287,7 +269,6 @@ namespace CONATRADEC_API.Controllers
             {
                 categorias,
                 subcategorias,
-                registros,
                 fotos
             });
         }
