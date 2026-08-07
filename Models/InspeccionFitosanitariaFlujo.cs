@@ -22,6 +22,7 @@ namespace CONATRADEC_API.Models
             public const string EnAnalisisHumano = "EN_ANALISIS_HUMANO";
             public const string PendienteAprobacion = "PENDIENTE_APROBACION";
             public const string DevueltaAnalizador = "DEVUELTA_AL_ANALIZADOR";
+            public const string DevueltaTecnico = "DEVUELTA_AL_TECNICO";
             public const string Aprobada = "APROBADA";
             public const string AprobadaConCorreccion =
                 "APROBADA_CON_CORRECCION";
@@ -42,6 +43,7 @@ namespace CONATRADEC_API.Models
                     EnAnalisisHumano,
                     PendienteAprobacion,
                     DevueltaAnalizador,
+                    DevueltaTecnico,
                     Aprobada,
                     AprobadaConCorreccion,
                     Rechazada,
@@ -83,6 +85,12 @@ namespace CONATRADEC_API.Models
                 "ANALISIS_HUMANO_ENVIADO";
             public const string AprobacionRegistrada =
                 "APROBACION_REGISTRADA";
+            public const string AnalizadorDevuelveTecnico =
+                "ANALIZADOR_DEVUELVE_TECNICO";
+            public const string TecnicoResuelveDevolucion =
+                "TECNICO_RESUELVE_DEVOLUCION";
+            public const string AnalizadorFinalizaRevision =
+                "ANALIZADOR_FINALIZA_REVISION";
             public const string FotoDescartada = "FOTO_DESCARTADA";
             public const string FotoPublicadaAlbum = "FOTO_PUBLICADA_ALBUM";
         }
@@ -161,6 +169,9 @@ namespace CONATRADEC_API.Models
 
             if (lista.Any(item => item == FotoEstados.ErrorIA))
                 return InspeccionEstados.EnProcesoConErrores;
+
+            if (lista.Any(item => item == FotoEstados.DevueltaTecnico))
+                return InspeccionEstados.EnProceso;
 
             bool ningunaIniciada = lista.All(item => item is
                 FotoEstados.Borrador or

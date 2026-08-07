@@ -26,14 +26,17 @@ namespace CONATRADEC_API.Filters
         private const string RutaAlbumJerarquia = "/api/album-jerarquia";
 
         private readonly InspeccionFitosanitariaControlDatabaseInitializer control;
+        private readonly InspeccionFitosanitariaDevolucionDatabase devoluciones;
         private readonly PermisoApiService permisos;
 
         public InspeccionFitosanitariaControlActionFilter(
+            DiagnosticoIADbContext db,
             InspeccionFitosanitariaControlDatabaseInitializer control,
             PermisoApiService permisos)
         {
             this.control = control;
             this.permisos = permisos;
+            devoluciones = new InspeccionFitosanitariaDevolucionDatabase(db);
         }
 
         public async Task OnActionExecutionAsync(
@@ -201,6 +204,21 @@ namespace CONATRADEC_API.Filters
                     cancellationToken);
             }
 
+            if (EsRespuestaExitosa(ejecutado.Result) &&
+                EsRutaDescarte(ruta) &&
+                id is > 0)
+            {
+                int? usuarioId = ObtenerUsuarioId(context.HttpContext.User);
+                if (usuarioId.HasValue)
+                {
+                    await devoluciones.ResolverDevolucionesPorDescarteAsync(
+                        id.Value,
+                        ObtenerFotografiaIds(context),
+                        usuarioId.Value,
+                        cancellationToken);
+                }
+            }
+
             await FiltrarBandejaPorEtapaAsync(
                 context,
                 ejecutado.Result,
@@ -217,6 +235,25 @@ namespace CONATRADEC_API.Filters
             int inspeccionId,
             CancellationToken cancellationToken)
         {
+            int? usuarioId = ObtenerUsuarioId(context.HttpContext.User);
+            InspeccionFitosanitariaControlRegistro? registro =
+                await control.ObtenerAsync(inspeccionId, cancellationToken);
+
+            if (!usuarioId.HasValue ||
+                registro == null ||
+                registro.UsuarioSolicitanteId != usuarioId.Value)
+            {
+                return new ObjectResult(new
+                {
+                    success = false,
+                    message =
+                        "Solo el técnico que creó la inspección puede descartar una evidencia."
+                })
+                {
+                    StatusCode = StatusCodes.Status403Forbidden
+                };
+            }
+
             int[] ids = ObtenerFotografiaIds(context);
             if (ids.Length == 0)
                 return null;
@@ -232,7 +269,8 @@ namespace CONATRADEC_API.Filters
                 "BORRADOR",
                 "PENDIENTE_IA",
                 "ERROR_IA",
-                "PENDIENTE_DECISION_TECNICO"
+                "PENDIENTE_DECISION_TECNICO",
+                "DEVUELTA_AL_TECNICO"
             ];
 
             bool existeBloqueada = ids.Any(id =>
@@ -304,8 +342,7 @@ namespace CONATRADEC_API.Filters
                     ids,
                     cancellationToken);
 
-            bool requiereEtapaFinalizada =
-                modo is "analizador" or "aprobador";
+            bool requiereEtapaFinalizada = modo == "aprobador";
 
             var enriquecidos = new List<Dictionary<string, object?>>();
 

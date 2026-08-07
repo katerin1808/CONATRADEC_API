@@ -48,6 +48,7 @@ namespace CONATRADEC_API.Controllers
             [FromQuery] string modo = "mis",
             [FromQuery] string? buscar = null,
             [FromQuery] string? propietario = null,
+            [FromQuery] int? tecnicoId = null,
             [FromQuery] string? departamento = null,
             [FromQuery] string? tipoFotografia = null,
             [FromQuery] string? estado = null,
@@ -148,6 +149,10 @@ namespace CONATRADEC_API.Controllers
             bool modoDecisiones = modoNormalizado == "decisiones";
             bool soloPropias = !modoHistorial;
 
+            int? tecnicoFiltro = modoHistorial && tecnicoId is > 0
+                ? tecnicoId
+                : null;
+
             string estadoNormalizado = modoDecisiones
                 ? string.Empty
                 : NormalizarCodigo(estado);
@@ -186,6 +191,7 @@ namespace CONATRADEC_API.Controllers
                     modoHistorial,
                     Normalizar(buscar),
                     Normalizar(propietario),
+                    tecnicoFiltro,
                     Normalizar(departamento),
                     tipoNormalizado,
                     estadoNormalizado,
@@ -225,6 +231,363 @@ namespace CONATRADEC_API.Controllers
             });
         }
 
+        [HttpGet("{id:int}/tecnico-responsable")]
+        public async Task<IActionResult> ObtenerTecnicoResponsable(
+            int id,
+            CancellationToken cancellationToken = default)
+        {
+            int? usuarioId = ObtenerUsuarioId();
+            if (!usuarioId.HasValue)
+                return Forbid();
+
+            bool puedeLeer = false;
+            foreach (string interfaz in new[]
+                     {
+                         DiagnosticoIAFlujo.InterfazSolicitud,
+                         DiagnosticoIAFlujo.InterfazAnalizador,
+                         DiagnosticoIAFlujo.InterfazAprobador
+                     })
+            {
+                ResultadoPermisoApi permiso = await permisos.ValidarAsync(
+                    usuarioId,
+                    interfaz,
+                    TipoPermisoApi.Leer,
+                    cancellationToken);
+
+                if (permiso.Permitido)
+                {
+                    puedeLeer = true;
+                    break;
+                }
+            }
+
+            if (!puedeLeer)
+                return Forbid();
+
+            int? tecnicoId = await diagnosticoDb.Diagnosticos
+                .AsNoTracking()
+                .Where(item =>
+                    item.DiagnosticoIAId == id &&
+                    item.Activo)
+                .Select(item => (int?)item.UsuarioSolicitanteId)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (!tecnicoId.HasValue)
+            {
+                return NotFound(new
+                {
+                    success = false,
+                    message = "La inspección indicada no existe."
+                });
+            }
+
+            Usuario? tecnico = await db.Set<Usuario>()
+                .AsNoTracking()
+                .FirstOrDefaultAsync(
+                    item => item.UsuarioId == tecnicoId.Value,
+                    cancellationToken);
+
+            var data = new InspeccionFitosanitariaTecnicoFiltroDto
+            {
+                UsuarioTecnicoId = tecnicoId.Value,
+                NombreCompleto = string.IsNullOrWhiteSpace(
+                    tecnico?.nombreCompletoUsuario)
+                        ? tecnico?.nombreUsuario ?? $"Técnico #{tecnicoId.Value}"
+                        : tecnico.nombreCompletoUsuario.Trim(),
+                NombreUsuario = tecnico?.nombreUsuario?.Trim() ?? string.Empty
+            };
+
+            return Ok(new
+            {
+                success = true,
+                message = "Técnico responsable obtenido correctamente.",
+                data
+            });
+        }
+
+        [HttpGet("bandeja-tecnicos")]
+        public async Task<IActionResult> ObtenerTecnicosBandeja(
+            [FromQuery] string modo = "historial",
+            CancellationToken cancellationToken = default)
+        {
+            int? usuarioId = ObtenerUsuarioId();
+            if (!usuarioId.HasValue)
+                return Forbid();
+
+            string modoNormalizado = Normalizar(modo).ToLowerInvariant();
+            string interfaz = modoNormalizado switch
+            {
+                "analizador" => DiagnosticoIAFlujo.InterfazAnalizador,
+                "aprobador" => DiagnosticoIAFlujo.InterfazAprobador,
+                _ => DiagnosticoIAFlujo.InterfazSolicitud
+            };
+
+            ResultadoPermisoApi permiso = await permisos.ValidarAsync(
+                usuarioId,
+                interfaz,
+                TipoPermisoApi.Leer,
+                cancellationToken);
+
+            if (!permiso.Permitido)
+            {
+                return StatusCode(
+                    permiso.CodigoEstado,
+                    new { success = false, message = permiso.Mensaje });
+            }
+
+            await database.InicializarAsync(cancellationToken);
+            await control.InicializarAsync(cancellationToken);
+
+            InspeccionFitosanitariaTecnicoFiltroRespuestaDto data =
+                await ConsultarTecnicosAsync(
+                    usuarioId.Value,
+                    modoNormalizado,
+                    cancellationToken);
+
+            return Ok(new
+            {
+                success = true,
+                message = "Técnicos responsables obtenidos correctamente.",
+                data
+            });
+        }
+
+        private async Task<InspeccionFitosanitariaTecnicoFiltroRespuestaDto>
+            ConsultarTecnicosAsync(
+                int usuarioId,
+                string modo,
+                CancellationToken cancellationToken)
+        {
+            if (modo == "historial")
+            {
+                return await ConsultarTecnicosHistorialAsync(
+                    cancellationToken);
+            }
+
+            bool incluirAsignaciones = modo is "analizador" or "aprobador";
+
+            /*
+             * El primer resultado contiene todos los técnicos que tienen una
+             * inspección relevante para la bandeja. El segundo conserva solo
+             * las asignaciones de las 300 tarjetas que puede devolver la bandeja
+             * operativa. Así el selector no pierde técnicos por el TOP de la
+             * vista y tampoco se envían miles de asignaciones innecesarias.
+             */
+            const string sql = """
+DECLARE @inspecciones TABLE
+(
+    InspeccionId INT NOT NULL PRIMARY KEY,
+    UsuarioTecnicoId INT NOT NULL,
+    FechaSolicitudUtc DATETIME2(0) NOT NULL
+);
+
+INSERT INTO @inspecciones
+(
+    InspeccionId,
+    UsuarioTecnicoId,
+    FechaSolicitudUtc
+)
+SELECT
+    d.DiagnosticoIAId,
+    d.UsuarioSolicitanteId,
+    d.FechaSolicitudUtc
+FROM dbo.diagnosticoIA d
+WHERE d.Activo = 1
+  AND
+  (
+      (
+          @modo = N'analizador'
+          AND ISNULL(d.CerradaDefinitiva, 0) = 0
+          AND ISNULL(d.CerradaTecnico, 0) = 0
+          AND EXISTS
+          (
+              SELECT 1
+              FROM dbo.diagnosticoIAImagen i
+              WHERE i.DiagnosticoIAId = d.DiagnosticoIAId
+                AND ISNULL(i.Activo, 1) = 1
+                AND UPPER(ISNULL(i.Estado, N'')) IN
+                    (N'PENDIENTE_ANALIZADOR', N'EN_ANALISIS_HUMANO',
+                     N'DEVUELTA_AL_ANALIZADOR', N'DEVUELTO_PARA_CORRECCION',
+                     N'DEVUELTA_AL_TECNICO')
+          )
+      )
+      OR
+      (
+          @modo = N'aprobador'
+          AND ISNULL(d.EtapaTecnicaFinalizada, 0) = 1
+          AND ISNULL(d.CerradaDefinitiva, 0) = 0
+          AND ISNULL(d.CerradaTecnico, 0) = 0
+          AND EXISTS
+          (
+              SELECT 1
+              FROM dbo.diagnosticoIAImagen i
+              WHERE i.DiagnosticoIAId = d.DiagnosticoIAId
+                AND ISNULL(i.Activo, 1) = 1
+                AND UPPER(ISNULL(i.Estado, N'')) = N'PENDIENTE_APROBACION'
+          )
+      )
+      OR
+      (
+          @modo NOT IN (N'analizador', N'aprobador')
+          AND d.UsuarioSolicitanteId = @usuarioId
+      )
+  );
+
+SELECT DISTINCT
+    base.UsuarioTecnicoId,
+    ISNULL(NULLIF(LTRIM(RTRIM(u.nombreCompletoUsuario)), N''),
+           ISNULL(u.nombreUsuario, N'')) AS NombreCompleto,
+    ISNULL(u.nombreUsuario, N'') AS NombreUsuario
+FROM @inspecciones base
+INNER JOIN dbo.usuario u
+    ON u.UsuarioId = base.UsuarioTecnicoId
+ORDER BY NombreCompleto, NombreUsuario;
+
+SELECT TOP(300)
+    base.InspeccionId,
+    base.UsuarioTecnicoId,
+    ISNULL(NULLIF(LTRIM(RTRIM(u.nombreCompletoUsuario)), N''),
+           ISNULL(u.nombreUsuario, N'')) AS NombreCompleto,
+    ISNULL(u.nombreUsuario, N'') AS NombreUsuario
+FROM @inspecciones base
+INNER JOIN dbo.usuario u
+    ON u.UsuarioId = base.UsuarioTecnicoId
+WHERE @incluirAsignaciones = 1
+ORDER BY base.FechaSolicitudUtc DESC, base.InspeccionId DESC;
+""";
+
+            DbConnection conexion = db.Database.GetDbConnection();
+            bool cerrarConexion = conexion.State != ConnectionState.Open;
+
+            if (cerrarConexion)
+                await conexion.OpenAsync(cancellationToken);
+
+            try
+            {
+                await using DbCommand comando = conexion.CreateCommand();
+                comando.CommandText = sql;
+                AgregarParametro(comando, "@modo", modo, DbType.String);
+                AgregarParametro(
+                    comando,
+                    "@usuarioId",
+                    usuarioId,
+                    DbType.Int32);
+                AgregarParametro(
+                    comando,
+                    "@incluirAsignaciones",
+                    incluirAsignaciones,
+                    DbType.Boolean);
+
+                var tecnicos =
+                    new List<InspeccionFitosanitariaTecnicoFiltroDto>();
+                var asignaciones =
+                    new List<InspeccionFitosanitariaTecnicoAsignacionDto>();
+
+                await using DbDataReader reader =
+                    await comando.ExecuteReaderAsync(cancellationToken);
+
+                while (await reader.ReadAsync(cancellationToken))
+                {
+                    tecnicos.Add(
+                        new InspeccionFitosanitariaTecnicoFiltroDto
+                        {
+                            UsuarioTecnicoId = reader.GetInt32(0),
+                            NombreCompleto = Texto(reader, 1),
+                            NombreUsuario = Texto(reader, 2)
+                        });
+                }
+
+                if (await reader.NextResultAsync(cancellationToken))
+                {
+                    while (await reader.ReadAsync(cancellationToken))
+                    {
+                        asignaciones.Add(
+                            new InspeccionFitosanitariaTecnicoAsignacionDto
+                            {
+                                InspeccionId = reader.GetInt32(0),
+                                UsuarioTecnicoId = reader.GetInt32(1),
+                                NombreCompleto = Texto(reader, 2),
+                                NombreUsuario = Texto(reader, 3)
+                            });
+                    }
+                }
+
+                return new InspeccionFitosanitariaTecnicoFiltroRespuestaDto
+                {
+                    Tecnicos = tecnicos,
+                    Asignaciones = asignaciones
+                };
+            }
+            finally
+            {
+                if (cerrarConexion)
+                    await conexion.CloseAsync();
+            }
+        }
+
+        private async Task<InspeccionFitosanitariaTecnicoFiltroRespuestaDto>
+            ConsultarTecnicosHistorialAsync(
+                CancellationToken cancellationToken)
+        {
+            const string sql = """
+SELECT DISTINCT
+    d.UsuarioSolicitanteId,
+    ISNULL(NULLIF(LTRIM(RTRIM(u.nombreCompletoUsuario)), N''),
+           ISNULL(u.nombreUsuario, N'')) AS NombreCompleto,
+    ISNULL(u.nombreUsuario, N'') AS NombreUsuario
+FROM dbo.diagnosticoIA d
+INNER JOIN dbo.usuario u
+    ON u.UsuarioId = d.UsuarioSolicitanteId
+WHERE d.Activo = 1
+  AND
+  (
+      ISNULL(d.CerradaDefinitiva, 0) = 1
+      OR ISNULL(d.CerradaTecnico, 0) = 1
+  )
+ORDER BY NombreCompleto, NombreUsuario;
+""";
+
+            DbConnection conexion = db.Database.GetDbConnection();
+            bool cerrarConexion = conexion.State != ConnectionState.Open;
+
+            if (cerrarConexion)
+                await conexion.OpenAsync(cancellationToken);
+
+            try
+            {
+                await using DbCommand comando = conexion.CreateCommand();
+                comando.CommandText = sql;
+
+                var tecnicos =
+                    new List<InspeccionFitosanitariaTecnicoFiltroDto>();
+
+                await using DbDataReader reader =
+                    await comando.ExecuteReaderAsync(cancellationToken);
+
+                while (await reader.ReadAsync(cancellationToken))
+                {
+                    tecnicos.Add(
+                        new InspeccionFitosanitariaTecnicoFiltroDto
+                        {
+                            UsuarioTecnicoId = reader.GetInt32(0),
+                            NombreCompleto = Texto(reader, 1),
+                            NombreUsuario = Texto(reader, 2)
+                        });
+                }
+
+                return new InspeccionFitosanitariaTecnicoFiltroRespuestaDto
+                {
+                    Tecnicos = tecnicos,
+                    Asignaciones = []
+                };
+            }
+            finally
+            {
+                if (cerrarConexion)
+                    await conexion.CloseAsync();
+            }
+        }
+
         private async Task<List<InspeccionFitosanitariaBandejaItemDto>>
             ConsultarAsync(
                 int usuarioId,
@@ -233,6 +596,7 @@ namespace CONATRADEC_API.Controllers
                 bool modoHistorial,
                 string buscar,
                 string propietario,
+                int? tecnicoId,
                 string departamento,
                 string tipoFotografia,
                 string estado,
@@ -265,6 +629,10 @@ WITH bandejaBase AS
         ISNULL(propietarioActual.NombreCompleto, N'') AS Propietario,
         ISNULL(m.NombreMunicipio, N'') AS Municipio,
         ISNULL(dep.NombreDepartamento, N'') AS Departamento,
+        d.UsuarioSolicitanteId AS UsuarioTecnicoId,
+        ISNULL(NULLIF(LTRIM(RTRIM(tecnico.nombreCompletoUsuario)), N''),
+               ISNULL(tecnico.nombreUsuario, N'')) AS TecnicoNombreCompleto,
+        ISNULL(tecnico.nombreUsuario, N'') AS TecnicoUsuario,
         CONVERT(INT, ISNULL(resumen.TotalFotografias, 0)) AS TotalFotografias,
         CONVERT(INT, ISNULL(resumen.Pendientes, 0)) AS Pendientes,
         CONVERT(INT, ISNULL(resumen.ConError, 0)) AS ConError,
@@ -309,6 +677,8 @@ WITH bandejaBase AS
         ON m.MunicipioId = t.municipioId
     LEFT JOIN dbo.departamento dep
         ON dep.DepartamentoId = m.DepartamentoId
+    LEFT JOIN dbo.usuario tecnico
+        ON tecnico.UsuarioId = d.UsuarioSolicitanteId
     OUTER APPLY
     (
         SELECT TOP(1)
@@ -332,8 +702,8 @@ WITH bandejaBase AS
                     (N'BORRADOR', N'PENDIENTE_IA')
                     THEN 1 ELSE 0 END) AS BorradorOPendienteIA,
             SUM(CASE
-                WHEN UPPER(ISNULL(i.Estado, N'BORRADOR')) =
-                    N'PENDIENTE_DECISION_TECNICO'
+                WHEN UPPER(ISNULL(i.Estado, N'BORRADOR')) IN
+                    (N'PENDIENTE_DECISION_TECNICO', N'DEVUELTA_AL_TECNICO')
                     THEN 1 ELSE 0 END) AS PendienteDecisionTecnico,
             SUM(CASE
                 WHEN UPPER(ISNULL(i.Estado, N'BORRADOR')) =
@@ -413,6 +783,8 @@ WITH bandejaBase AS
           OR ISNULL(t.direccionTerreno, N'') LIKE N'%' + @buscar + N'%'
           OR ISNULL(m.NombreMunicipio, N'') LIKE N'%' + @buscar + N'%'
           OR ISNULL(dep.NombreDepartamento, N'') LIKE N'%' + @buscar + N'%'
+          OR ISNULL(tecnico.nombreCompletoUsuario, N'') LIKE N'%' + @buscar + N'%'
+          OR ISNULL(tecnico.nombreUsuario, N'') LIKE N'%' + @buscar + N'%'
           OR EXISTS
           (
               SELECT 1
@@ -461,6 +833,11 @@ WITH bandejaBase AS
       )
       AND
       (
+          @tecnicoId IS NULL
+          OR d.UsuarioSolicitanteId = @tecnicoId
+      )
+      AND
+      (
           @departamento = N''
           OR ISNULL(dep.NombreDepartamento, N'')
                 LIKE N'%' + @departamento + N'%'
@@ -489,6 +866,9 @@ SELECT TOP(@limite)
     Propietario,
     Municipio,
     Departamento,
+    UsuarioTecnicoId,
+    TecnicoNombreCompleto,
+    TecnicoUsuario,
     FechaRegistroSistemaUtc,
     EstadoCalculado,
     TotalFotografias,
@@ -559,6 +939,11 @@ ORDER BY FechaRegistroSistemaUtc DESC, InspeccionId DESC;
                     DbType.String);
                 AgregarParametro(
                     comando,
+                    "@tecnicoId",
+                    tecnicoId,
+                    DbType.Int32);
+                AgregarParametro(
+                    comando,
                     "@departamento",
                     departamento,
                     DbType.String);
@@ -613,19 +998,22 @@ ORDER BY FechaRegistroSistemaUtc DESC, InspeccionId DESC;
                         Propietario = Texto(reader, 6),
                         Municipio = Texto(reader, 7),
                         Departamento = Texto(reader, 8),
+                        UsuarioTecnicoId = reader.GetInt32(9),
+                        TecnicoNombreCompleto = Texto(reader, 10),
+                        TecnicoUsuario = Texto(reader, 11),
                         FechaRegistroSistemaUtc = DateTime.SpecifyKind(
-                            reader.GetDateTime(9),
+                            reader.GetDateTime(12),
                             DateTimeKind.Utc),
-                        Estado = Texto(reader, 10),
-                        TotalFotografias = reader.GetInt32(11),
-                        Pendientes = reader.GetInt32(12),
-                        ConError = reader.GetInt32(13),
-                        Finalizadas = reader.GetInt32(14),
-                        RequierenDecisionTecnico = reader.GetInt32(15),
-                        EnviadasRevision = reader.GetInt32(16),
-                        Procesando = reader.GetInt32(17),
-                        Descartadas = reader.GetInt32(18),
-                        UrlMiniatura = Texto(reader, 19)
+                        Estado = Texto(reader, 13),
+                        TotalFotografias = reader.GetInt32(14),
+                        Pendientes = reader.GetInt32(15),
+                        ConError = reader.GetInt32(16),
+                        Finalizadas = reader.GetInt32(17),
+                        RequierenDecisionTecnico = reader.GetInt32(18),
+                        EnviadasRevision = reader.GetInt32(19),
+                        Procesando = reader.GetInt32(20),
+                        Descartadas = reader.GetInt32(21),
+                        UrlMiniatura = Texto(reader, 22)
                     });
                 }
 

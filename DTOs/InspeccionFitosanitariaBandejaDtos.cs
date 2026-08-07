@@ -21,6 +21,9 @@ namespace CONATRADEC_API.DTOs
         public string Propietario { get; set; } = string.Empty;
         public string Municipio { get; set; } = string.Empty;
         public string Departamento { get; set; } = string.Empty;
+        public int UsuarioTecnicoId { get; set; }
+        public string TecnicoNombreCompleto { get; set; } = string.Empty;
+        public string TecnicoUsuario { get; set; } = string.Empty;
         public DateTime FechaRegistroSistemaUtc { get; set; }
         public string Estado { get; set; } = string.Empty;
         public int TotalFotografias { get; set; }
@@ -32,6 +35,27 @@ namespace CONATRADEC_API.DTOs
         public int Procesando { get; set; }
         public int Descartadas { get; set; }
         public string UrlMiniatura { get; set; } = string.Empty;
+    }
+
+    public sealed class InspeccionFitosanitariaTecnicoFiltroDto
+    {
+        public int UsuarioTecnicoId { get; set; }
+        public string NombreCompleto { get; set; } = string.Empty;
+        public string NombreUsuario { get; set; } = string.Empty;
+    }
+
+    public sealed class InspeccionFitosanitariaTecnicoAsignacionDto
+    {
+        public int InspeccionId { get; set; }
+        public int UsuarioTecnicoId { get; set; }
+        public string NombreCompleto { get; set; } = string.Empty;
+        public string NombreUsuario { get; set; } = string.Empty;
+    }
+
+    public sealed class InspeccionFitosanitariaTecnicoFiltroRespuestaDto
+    {
+        public List<InspeccionFitosanitariaTecnicoFiltroDto> Tecnicos { get; set; } = [];
+        public List<InspeccionFitosanitariaTecnicoAsignacionDto> Asignaciones { get; set; } = [];
     }
 
     /// <summary>
