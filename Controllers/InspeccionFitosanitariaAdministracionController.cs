@@ -550,36 +550,39 @@ FETCH NEXT @tamano ROWS ONLY;
                 return error;
 
             const string sql = """
-WITH datos AS
+IF OBJECT_ID(N'tempdb..#datosRendimientoIA', N'U') IS NOT NULL
+    DROP TABLE #datosRendimientoIA;
+
+SELECT
+    i.DiagnosticoIAImagenId,
+    ISNULL(NULLIF(LTRIM(RTRIM(i.ModeloIAUtilizado)), N''), N'Sin modelo') AS Modelo,
+    UPPER(LTRIM(RTRIM(ISNULL(r.DiagnosticoProbable, N'')))) AS DiagnosticoIA,
+    UPPER(LTRIM(RTRIM(ISNULL(ap.DiagnosticoFinal, N'')))) AS DiagnosticoFinal,
+    UPPER(ISNULL(ap.Decision, N'')) AS Decision,
+    UPPER(ISNULL(i.Estado, N'')) AS Estado,
+    i.FechaAnalisisIAUtc
+INTO #datosRendimientoIA
+FROM dbo.diagnosticoIAImagen i
+INNER JOIN dbo.diagnosticoIA d
+    ON d.DiagnosticoIAId = i.DiagnosticoIAId
+LEFT JOIN dbo.diagnosticoIAImagenResultadoIA r
+    ON r.DiagnosticoIAImagenId = i.DiagnosticoIAImagenId
+OUTER APPLY
 (
-    SELECT
-        i.DiagnosticoIAImagenId,
-        ISNULL(NULLIF(LTRIM(RTRIM(i.ModeloIAUtilizado)), N''), N'Sin modelo') AS Modelo,
-        UPPER(LTRIM(RTRIM(ISNULL(r.DiagnosticoProbable, N'')))) AS DiagnosticoIA,
-        UPPER(LTRIM(RTRIM(ISNULL(ap.DiagnosticoFinal, N'')))) AS DiagnosticoFinal,
-        UPPER(ISNULL(ap.Decision, N'')) AS Decision,
-        UPPER(ISNULL(i.Estado, N'')) AS Estado,
-        i.FechaAnalisisIAUtc
-    FROM dbo.diagnosticoIAImagen i
-    INNER JOIN dbo.diagnosticoIA d ON d.DiagnosticoIAId = i.DiagnosticoIAId
-    LEFT JOIN dbo.diagnosticoIAImagenResultadoIA r
-        ON r.DiagnosticoIAImagenId = i.DiagnosticoIAImagenId
-    OUTER APPLY
-    (
-        SELECT TOP(1)
-            a.DiagnosticoFinal,
-            a.Decision
-        FROM dbo.diagnosticoIAImagenAprobacionV2 a
-        WHERE a.DiagnosticoIAImagenId = i.DiagnosticoIAImagenId
-        ORDER BY a.FechaAprobacionUtc DESC,
-                 a.DiagnosticoIAImagenAprobacionId DESC
-    ) ap
-    WHERE d.Activo = 1
-      AND ISNULL(i.Activo, 1) = 1
-      AND i.FechaAnalisisIAUtc IS NOT NULL
-      AND (@desde IS NULL OR i.FechaAnalisisIAUtc >= @desde)
-      AND (@hasta IS NULL OR i.FechaAnalisisIAUtc < @hasta)
-)
+    SELECT TOP(1)
+        a.DiagnosticoFinal,
+        a.Decision
+    FROM dbo.diagnosticoIAImagenAprobacionV2 a
+    WHERE a.DiagnosticoIAImagenId = i.DiagnosticoIAImagenId
+    ORDER BY a.FechaAprobacionUtc DESC,
+             a.DiagnosticoIAImagenAprobacionId DESC
+) ap
+WHERE d.Activo = 1
+  AND ISNULL(i.Activo, 1) = 1
+  AND i.FechaAnalisisIAUtc IS NOT NULL
+  AND (@desde IS NULL OR i.FechaAnalisisIAUtc >= @desde)
+  AND (@hasta IS NULL OR i.FechaAnalisisIAUtc < @hasta);
+
 SELECT
     COUNT(1) AS FotografiasAnalizadas,
     SUM(CASE WHEN DiagnosticoFinal <> N'' THEN 1 ELSE 0 END) AS ConResultadoFinal,
@@ -590,7 +593,7 @@ SELECT
     SUM(CASE WHEN Estado = N'NO_CONCLUYENTE' THEN 1 ELSE 0 END) AS NoConcluyentes,
     SUM(CASE WHEN Estado = N'RECHAZADA' THEN 1 ELSE 0 END) AS Rechazadas,
     SUM(CASE WHEN Estado = N'ERROR_IA' THEN 1 ELSE 0 END) AS ErroresIA
-FROM datos;
+FROM #datosRendimientoIA;
 
 SELECT
     Modelo,
@@ -600,9 +603,11 @@ SELECT
         THEN 1 ELSE 0 END) AS CoincidenciasExactas,
     SUM(CASE WHEN DiagnosticoFinal <> N'' AND DiagnosticoIA <> DiagnosticoFinal
         THEN 1 ELSE 0 END) AS CorregidasPorHumano
-FROM datos
+FROM #datosRendimientoIA
 GROUP BY Modelo
 ORDER BY FotografiasAnalizadas DESC, Modelo;
+
+DROP TABLE #datosRendimientoIA;
 """;
 
             ControlFitosanitarioRendimientoIADto data =

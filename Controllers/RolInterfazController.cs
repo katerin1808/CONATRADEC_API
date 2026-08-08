@@ -9,9 +9,6 @@ namespace CONATRADEC_API.Controllers
     [Route("api/rol-permisos")]
     public sealed class RolPermisosController : ControllerBase
     {
-        private const string NOMBRE_ROL_ADMINISTRADOR =
-            "Administrador";
-
         private readonly DBContext db;
 
         public RolPermisosController(DBContext db)
@@ -97,16 +94,6 @@ namespace CONATRADEC_API.Controllers
                     success = false,
                     message =
                         "El rol no existe o está inactivo."
-                });
-            }
-
-            if (EsAdministrador(rol.nombreRol))
-            {
-                return Conflict(new
-                {
-                    success = false,
-                    message =
-                        "Los permisos del rol Administrador están protegidos y no pueden modificarse."
                 });
             }
 
@@ -237,16 +224,6 @@ namespace CONATRADEC_API.Controllers
                     success = false,
                     message =
                         "No se encontró el rol."
-                });
-            }
-
-            if (EsAdministrador(rol.nombreRol))
-            {
-                return Conflict(new
-                {
-                    success = false,
-                    message =
-                        "Los permisos del rol Administrador están protegidos."
                 });
             }
 
@@ -410,13 +387,7 @@ namespace CONATRADEC_API.Controllers
 
                         interfaz = grupo
                             .Select(item =>
-                            {
-                                bool administrador =
-                                    grupo.Key
-                                        .esAdministrador;
-
-                                return new
-                                    InterfazPermisoDto
+                                new InterfazPermisoDto
                                 {
                                     interfazId =
                                         item.interfazId,
@@ -430,23 +401,11 @@ namespace CONATRADEC_API.Controllers
                                             ? item.nombreInterfaz
                                             : item.nombreAmigableInterfaz,
 
-                                    leer =
-                                        administrador ||
-                                        item.leer,
-
-                                    agregar =
-                                        administrador ||
-                                        item.agregar,
-
-                                    actualizar =
-                                        administrador ||
-                                        item.actualizar,
-
-                                    eliminar =
-                                        administrador ||
-                                        item.eliminar
-                                };
-                            })
+                                    leer = item.leer,
+                                    agregar = item.agregar,
+                                    actualizar = item.actualizar,
+                                    eliminar = item.eliminar
+                                })
                             .OrderBy(item =>
                                 item.nombreAmigableInterfaz)
                             .ToList()
@@ -455,12 +414,5 @@ namespace CONATRADEC_API.Controllers
                     item.rol.nombreRol)
                 .ToList();
         }
-
-        private static bool EsAdministrador(
-            string? nombreRol) =>
-            string.Equals(
-                nombreRol?.Trim(),
-                NOMBRE_ROL_ADMINISTRADOR,
-                StringComparison.OrdinalIgnoreCase);
     }
 }

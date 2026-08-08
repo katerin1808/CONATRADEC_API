@@ -5,8 +5,9 @@ namespace CONATRADEC_API.Infrastructure
 {
     /// <summary>
     /// Instala de forma idempotente el permiso y la bitácora específica del
-    /// Centro de Control Fitosanitario. Los roles distintos al administrador
-    /// no reciben el permiso automáticamente: se asigna desde la matriz normal.
+    /// Centro de Control Fitosanitario. El administrador recibe el permiso solo
+    /// al crearse la relación por primera vez; después, cualquier cambio hecho
+    /// desde la matriz de permisos se respeta igual que para los demás roles.
     /// </summary>
     public sealed class InspeccionFitosanitariaAdministracionDatabaseInitializer
     {
@@ -72,8 +73,8 @@ BEGIN
 END;
 
 /*
- * El administrador conserva acceso total por compatibilidad con el esquema
- * actual. Los demás roles se habilitan desde la matriz de permisos.
+ * Se crea una asignación inicial para el rol Administrador únicamente cuando
+ * todavía no existe. No se sobrescriben permisos ya configurados manualmente.
  */
 IF OBJECT_ID(N'dbo.Rol', N'U') IS NOT NULL
    AND OBJECT_ID(N'dbo.rolInterfaz', N'U') IS NOT NULL
@@ -123,16 +124,6 @@ BEGIN
                 1
             );
         END
-        ELSE
-        BEGIN
-            UPDATE dbo.rolInterfaz
-            SET leer = 1,
-                agregar = 1,
-                actualizar = 1,
-                eliminar = 1
-            WHERE rolId = @rolAdministradorId
-              AND interfazId = @interfazId;
-        END;
     END;
 END;
 

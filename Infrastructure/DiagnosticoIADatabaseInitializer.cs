@@ -558,6 +558,11 @@ WHEN NOT MATCHED THEN
         origen.[eliminar]
     );
 
+/*
+ * El rol Administrador recibe estos permisos únicamente si todavía no existe
+ * una relación para la interfaz. A partir de ese momento la matriz de permisos
+ * es la fuente de verdad y el inicializador no vuelve a sobrescribir cambios.
+ */
 MERGE [dbo].[rolInterfaz] AS destino
 USING
 (
@@ -576,11 +581,6 @@ USING
 ) AS origen
 ON destino.[rolId] = origen.[rolId]
    AND destino.[interfazId] = origen.[interfazId]
-WHEN MATCHED THEN UPDATE SET
-    destino.[leer] = 1,
-    destino.[agregar] = 1,
-    destino.[actualizar] = 1,
-    destino.[eliminar] = 1
 WHEN NOT MATCHED THEN
     INSERT ([rolId], [interfazId], [leer], [agregar], [actualizar], [eliminar])
     VALUES (origen.[rolId], origen.[interfazId], 1, 1, 1, 1);
