@@ -66,6 +66,7 @@ builder.Services.AddScoped<
 builder.Services.AddScoped<AnalisisHistorialActionFilter>();
 builder.Services.AddScoped<InspeccionFitosanitariaControlActionFilter>();
 builder.Services.AddScoped<InspeccionFitosanitariaControlDatabaseInitializer>();
+builder.Services.AddScoped<InspeccionFitosanitariaAdministracionDatabaseInitializer>();
 
 builder.Services.AddControllers(options =>
 {
@@ -429,6 +430,12 @@ await using (
             .GetRequiredService<InspeccionFitosanitariaControlDatabaseInitializer>();
 
     await inspeccionControlInitializer.InicializarAsync();
+
+    InspeccionFitosanitariaAdministracionDatabaseInitializer inspeccionAdminInitializer =
+        scope.ServiceProvider
+            .GetRequiredService<InspeccionFitosanitariaAdministracionDatabaseInitializer>();
+
+    await inspeccionAdminInitializer.InicializarAsync();
 
     // Crea o repara la jerarquía del Álbum Botánico antes de atender solicitudes.
     AlbumJerarquiaDatabaseInitializer albumJerarquiaInitializer =
