@@ -1,4 +1,4 @@
-﻿using CONATRADEC_API.DTOs;
+using CONATRADEC_API.DTOs;
 using CONATRADEC_API.Models;
 using CONATRADEC_API.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -389,17 +389,12 @@ namespace CONATRADEC_API.Controllers
 
             try
             {
+                /*
+                 * Desactivar la ficha controla únicamente su visibilidad. Las
+                 * publicaciones provenientes de inspecciones conservan su estado
+                 * y vuelven a ser visibles si la ficha se reactiva.
+                 */
                 registro.activo = activo;
-
-                if (!activo)
-                {
-                    /*
-                     * Las copias provenientes de inspecciones no deben volver a
-                     * aparecer solas si la ficha se reactiva. Se conserva el
-                     * historial, pero su publicación queda inactiva.
-                     */
-                    await DesactivarPublicacionesFitosanitariasDeFichaAsync(id);
-                }
 
                 await _context.SaveChangesAsync();
 
@@ -448,8 +443,11 @@ namespace CONATRADEC_API.Controllers
 
             try
             {
+                /*
+                 * La eliminación lógica de la ficha no revoca publicaciones de
+                 * inspecciones; solo las oculta mientras la ficha esté inactiva.
+                 */
                 registro.activo = false;
-                await DesactivarPublicacionesFitosanitariasDeFichaAsync(id);
                 await _context.SaveChangesAsync();
                 await transaccion.CommitAsync();
 
@@ -1078,31 +1076,6 @@ ORDER BY
 
             if (cambio)
                 await _context.SaveChangesAsync();
-        }
-
-        /// <summary>
-        /// Al desactivar una ficha, solo se retiran las fotografías que fueron
-        /// publicadas desde inspecciones. Las fotografías administradas de forma
-        /// manual conservan su estado para no alterar la lógica existente.
-        /// </summary>
-        private async Task DesactivarPublicacionesFitosanitariasDeFichaAsync(
-            int albumBotanicoCafeId)
-        {
-            await _context.Database.ExecuteSqlInterpolatedAsync($"""
-UPDATE f
-SET f.activo = 0,
-    f.esPortada = 0
-FROM dbo.AlbumBotanicoCafeFoto f
-INNER JOIN dbo.diagnosticoIAAlbumPublicacion p
-    ON p.AlbumBotanicoCafeFotoId = f.albumBotanicoCafeFotoId
-WHERE p.AlbumBotanicoCafeId = {albumBotanicoCafeId}
-  AND p.Activo = 1;
-
-UPDATE dbo.diagnosticoIAAlbumPublicacion
-SET Activo = 0
-WHERE AlbumBotanicoCafeId = {albumBotanicoCafeId}
-  AND Activo = 1;
-""");
         }
 
         private async Task DesactivarPublicacionFitosanitariaPorFotoAsync(

@@ -1,4 +1,4 @@
-﻿using CONATRADEC_API.DTOs;
+using CONATRADEC_API.DTOs;
 using CONATRADEC_API.Models;
 using CONATRADEC_API.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -255,16 +255,11 @@ namespace CONATRADEC_API.Controllers
             try
             {
                 /*
-                 * Los registros y las fotografías administradas manualmente
-                 * conservan su estado, igual que en la lógica existente. Solo
-                 * las copias creadas desde inspecciones fitosanitarias se
-                 * retiran cuando la categoría se desactiva, evitando que una
-                 * publicación reviva automáticamente al reactivar la categoría.
+                 * La categoría controla únicamente la visibilidad de sus fichas.
+                 * Las publicaciones de inspecciones conservan su estado para que
+                 * vuelvan a mostrarse si la categoría se reactiva.
                  */
                 registro.activo = activo;
-
-                if (!activo)
-                    await DesactivarPublicacionesFitosanitariasDeCategoriaAsync(id);
 
                 await _context.SaveChangesAsync();
 
@@ -335,8 +330,11 @@ namespace CONATRADEC_API.Controllers
 
             try
             {
+                /*
+                 * Desactivar la categoría no revoca publicaciones previamente
+                 * autorizadas desde inspecciones fitosanitarias.
+                 */
                 registro.activo = false;
-                await DesactivarPublicacionesFitosanitariasDeCategoriaAsync(id);
                 await _context.SaveChangesAsync();
                 await transaccion.CommitAsync();
 
@@ -444,26 +442,6 @@ namespace CONATRADEC_API.Controllers
                     categoria.rutaImagenPortada
                 }
             });
-        }
-
-        private async Task DesactivarPublicacionesFitosanitariasDeCategoriaAsync(
-            int categoriaAlbumBotanicoId)
-        {
-            await _context.Database.ExecuteSqlInterpolatedAsync($"""
-UPDATE f
-SET f.activo = 0,
-    f.esPortada = 0
-FROM dbo.AlbumBotanicoCafeFoto f
-INNER JOIN dbo.diagnosticoIAAlbumPublicacion p
-    ON p.AlbumBotanicoCafeFotoId = f.albumBotanicoCafeFotoId
-WHERE p.CategoriaAlbumBotanicoId = {categoriaAlbumBotanicoId}
-  AND p.Activo = 1;
-
-UPDATE dbo.diagnosticoIAAlbumPublicacion
-SET Activo = 0
-WHERE CategoriaAlbumBotanicoId = {categoriaAlbumBotanicoId}
-  AND Activo = 1;
-""");
         }
 
         /// <summary>

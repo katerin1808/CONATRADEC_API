@@ -930,12 +930,11 @@ WHERE rn = 1;
             bool mismoUsuario,
             CancellationToken cancellationToken = default)
         {
-            if (mismoUsuario)
-            {
-                throw new InvalidOperationException(
-                    "El usuario que analizó la evidencia no puede aprobarla.");
-            }
-
+            /*
+             * La autorización se controla por permisos en la capa de negocio.
+             * Si una misma cuenta participa como analizador y aprobador, se
+             * conserva explícitamente esa coincidencia para la auditoría.
+             */
             const string sql = """
 INSERT INTO dbo.diagnosticoIAImagenAprobacionV2
 (
@@ -952,7 +951,7 @@ VALUES
     @fotoId, @analisisId, @usuarioId, @decision, @calidad,
     @estadoGeneral, @categoria, @categoriasJson, @diagnostico,
     @tipo, @severidad, @certeza, @observaciones, @autorizaAlbum,
-    0, SYSUTCDATETIME()
+    @mismoUsuario, SYSUTCDATETIME()
 );
 SELECT CAST(SCOPE_IDENTITY() AS INT);
 """;
@@ -973,7 +972,8 @@ SELECT CAST(SCOPE_IDENTITY() AS INT);
                 ("@severidad", Limitar(severidad, 30)),
                 ("@certeza", Limitar(certeza, 30)),
                 ("@observaciones", Limitar(observaciones, 3000)),
-                ("@autorizaAlbum", autorizaAlbum));
+                ("@autorizaAlbum", autorizaAlbum),
+                ("@mismoUsuario", mismoUsuario));
         }
 
         public async Task<AprobacionRegistro?> ObtenerUltimaAprobacionAsync(

@@ -63,13 +63,18 @@ namespace CONATRADEC_API.Controllers
                 .Trim()
                 .ToLowerInvariant();
 
-            if (modoNormalizado is not ("analizador" or "aprobador"))
+            if (modoNormalizado is not
+                ("analizador" or "aprobador" or "aprobador-revisadas"))
             {
                 return BadRequest(Error(
-                    "La bandeja operativa solo admite modo analizador o aprobador."));
+                    "La bandeja operativa solo admite modo analizador, aprobador o aprobador-revisadas."));
             }
 
-            string interfaz = modoNormalizado == "aprobador"
+            bool modoAprobador = modoNormalizado.StartsWith(
+                "aprobador",
+                StringComparison.Ordinal);
+
+            string interfaz = modoAprobador
                 ? DiagnosticoIAFlujo.InterfazAprobador
                 : DiagnosticoIAFlujo.InterfazAnalizador;
 
@@ -130,9 +135,15 @@ namespace CONATRADEC_API.Controllers
             return Ok(new
             {
                 success = true,
-                message = modoNormalizado == "aprobador"
-                    ? "Fotografías pendientes de aprobación obtenidas correctamente."
-                    : "Fotografías disponibles para el analizador obtenidas correctamente.",
+                message = modoNormalizado switch
+                {
+                    "aprobador" =>
+                        "Fotografías pendientes de aprobación obtenidas correctamente.",
+                    "aprobador-revisadas" =>
+                        "Inspecciones revisadas por el aprobador obtenidas correctamente.",
+                    _ =>
+                        "Fotografías disponibles para el analizador obtenidas correctamente."
+                },
                 data = pagina
             });
         }
@@ -169,8 +180,13 @@ WITH bandeja AS
         ISNULL(tecnico.nombreUsuario, N'') AS TecnicoUsuario,
         d.FechaSolicitudUtc AS FechaRegistroSistemaUtc,
         CASE
+            WHEN ISNULL(d.CerradaDefinitiva, 0) = 1
+                THEN N'FINALIZADA'
             WHEN ISNULL(resumen.PendienteAprobacion, 0) > 0
                 THEN N'PENDIENTE_APROBACION'
+            WHEN @modo = N'aprobador-revisadas'
+                 AND ISNULL(resumen.Pendientes, 0) = 0
+                THEN N'FINALIZADA'
             ELSE N'PENDIENTE_REVISION'
         END AS EstadoCalculado,
         CONVERT(INT, ISNULL(resumen.TotalFotografias, 0)) AS TotalFotografias,
@@ -284,7 +300,11 @@ WITH bandeja AS
         ORDER BY i.Orden, i.DiagnosticoIAImagenId
     ) portada
     WHERE d.Activo = 1
-      AND ISNULL(d.CerradaDefinitiva, 0) = 0
+      AND
+      (
+          @modo = N'aprobador-revisadas'
+          OR ISNULL(d.CerradaDefinitiva, 0) = 0
+      )
       AND (@tecnicoId IS NULL OR d.UsuarioSolicitanteId = @tecnicoId)
       AND
       (
@@ -340,6 +360,32 @@ WITH bandeja AS
                     AND ISNULL(ap.Descartada, 0) = 0
                     AND UPPER(ISNULL(ap.Estado, N'BORRADOR')) =
                         N'PENDIENTE_APROBACION'
+              )
+          )
+          OR
+          (
+              @modo = N'aprobador-revisadas'
+              AND asignacion.UsuarioAprobadorId = @usuarioId
+              AND EXISTS
+              (
+                  SELECT 1
+                  FROM dbo.diagnosticoIAImagenAprobacionV2 apr
+                  INNER JOIN dbo.diagnosticoIAImagen imgApr
+                      ON imgApr.DiagnosticoIAImagenId =
+                         apr.DiagnosticoIAImagenId
+                  WHERE imgApr.DiagnosticoIAId = d.DiagnosticoIAId
+                    AND apr.UsuarioAprobadorId = @usuarioId
+              )
+              AND NOT EXISTS
+              (
+                  SELECT 1
+                  FROM dbo.diagnosticoIAImagen pendienteApr
+                  WHERE pendienteApr.DiagnosticoIAId = d.DiagnosticoIAId
+                    AND ISNULL(pendienteApr.Activo, 1) = 1
+                    AND ISNULL(pendienteApr.Descartada, 0) = 0
+                    AND UPPER(ISNULL(
+                        pendienteApr.Estado,
+                        N'BORRADOR')) = N'PENDIENTE_APROBACION'
               )
           )
       )

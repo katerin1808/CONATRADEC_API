@@ -367,12 +367,10 @@ namespace CONATRADEC_API.Controllers
                 /*
                  * La autorización se rige por permisos. Si la misma cuenta
                  * posee permisos de analizador y aprobador, la aprobación se
-                 * registra y la auditoría conserva MismoUsuarioQueAnalizo=1.
-                 * InspeccionFitosanitariaDatabase conserva una restricción
-                 * heredada, por lo que aquí se registra primero la decisión y
-                 * después se marca explícitamente la coincidencia de usuarios.
+                 * registra directamente con MismoUsuarioQueAnalizo=1 para
+                 * mantener una sola regla en toda la capa de persistencia.
                  */
-                int aprobacionId = await database.RegistrarAprobacionAsync(
+                await database.RegistrarAprobacionAsync(
                     item.FotografiaId,
                     analisis.AnalisisHumanoId,
                     usuarioId!.Value,
@@ -404,17 +402,8 @@ namespace CONATRADEC_API.Controllers
                         analisis.NivelCerteza),
                     item.Observaciones,
                     decisionPositiva && item.AutorizaPublicacionAlbum,
-                    mismoUsuario: false,
+                    mismoUsuario: mismoUsuarioQueAnalizo,
                     cancellationToken);
-
-                if (mismoUsuarioQueAnalizo)
-                {
-                    await diagnosticoDb.Database.ExecuteSqlInterpolatedAsync($"""
-UPDATE dbo.diagnosticoIAImagenAprobacionV2
-SET MismoUsuarioQueAnalizo = 1
-WHERE DiagnosticoIAImagenAprobacionId = {aprobacionId};
-""", cancellationToken);
-                }
 
                 await database.CambiarEstadoFotoAsync(
                     item.FotografiaId,
