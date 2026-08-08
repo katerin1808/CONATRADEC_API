@@ -1,4 +1,4 @@
-using CONATRADEC_API.Infrastructure;
+﻿using CONATRADEC_API.Infrastructure;
 using CONATRADEC_API.Models;
 using CONATRADEC_API.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -12,7 +12,8 @@ namespace CONATRADEC_API.Controllers
     /// Reserva temporalmente una inspección para una sola sesión por etapa.
     /// ANALIZADOR y APROBADOR poseen bloqueos independientes para conservar el
     /// trabajo por fotografía sin permitir dos usuarios simultáneos en la
-    /// misma etapa.
+    /// misma etapa. Cuando la etapa aún no tiene responsable, adquirir el
+    /// bloqueo también toma la asignación para el usuario autenticado.
     /// </summary>
     [ApiController]
     [Authorize]
@@ -78,41 +79,37 @@ namespace CONATRADEC_API.Controllers
             }
 
             /*
-             * La reserva temporal no debe apropiarse permanentemente de la
-             * etapa solo por abrir la pantalla. Si ya existe una asignación
-             * funcional previa, se respeta; cuando aún no existe, la primera
-             * operación real será la que asigne el expediente como hasta ahora.
+             * La asignación representa al responsable persistente de la etapa.
+             * Si ya existe otro responsable, el expediente puede consultarse,
+             * pero este endpoint no concede edición ni sustituye la asignación.
              */
-            InspeccionFitosanitariaAsignacionRegistro asignacion =
+            InspeccionFitosanitariaAsignacionRegistro asignacionAnterior =
                 await asignaciones.ObtenerAsync(id, cancellationToken);
 
-            int? asignado = etapa == "ANALIZADOR"
-                ? asignacion.UsuarioAnalizadorId
-                : asignacion.UsuarioAprobadorId;
+            int? asignadoAnterior = etapa == "ANALIZADOR"
+                ? asignacionAnterior.UsuarioAnalizadorId
+                : asignacionAnterior.UsuarioAprobadorId;
 
-            if (asignado.HasValue && asignado.Value != usuarioId.Value)
+            if (asignadoAnterior.HasValue &&
+                asignadoAnterior.Value != usuarioId.Value)
             {
                 string nombreAsignado = await ObtenerNombreUsuarioAsync(
-                    asignado,
+                    asignadoAnterior,
                     cancellationToken);
 
-                return Conflict(new
-                {
-                    success = false,
-                    message = string.IsNullOrWhiteSpace(nombreAsignado)
-                        ? $"La inspección ya está asignada a otro usuario para la etapa de {NombreEtapa(etapa)}."
-                        : $"La inspección está asignada a {nombreAsignado} para la etapa de {NombreEtapa(etapa)}.",
-                    data = new
-                    {
-                        adquirido = false,
-                        inspeccionId = id,
-                        modo = etapa.ToLowerInvariant(),
-                        usuarioId = asignado,
-                        usuarioNombre = nombreAsignado
-                    }
-                });
+                return Conflict(CrearConflictoAsignacion(
+                    id,
+                    etapa,
+                    asignadoAnterior.Value,
+                    nombreAsignado));
             }
 
+            /*
+             * Primero se obtiene el bloqueo temporal. Así, dos usuarios que
+             * intenten tomar al mismo tiempo una etapa todavía sin asignar no
+             * pueden apropiársela simultáneamente. Solo quien obtuvo el bloqueo
+             * continúa con la autoasignación.
+             */
             ResultadoAdquisicionBloqueoInspeccion resultado =
                 await bloqueos.AdquirirAsync(
                     id,
@@ -143,6 +140,47 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
+            bool autoAsignada = !asignadoAnterior.HasValue;
+            ResultadoAsignacionFlujo asignacionTomada = etapa == "ANALIZADOR"
+                ? await asignaciones.TomarAnalizadorAsync(
+                    id,
+                    usuarioId.Value,
+                    cancellationToken)
+                : await asignaciones.TomarAprobadorAsync(
+                    id,
+                    usuarioId.Value,
+                    cancellationToken);
+
+            if (!asignacionTomada.Exitoso)
+            {
+                /*
+                 * Una reasignación administrativa pudo ocurrir entre la lectura
+                 * inicial y la adquisición del bloqueo. En ese caso se libera
+                 * inmediatamente el lease obtenido para no dejar una reserva
+                 * huérfana y se informa el responsable real.
+                 */
+                await bloqueos.LiberarAsync(
+                    id,
+                    usuarioId.Value,
+                    etapa,
+                    resultado.Bloqueo.TokenSesion,
+                    CancellationToken.None);
+
+                int? responsableReal = etapa == "ANALIZADOR"
+                    ? asignacionTomada.Asignacion.UsuarioAnalizadorId
+                    : asignacionTomada.Asignacion.UsuarioAprobadorId;
+
+                string nombreResponsable = await ObtenerNombreUsuarioAsync(
+                    responsableReal,
+                    cancellationToken);
+
+                return Conflict(CrearConflictoAsignacion(
+                    id,
+                    etapa,
+                    responsableReal ?? 0,
+                    nombreResponsable));
+            }
+
             string usuarioNombre = await ObtenerNombreUsuarioAsync(
                 usuarioId,
                 cancellationToken);
@@ -150,12 +188,14 @@ namespace CONATRADEC_API.Controllers
             return Ok(new
             {
                 success = true,
-                message =
-                    $"La inspección quedó bloqueada para esta sesión de {NombreEtapa(etapa)}.",
+                message = autoAsignada
+                    ? $"La inspección fue tomada por {usuarioNombre} como {NombreEtapa(etapa)} y quedó bloqueada para esta sesión."
+                    : $"La inspección quedó bloqueada para esta sesión de {NombreEtapa(etapa)}.",
                 data = CrearRespuesta(
                     resultado.Bloqueo,
                     usuarioNombre,
-                    adquirido: true)
+                    adquirido: true,
+                    autoAsignada: autoAsignada)
             });
         }
 
@@ -290,10 +330,44 @@ namespace CONATRADEC_API.Controllers
             return $"usuario #{usuarioId.Value}";
         }
 
+        private static object CrearConflictoAsignacion(
+            int inspeccionId,
+            string etapa,
+            int usuarioAsignadoId,
+            string usuarioAsignadoNombre)
+        {
+            string mensaje = string.IsNullOrWhiteSpace(usuarioAsignadoNombre)
+                ? $"La inspección ya está asignada a otro usuario para la etapa de {NombreEtapa(etapa)}. Puede consultarla, pero solo el responsable asignado puede modificarla."
+                : $"La inspección está asignada a {usuarioAsignadoNombre} para la etapa de {NombreEtapa(etapa)}. Puede consultarla, pero solo ese responsable puede modificarla.";
+
+            return new
+            {
+                success = false,
+                message = mensaje,
+                data = new
+                {
+                    adquirido = false,
+                    inspeccionId,
+                    modo = etapa.ToLowerInvariant(),
+                    usuarioId = usuarioAsignadoId,
+                    usuarioNombre = usuarioAsignadoNombre ?? string.Empty,
+                    token = string.Empty,
+                    fechaAdquisicionUtc = (DateTime?)null,
+                    ultimoHeartbeatUtc = (DateTime?)null,
+                    expiraUtc = (DateTime?)null,
+                    vigenciaSegundos =
+                        InspeccionFitosanitariaBloqueoDatabase.VigenciaSegundos,
+                    asignadaAOtroUsuario = true,
+                    autoAsignada = false
+                }
+            };
+        }
+
         private static object CrearRespuesta(
             BloqueoInspeccionRegistro? bloqueo,
             string usuarioNombre,
-            bool adquirido)
+            bool adquirido,
+            bool autoAsignada = false)
         {
             if (bloqueo == null)
             {
@@ -309,7 +383,9 @@ namespace CONATRADEC_API.Controllers
                     ultimoHeartbeatUtc = (DateTime?)null,
                     expiraUtc = (DateTime?)null,
                     vigenciaSegundos =
-                        InspeccionFitosanitariaBloqueoDatabase.VigenciaSegundos
+                        InspeccionFitosanitariaBloqueoDatabase.VigenciaSegundos,
+                    asignadaAOtroUsuario = false,
+                    autoAsignada
                 };
             }
 
@@ -327,7 +403,9 @@ namespace CONATRADEC_API.Controllers
                 ultimoHeartbeatUtc = bloqueo.UltimoHeartbeatUtc,
                 expiraUtc = bloqueo.ExpiraUtc,
                 vigenciaSegundos =
-                    InspeccionFitosanitariaBloqueoDatabase.VigenciaSegundos
+                    InspeccionFitosanitariaBloqueoDatabase.VigenciaSegundos,
+                asignadaAOtroUsuario = false,
+                autoAsignada
             };
         }
 

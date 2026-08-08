@@ -15,6 +15,11 @@ namespace CONATRADEC_API.Controllers
     /// Bandeja unificada del flujo fitosanitario. Mis inspecciones, decisiones,
     /// analizador, aprobador e historial comparten el mismo cálculo de estado
     /// por fotografía para evitar resultados distintos entre vistas.
+    ///
+    /// Las bandejas de analizador y aprobador muestran tanto expedientes sin
+    /// asignar como expedientes asignados a otros responsables. La asignación
+    /// controla la edición, no la consulta; así todos los usuarios con permiso
+    /// pueden revisar el contexto sin apropiarse del expediente.
     /// </summary>
     [ApiController]
     [Authorize]
@@ -476,7 +481,6 @@ WITH bandeja AS
           (
               @modo = N'analizador'
               AND ISNULL(d.CerradaDefinitiva, 0) = 0
-              AND (asignacion.UsuarioAnalizadorId IS NULL OR asignacion.UsuarioAnalizadorId = @usuarioId)
               AND EXISTS
               (
                   SELECT 1 FROM dbo.diagnosticoIAImagen ia
@@ -520,7 +524,6 @@ WITH bandeja AS
               @modo = N'aprobador'
               AND ISNULL(d.CerradaDefinitiva, 0) = 0
               AND ISNULL(d.EtapaTecnicaFinalizada, 0) = 1
-              AND (asignacion.UsuarioAprobadorId IS NULL OR asignacion.UsuarioAprobadorId = @usuarioId)
               AND EXISTS
               (
                   SELECT 1 FROM dbo.diagnosticoIAImagen ap
@@ -720,7 +723,6 @@ WHERE d.Activo = 1
       (
           @modo = N'analizador'
           AND ISNULL(d.CerradaDefinitiva, 0) = 0
-          AND (asignacion.UsuarioAnalizadorId IS NULL OR asignacion.UsuarioAnalizadorId = @usuarioId)
           AND EXISTS
           (
               SELECT 1 FROM dbo.diagnosticoIAImagen i
@@ -762,7 +764,6 @@ WHERE d.Activo = 1
           @modo = N'aprobador'
           AND ISNULL(d.CerradaDefinitiva, 0) = 0
           AND ISNULL(d.EtapaTecnicaFinalizada, 0) = 1
-          AND (asignacion.UsuarioAprobadorId IS NULL OR asignacion.UsuarioAprobadorId = @usuarioId)
           AND EXISTS
           (
               SELECT 1 FROM dbo.diagnosticoIAImagen i
