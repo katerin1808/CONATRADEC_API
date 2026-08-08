@@ -26,6 +26,7 @@ namespace CONATRADEC_API.Controllers
         private readonly PermisoApiService permisos;
         private readonly InspeccionFitosanitariaDatabase flujo;
         private readonly InspeccionFitosanitariaControlDatabaseInitializer control;
+        private readonly InspeccionFitosanitariaBloqueoDatabase bloqueos;
         private readonly ILogger<InspeccionFitosanitariaPublicacionAlbumController>
             logger;
 
@@ -39,6 +40,7 @@ namespace CONATRADEC_API.Controllers
             this.logger = logger;
             flujo = new InspeccionFitosanitariaDatabase(db);
             control = new InspeccionFitosanitariaControlDatabaseInitializer(db);
+            bloqueos = new InspeccionFitosanitariaBloqueoDatabase(db);
         }
 
         /// <summary>
@@ -124,6 +126,14 @@ namespace CONATRADEC_API.Controllers
 
             if (!usuarioId.HasValue)
                 return Forbid();
+
+            IActionResult? bloqueo = await ValidarBloqueoAprobadorAsync(
+                inspeccionId,
+                usuarioId.Value,
+                cancellationToken);
+
+            if (bloqueo != null)
+                return bloqueo;
 
             await flujo.InicializarAsync(cancellationToken);
 
@@ -309,6 +319,14 @@ VALUES
 
             if (!usuarioId.HasValue)
                 return Forbid();
+
+            IActionResult? bloqueo = await ValidarBloqueoAprobadorAsync(
+                inspeccionId,
+                usuarioId.Value,
+                cancellationToken);
+
+            if (bloqueo != null)
+                return bloqueo;
 
             await flujo.InicializarAsync(cancellationToken);
             await SincronizarPublicacionesInactivasAsync(
@@ -575,6 +593,14 @@ VALUES
 
             if (!usuarioId.HasValue)
                 return Forbid();
+
+            IActionResult? bloqueo = await ValidarBloqueoAprobadorAsync(
+                inspeccionId,
+                usuarioId.Value,
+                cancellationToken);
+
+            if (bloqueo != null)
+                return bloqueo;
 
             await flujo.InicializarAsync(cancellationToken);
 
@@ -929,6 +955,24 @@ VALUES
                 return publica;
 
             return string.Empty;
+        }
+
+        private async Task<IActionResult?> ValidarBloqueoAprobadorAsync(
+            int inspeccionId,
+            int usuarioId,
+            CancellationToken cancellationToken)
+        {
+            ResultadoValidacionBloqueoInspeccion resultado =
+                await bloqueos.ValidarPropietarioActivoAsync(
+                    inspeccionId,
+                    usuarioId,
+                    "APROBADOR",
+                    cancellationToken);
+
+            if (resultado.Permitido)
+                return null;
+
+            return Conflict(Error(resultado.Mensaje));
         }
 
         private int? ObtenerUsuarioId()

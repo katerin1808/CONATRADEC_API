@@ -31,6 +31,7 @@ namespace CONATRADEC_API.Controllers
         private readonly InspeccionFitosanitariaDatabase database;
         private readonly InspeccionFitosanitariaControlDatabaseInitializer control;
         private readonly InspeccionFitosanitariaAsignacionDatabase asignaciones;
+        private readonly InspeccionFitosanitariaBloqueoDatabase bloqueos;
 
         public InspeccionFitosanitariaFlujoIndependienteController(
             DBContext db,
@@ -44,6 +45,7 @@ namespace CONATRADEC_API.Controllers
             this.control = control;
             database = new InspeccionFitosanitariaDatabase(diagnosticoDb);
             asignaciones = new InspeccionFitosanitariaAsignacionDatabase(diagnosticoDb);
+            bloqueos = new InspeccionFitosanitariaBloqueoDatabase(diagnosticoDb);
         }
 
         /// <summary>
@@ -144,6 +146,15 @@ namespace CONATRADEC_API.Controllers
                         message = "El diagnóstico humano es obligatorio."
                     });
                 }
+
+                IActionResult? bloqueoAnalizador = await ValidarBloqueoRevisionAsync(
+                    id,
+                    usuarioId!.Value,
+                    "ANALIZADOR",
+                    cancellationToken);
+
+                if (bloqueoAnalizador != null)
+                    return bloqueoAnalizador;
 
                 ResultadoAsignacionFlujo asignacionAnalizador =
                     await asignaciones.TomarAnalizadorAsync(
@@ -326,6 +337,15 @@ namespace CONATRADEC_API.Controllers
                  */
                 bool mismoUsuarioQueAnalizo =
                     analisis.UsuarioAnalizadorId == usuarioId.Value;
+
+                IActionResult? bloqueoAprobador = await ValidarBloqueoRevisionAsync(
+                    id,
+                    usuarioId.Value,
+                    "APROBADOR",
+                    cancellationToken);
+
+                if (bloqueoAprobador != null)
+                    return bloqueoAprobador;
 
                 ResultadoAsignacionFlujo asignacionAprobador =
                     await asignaciones.TomarAprobadorAsync(
@@ -554,6 +574,29 @@ namespace CONATRADEC_API.Controllers
                 cancellationToken);
 
             return permiso.Permitido;
+        }
+
+        private async Task<IActionResult?> ValidarBloqueoRevisionAsync(
+            int inspeccionId,
+            int usuarioId,
+            string etapa,
+            CancellationToken cancellationToken)
+        {
+            ResultadoValidacionBloqueoInspeccion resultado =
+                await bloqueos.ValidarPropietarioActivoAsync(
+                    inspeccionId,
+                    usuarioId,
+                    etapa,
+                    cancellationToken);
+
+            if (resultado.Permitido)
+                return null;
+
+            return Conflict(new
+            {
+                success = false,
+                message = resultado.Mensaje
+            });
         }
 
         private int? ObtenerUsuarioId()
