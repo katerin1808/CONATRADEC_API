@@ -13,8 +13,9 @@ namespace CONATRADEC_API.Controllers
 {
     /// <summary>
     /// Gestiona la relación posterior entre una fotografía aprobada y el Álbum
-    /// Botánico. La aprobación técnica, la autorización para usar la evidencia
-    /// en el álbum y la publicación activa son decisiones independientes.
+    /// Botánico. La decisión técnica y la clasificación oficial permanecen
+    /// inalterables; después de confirmarlas solo se publica o se retira la
+    /// copia del Álbum Botánico.
     /// </summary>
     [ApiController]
     [Authorize]
@@ -23,24 +24,25 @@ namespace CONATRADEC_API.Controllers
         ControllerBase
     {
         private readonly DiagnosticoIADbContext db;
+        private readonly AlbumJerarquiaDbContext albumJerarquia;
         private readonly PermisoApiService permisos;
         private readonly InspeccionFitosanitariaDatabase flujo;
         private readonly InspeccionFitosanitariaControlDatabaseInitializer control;
-        private readonly InspeccionFitosanitariaBloqueoDatabase bloqueos;
         private readonly ILogger<InspeccionFitosanitariaPublicacionAlbumController>
             logger;
 
         public InspeccionFitosanitariaPublicacionAlbumController(
             DiagnosticoIADbContext db,
+            AlbumJerarquiaDbContext albumJerarquia,
             PermisoApiService permisos,
             ILogger<InspeccionFitosanitariaPublicacionAlbumController> logger)
         {
             this.db = db;
+            this.albumJerarquia = albumJerarquia;
             this.permisos = permisos;
             this.logger = logger;
             flujo = new InspeccionFitosanitariaDatabase(db);
             control = new InspeccionFitosanitariaControlDatabaseInitializer(db);
-            bloqueos = new InspeccionFitosanitariaBloqueoDatabase(db);
         }
 
         /// <summary>
@@ -99,202 +101,10 @@ namespace CONATRADEC_API.Controllers
         }
 
         /// <summary>
-        /// Permite al aprobador autorizar o revocar posteriormente el uso de
-        /// una fotografía aprobada en el Álbum Botánico. Revocar la autorización
-        /// retira también cualquier copia activa vinculada a esa aprobación.
+        /// Publica directamente una fotografía aprobada cuya clasificación fue
+        /// confirmada por el aprobador. Publicar es una operación posterior e
+        /// independiente y no requiere mantener activo el lease de revisión.
         /// </summary>
-        [HttpPatch("{inspeccionId:int}/fotografias/{fotografiaId:int}/autorizacion")]
-        public async Task<IActionResult> CambiarAutorizacion(
-            int inspeccionId,
-            int fotografiaId,
-            [FromBody] InspeccionFotoAutorizacionAlbumRequest request,
-            CancellationToken cancellationToken = default)
-        {
-            int? usuarioId = ObtenerUsuarioId();
-            ResultadoPermisoApi permiso = await permisos.ValidarAsync(
-                usuarioId,
-                DiagnosticoIAFlujo.InterfazAprobador,
-                TipoPermisoApi.Actualizar,
-                cancellationToken);
-
-            if (!permiso.Permitido)
-            {
-                return StatusCode(
-                    permiso.CodigoEstado,
-                    Error(permiso.Mensaje));
-            }
-
-            if (!usuarioId.HasValue)
-                return Forbid();
-
-            IActionResult? bloqueo = await ValidarBloqueoAprobadorAsync(
-                inspeccionId,
-                usuarioId.Value,
-                cancellationToken);
-
-            if (bloqueo != null)
-                return bloqueo;
-
-            await flujo.InicializarAsync(cancellationToken);
-
-            if (!await FotografiaPerteneceAsync(
-                    inspeccionId,
-                    fotografiaId,
-                    cancellationToken))
-            {
-                return NotFound(Error(
-                    "No se encontró la fotografía indicada en la inspección."));
-            }
-
-            FotoMetadatos? meta = await flujo.ObtenerFotoAsync(
-                fotografiaId,
-                cancellationToken);
-
-            if (meta == null || !meta.Activo || meta.Descartada ||
-                meta.Estado is not
-                    (InspeccionFitosanitariaFlujo.FotoEstados.Aprobada or
-                     InspeccionFitosanitariaFlujo.FotoEstados
-                        .AprobadaConCorreccion or
-                     InspeccionFitosanitariaFlujo.FotoEstados.PublicadaAlbum))
-            {
-                return Conflict(Error(
-                    "La autorización del Álbum Botánico solo puede administrarse después de aprobar la fotografía."));
-            }
-
-            AprobacionRegistro? aprobacion =
-                await flujo.ObtenerUltimaAprobacionAsync(
-                    fotografiaId,
-                    cancellationToken);
-
-            if (aprobacion == null)
-            {
-                return Conflict(Error(
-                    "La fotografía no tiene una aprobación registrada."));
-            }
-
-            await using var transaccion =
-                await db.Database.BeginTransactionAsync(
-                    IsolationLevel.Serializable,
-                    cancellationToken);
-
-            try
-            {
-                await db.Database.ExecuteSqlInterpolatedAsync($"""
-UPDATE dbo.diagnosticoIAImagenAprobacionV2
-SET AutorizaPublicacionAlbum = {request.Autorizar}
-WHERE DiagnosticoIAImagenAprobacionId = {aprobacion.AprobacionId}
-  AND DiagnosticoIAImagenId = {fotografiaId};
-""", cancellationToken);
-
-                var albumesQueRequierenPortada = new HashSet<int>();
-
-                if (!request.Autorizar)
-                {
-                    List<DiagnosticoIAAlbumPublicacion> publicaciones =
-                        await db.PublicacionesAlbum
-                            .Where(item =>
-                                item.DiagnosticoIAImagenId == fotografiaId &&
-                                item.Activo)
-                            .ToListAsync(cancellationToken);
-
-                    foreach (DiagnosticoIAAlbumPublicacion publicacion
-                             in publicaciones)
-                    {
-                        if (publicacion.AlbumBotanicoCafeId > 0)
-                        {
-                            albumesQueRequierenPortada.Add(
-                                publicacion.AlbumBotanicoCafeId);
-                        }
-                    }
-
-                    int[] fotoAlbumIds = publicaciones
-                        .Select(item => item.AlbumBotanicoCafeFotoId)
-                        .Where(id => id > 0)
-                        .Distinct()
-                        .ToArray();
-
-                    if (fotoAlbumIds.Length > 0)
-                    {
-                        List<AlbumBotanicoCafeFotoReferencia> fotosAlbum =
-                            await db.FotosAlbum
-                                .Where(item => fotoAlbumIds.Contains(
-                                    item.AlbumBotanicoCafeFotoId))
-                                .ToListAsync(cancellationToken);
-
-                        foreach (AlbumBotanicoCafeFotoReferencia fotoAlbum
-                                 in fotosAlbum)
-                        {
-                            fotoAlbum.Activo = false;
-                            fotoAlbum.EsPortada = false;
-                        }
-                    }
-
-                    foreach (DiagnosticoIAAlbumPublicacion publicacion
-                             in publicaciones)
-                    {
-                        publicacion.Activo = false;
-                    }
-                }
-
-                string accion = request.Autorizar
-                    ? "AUTORIZACION_ALBUM_OTORGADA"
-                    : "AUTORIZACION_ALBUM_REVOCADA";
-                string detalle = request.Autorizar
-                    ? "El aprobador autorizó que la fotografía pueda incorporarse posteriormente al Álbum Botánico."
-                    : "El aprobador revocó la autorización para el Álbum Botánico. Cualquier copia activa vinculada fue retirada lógicamente.";
-
-                await db.Database.ExecuteSqlInterpolatedAsync($"""
-INSERT INTO dbo.diagnosticoIAImagenHistorialV2
-(
-    DiagnosticoIAImagenId, UsuarioId, EstadoAnterior,
-    EstadoNuevo, Accion, Detalle, FechaUtc
-)
-VALUES
-(
-    {fotografiaId}, {usuarioId.Value}, {meta.Estado}, {meta.Estado},
-    {accion}, {detalle}, SYSUTCDATETIME()
-);
-""", cancellationToken);
-
-                await db.SaveChangesAsync(cancellationToken);
-
-                foreach (int albumBotanicoCafeId in
-                         albumesQueRequierenPortada)
-                {
-                    await GarantizarPortadaActivaAsync(
-                        albumBotanicoCafeId,
-                        cancellationToken);
-                }
-
-                await transaccion.CommitAsync(cancellationToken);
-
-                EstadoAlbumFotografia data = await ConstruirEstadoAsync(
-                    fotografiaId,
-                    cancellationToken);
-
-                return Ok(new
-                {
-                    success = true,
-                    message = request.Autorizar
-                        ? "La fotografía quedó autorizada para una publicación posterior en el Álbum Botánico."
-                        : "La autorización fue cancelada y la fotografía ya no se encuentra publicada activamente en el Álbum Botánico.",
-                    data
-                });
-            }
-            catch (Exception ex)
-            {
-                await transaccion.RollbackAsync(CancellationToken.None);
-                logger.LogError(
-                    ex,
-                    "Error al cambiar autorización de Álbum. Inspección {InspeccionId}, fotografía {FotografiaId}.",
-                    inspeccionId,
-                    fotografiaId);
-
-                return StatusCode(500, Error(
-                    "No fue posible actualizar la autorización del Álbum Botánico. Intente nuevamente."));
-            }
-        }
-
         [HttpPost("{inspeccionId:int}/fotografias/{fotografiaId:int}")]
         [HttpPost("~/api/inspecciones-fitosanitarias/{inspeccionId:int}/fotografias/{fotografiaId:int}/publicar-album")]
         public async Task<IActionResult> Publicar(
@@ -320,13 +130,18 @@ VALUES
             if (!usuarioId.HasValue)
                 return Forbid();
 
-            IActionResult? bloqueo = await ValidarBloqueoAprobadorAsync(
-                inspeccionId,
-                usuarioId.Value,
+            ResultadoPermisoApi permisoAprobador = await permisos.ValidarAsync(
+                usuarioId,
+                DiagnosticoIAFlujo.InterfazAprobador,
+                TipoPermisoApi.Actualizar,
                 cancellationToken);
 
-            if (bloqueo != null)
-                return bloqueo;
+            if (!permisoAprobador.Permitido)
+            {
+                return StatusCode(
+                    permisoAprobador.CodigoEstado,
+                    Error(permisoAprobador.Mensaje));
+            }
 
             await flujo.InicializarAsync(cancellationToken);
             await SincronizarPublicacionesInactivasAsync(
@@ -385,11 +200,42 @@ VALUES
                         fotografiaId,
                         cancellationToken);
 
-                if (aprobacion == null ||
-                    !aprobacion.AutorizaPublicacionAlbum)
+                if (aprobacion == null)
                 {
                     return Conflict(Error(
-                        "La fotografía todavía no está autorizada para publicarse en el Álbum Botánico. Autorícela primero desde la revisión del aprobador."));
+                        "La fotografía no tiene una aprobación técnica registrada."));
+                }
+
+                /*
+                 * La clasificación oficial es la única clasificación válida
+                 * para publicar. El cliente no puede enviar otra categoría o
+                 * subcategoría distinta a la confirmada por el aprobador.
+                 */
+                DiagnosticoIAClasificacionJerarquia? clasificacionOficial =
+                    await albumJerarquia.ClasificacionesJerarquia
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(item =>
+                            item.DiagnosticoIAImagenId == fotografiaId &&
+                            item.Estado == "RESUELTA_APROBADOR",
+                            cancellationToken);
+
+                if (clasificacionOficial == null ||
+                    clasificacionOficial.CategoriaAlbumBotanicoIdSeleccionada
+                        is not > 0 ||
+                    clasificacionOficial.AlbumBotanicoCafeIdSeleccionado
+                        is not > 0)
+                {
+                    return Conflict(Error(
+                        "La fotografía todavía no tiene una clasificación oficial confirmada por el aprobador."));
+                }
+
+                if (request.CategoriaAlbumBotanicoId !=
+                        clasificacionOficial.CategoriaAlbumBotanicoIdSeleccionada.Value ||
+                    request.AlbumBotanicoCafeId !=
+                        clasificacionOficial.AlbumBotanicoCafeIdSeleccionado.Value)
+                {
+                    return Conflict(Error(
+                        "La publicación debe utilizar exactamente la categoría y subcategoría oficiales confirmadas por el aprobador."));
                 }
 
                 bool yaPublicada = await db.PublicacionesAlbum
@@ -426,7 +272,7 @@ VALUES
                 if (subcategoria == null || !categoriaActiva)
                 {
                     return BadRequest(Error(
-                        "La categoría o subcategoría seleccionada está inactiva. Actualice la clasificación antes de publicar."));
+                        "La categoría o subcategoría de la clasificación oficial está inactiva. Actívela antes de publicar."));
                 }
 
                 string rutaAlbum = ResolverRutaAlbum(imagen);
@@ -510,7 +356,7 @@ VALUES
 (
     {fotografiaId}, {usuarioId.Value}, {meta.Estado}, {meta.Estado},
     N'FOTO_COPIADA_ALBUM',
-    N'La fotografía autorizada fue copiada al Álbum Botánico sin modificar el expediente original.',
+    N'La fotografía con clasificación oficial fue copiada al Álbum Botánico sin modificar el expediente original.',
     SYSUTCDATETIME()
 );
 """, cancellationToken);
@@ -526,7 +372,7 @@ VALUES
                 {
                     success = true,
                     message =
-                        "La fotografía fue publicada en el Álbum Botánico. La aprobación técnica permanece independiente.",
+                        "La fotografía fue publicada en el Álbum Botánico. La aprobación técnica y la clasificación oficial permanecen inalterables.",
                     data = new
                     {
                         fotografiaId,
@@ -568,8 +414,8 @@ VALUES
 
         /// <summary>
         /// Retira únicamente la copia activa del Álbum Botánico. La aprobación
-        /// técnica y la autorización del aprobador se conservan para permitir
-        /// una publicación posterior.
+        /// técnica y la clasificación oficial se conservan para permitir una
+        /// publicación posterior en la misma subcategoría confirmada.
         /// </summary>
         [HttpPatch("{inspeccionId:int}/fotografias/{fotografiaId:int}/publicacion/retirar")]
         public async Task<IActionResult> RetirarPublicacion(
@@ -594,13 +440,18 @@ VALUES
             if (!usuarioId.HasValue)
                 return Forbid();
 
-            IActionResult? bloqueo = await ValidarBloqueoAprobadorAsync(
-                inspeccionId,
-                usuarioId.Value,
+            ResultadoPermisoApi permisoAprobador = await permisos.ValidarAsync(
+                usuarioId,
+                DiagnosticoIAFlujo.InterfazAprobador,
+                TipoPermisoApi.Actualizar,
                 cancellationToken);
 
-            if (bloqueo != null)
-                return bloqueo;
+            if (!permisoAprobador.Permitido)
+            {
+                return StatusCode(
+                    permisoAprobador.CodigoEstado,
+                    Error(permisoAprobador.Mensaje));
+            }
 
             await flujo.InicializarAsync(cancellationToken);
 
@@ -693,7 +544,7 @@ VALUES
 (
     {fotografiaId}, {usuarioId.Value}, {meta.Estado}, {meta.Estado},
     N'FOTO_RETIRADA_ALBUM',
-    N'La copia activa fue retirada del Álbum Botánico. La aprobación y la autorización para volver a publicarla se conservaron.',
+    N'La copia activa fue retirada del Álbum Botánico. La aprobación técnica y la clasificación oficial se conservaron.',
     SYSUTCDATETIME()
 );
 """, cancellationToken);
@@ -718,7 +569,7 @@ VALUES
                 {
                     success = true,
                     message =
-                        "La fotografía fue retirada del Álbum Botánico y conserva su autorización para una publicación posterior.",
+                        "La fotografía fue retirada del Álbum Botánico. Su aprobación técnica y clasificación oficial se conservaron.",
                     data
                 });
             }
@@ -869,10 +720,6 @@ VALUES
             FotoMetadatos? meta = await flujo.ObtenerFotoAsync(
                 fotografiaId,
                 cancellationToken);
-            AprobacionRegistro? aprobacion =
-                await flujo.ObtenerUltimaAprobacionAsync(
-                    fotografiaId,
-                    cancellationToken);
 
             DiagnosticoIAAlbumPublicacion? activa =
                 await db.PublicacionesAlbum
@@ -895,7 +742,21 @@ VALUES
                     .AprobadaConCorreccion or
                 InspeccionFitosanitariaFlujo.FotoEstados.PublicadaAlbum;
 
-            bool autorizada = aprobacion?.AutorizaPublicacionAlbum == true;
+            DiagnosticoIAClasificacionJerarquia? clasificacion =
+                await albumJerarquia.ClasificacionesJerarquia
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(item =>
+                        item.DiagnosticoIAImagenId == fotografiaId,
+                        cancellationToken);
+
+            bool clasificacionOficial =
+                string.Equals(
+                    clasificacion?.Estado,
+                    "RESUELTA_APROBADOR",
+                    StringComparison.OrdinalIgnoreCase) &&
+                clasificacion?.CategoriaAlbumBotanicoIdSeleccionada is > 0 &&
+                clasificacion.AlbumBotanicoCafeIdSeleccionado is > 0;
+
             bool publicada = activa != null;
 
             bool fichaActiva = !publicada || await db.RegistrosAlbum
@@ -917,26 +778,34 @@ VALUES
 
             string mensaje = !aprobada
                 ? "La fotografía todavía no tiene una aprobación positiva."
-                : publicada && !visibleEnGaleria
-                    ? "La publicación se conserva activa, pero está oculta porque su ficha o categoría está inactiva."
-                    : publicada
-                        ? "La fotografía está publicada activamente en el Álbum Botánico."
-                        : autorizada && tuvoPublicacion
-                            ? "La fotografía continúa autorizada, pero su copia anterior del Álbum Botánico ya no está activa."
-                            : autorizada
-                                ? "La fotografía está autorizada y pendiente de publicación en el Álbum Botánico."
-                                : "La fotografía está aprobada, pero no está autorizada para el Álbum Botánico.";
+                : !clasificacionOficial
+                    ? "La fotografía está aprobada y su clasificación oficial del Álbum Botánico está pendiente de confirmación."
+                    : publicada && !visibleEnGaleria
+                        ? "La publicación se conserva activa, pero está oculta porque su ficha o categoría está inactiva."
+                        : publicada
+                            ? "La fotografía está publicada activamente en el Álbum Botánico."
+                            : tuvoPublicacion
+                                ? "La clasificación oficial permanece confirmada, pero la publicación anterior fue retirada del Álbum Botánico."
+                                : "La clasificación oficial está confirmada y la fotografía todavía no ha sido publicada en el Álbum Botánico.";
 
             return new EstadoAlbumFotografia
             {
                 FotografiaId = fotografiaId,
                 Aprobada = aprobada,
-                Autorizada = autorizada,
+                /*
+                 * Campo legado para clientes anteriores. Ya no representa una
+                 * etapa separada: indica que la fotografía está técnicamente
+                 * aprobada y tiene clasificación oficial publicable.
+                 */
+                Autorizada = aprobada && clasificacionOficial,
                 PublicadaActiva = publicada,
                 TuvoPublicacion = tuvoPublicacion,
                 CategoriaAlbumBotanicoId =
-                    activa?.CategoriaAlbumBotanicoId,
-                AlbumBotanicoCafeId = activa?.AlbumBotanicoCafeId,
+                    activa?.CategoriaAlbumBotanicoId ??
+                    clasificacion?.CategoriaAlbumBotanicoIdSeleccionada,
+                AlbumBotanicoCafeId =
+                    activa?.AlbumBotanicoCafeId ??
+                    clasificacion?.AlbumBotanicoCafeIdSeleccionado,
                 AlbumBotanicoCafeFotoId =
                     activa?.AlbumBotanicoCafeFotoId,
                 EstadoEvidencia = meta?.Estado ?? string.Empty,
@@ -955,24 +824,6 @@ VALUES
                 return publica;
 
             return string.Empty;
-        }
-
-        private async Task<IActionResult?> ValidarBloqueoAprobadorAsync(
-            int inspeccionId,
-            int usuarioId,
-            CancellationToken cancellationToken)
-        {
-            ResultadoValidacionBloqueoInspeccion resultado =
-                await bloqueos.ValidarPropietarioActivoAsync(
-                    inspeccionId,
-                    usuarioId,
-                    "APROBADOR",
-                    cancellationToken);
-
-            if (resultado.Permitido)
-                return null;
-
-            return Conflict(Error(resultado.Mensaje));
         }
 
         private int? ObtenerUsuarioId()
@@ -1011,10 +862,5 @@ VALUES
             public string EstadoEvidencia { get; set; } = string.Empty;
             public string Mensaje { get; set; } = string.Empty;
         }
-    }
-
-    public sealed class InspeccionFotoAutorizacionAlbumRequest
-    {
-        public bool Autorizar { get; set; }
     }
 }

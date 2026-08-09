@@ -728,13 +728,13 @@ namespace CONATRADEC_API.Controllers
              * El flujo fitosanitario actual avanza por fotografía. El estado
              * general de la inspección es un resumen y puede ser, por ejemplo,
              * PENDIENTE_REVISION mientras una evidencia concreta todavía está
-             * PENDIENTE_ANALIZADOR. Por eso la autorización de esta operación
+             * PENDIENTE_ANALIZADOR. Por eso la validación de esta operación
              * se realiza contra el estado individual de la fotografía.
              *
              * La clasificación del Álbum es una decisión administrativa
-             * independiente de la aprobación técnica. El aprobador puede
-             * resolverla antes o después de aprobar, pero nunca se mueve una
-             * publicación activa de forma silenciosa a otra subcategoría.
+             * posterior a la aprobación técnica. El aprobador la confirma
+             * una sola vez y después queda cerrada; publicar o retirar la foto
+             * no modifica esta clasificación.
              */
             string estadoFotografia = (foto.Estado ?? string.Empty)
                 .Trim()
@@ -742,7 +742,6 @@ namespace CONATRADEC_API.Controllers
 
             bool estadoPermitido = esAprobador
                 ? estadoFotografia is
-                    "PENDIENTE_APROBACION" or
                     "APROBADA" or
                     "APROBADA_CON_CORRECCION"
                 : estadoFotografia is
@@ -757,9 +756,37 @@ namespace CONATRADEC_API.Controllers
                 {
                     success = false,
                     message = esAprobador
-                        ? "La clasificación del aprobador solo puede administrarse mientras la fotografía está pendiente de aprobación o después de una aprobación técnica. Si ya fue publicada en el Álbum Botánico, retire primero la publicación antes de reclasificarla."
+                        ? "La clasificación oficial solo puede confirmarse después de una aprobación técnica positiva. Una clasificación ya confirmada no puede reabrirse desde este flujo."
                         : "La fotografía no está disponible para revisión del analizador en su estado actual."
                 });
+            }
+
+            /*
+             * Una clasificación confirmada por el aprobador es parte del
+             * historial técnico-administrativo del expediente. No se permite
+             * sobrescribirla desde el flujo normal. Cualquier corrección futura
+             * deberá implementarse como un proceso administrativo independiente
+             * que conserve explícitamente el valor anterior y el nuevo.
+             */
+            if (esAprobador)
+            {
+                DiagnosticoIAClasificacionJerarquia? clasificacionConfirmada =
+                    await db.ClasificacionesJerarquia
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(item =>
+                            item.DiagnosticoIAImagenId == fotoId &&
+                            item.Estado == "RESUELTA_APROBADOR",
+                            cancellationToken);
+
+                if (clasificacionConfirmada != null)
+                {
+                    return Conflict(new
+                    {
+                        success = false,
+                        message =
+                            "La clasificación oficial ya fue confirmada por el aprobador y no puede sobrescribirse desde este flujo."
+                    });
+                }
             }
 
             string motivo = Limpiar(request.Motivo, 1200);
