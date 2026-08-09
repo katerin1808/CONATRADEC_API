@@ -59,7 +59,19 @@ namespace CONATRADEC_API.Services
                     "No se encontró el usuario autenticado. Cierre sesión e ingrese nuevamente.");
             }
 
-            var datos = await (
+            /*
+             * La autorización depende exclusivamente del rolId real asociado
+             * al usuario y de los permisos persistidos en rolInterfaz.
+             *
+             * Algunas bases históricas pueden contener más de una relación para
+             * el mismo rol e interfaz. No debemos depender de FirstOrDefault(),
+             * porque SQL Server no garantiza qué fila devolverá primero y una
+             * relación antigua podría negar un permiso que otra relación vigente
+             * tiene habilitado. Se consolidan todas las relaciones equivalentes
+             * utilizando la misma regla que los clientes: el permiso queda
+             * habilitado cuando al menos una relación persistida lo habilita.
+             */
+            var relaciones = await (
                 from usuario in db.Usuarios.AsNoTracking()
                 join rolInterfaz in db.RolInterfaz.AsNoTracking()
                     on usuario.rolId equals rolInterfaz.rolId
@@ -76,9 +88,9 @@ namespace CONATRADEC_API.Services
                     rolInterfaz.actualizar,
                     rolInterfaz.eliminar
                 })
-                .FirstOrDefaultAsync(cancellationToken);
+                .ToListAsync(cancellationToken);
 
-            if (datos == null)
+            if (relaciones.Count == 0)
             {
                 bool usuarioActivo = await db.Usuarios
                     .AsNoTracking()
@@ -95,18 +107,21 @@ namespace CONATRADEC_API.Services
                         : "El usuario autenticado no existe o se encuentra inactivo.");
             }
 
+            bool leer = relaciones.Any(item => item.leer == true);
+            bool agregar = relaciones.Any(item => item.agregar == true);
+            bool actualizar = relaciones.Any(item => item.actualizar == true);
+            bool eliminar = relaciones.Any(item => item.eliminar == true);
+
             bool permitido = permiso switch
             {
-                TipoPermisoApi.Leer => datos.leer == true,
-                TipoPermisoApi.Agregar => datos.agregar == true,
-                TipoPermisoApi.Actualizar => datos.actualizar == true,
-                TipoPermisoApi.Eliminar => datos.eliminar == true,
+                TipoPermisoApi.Leer => leer,
+                TipoPermisoApi.Agregar => agregar,
+                TipoPermisoApi.Actualizar => actualizar,
+                TipoPermisoApi.Eliminar => eliminar,
                 TipoPermisoApi.AgregarOActualizar =>
-                    datos.agregar == true || datos.actualizar == true,
+                    agregar || actualizar,
                 TipoPermisoApi.Administrar =>
-                    datos.agregar == true ||
-                    datos.actualizar == true ||
-                    datos.eliminar == true,
+                    agregar || actualizar || eliminar,
                 _ => false
             };
 

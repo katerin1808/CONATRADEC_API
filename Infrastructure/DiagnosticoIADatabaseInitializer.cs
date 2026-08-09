@@ -497,16 +497,22 @@ WHERE [Estado] IN
     N'IMAGEN_RECHAZADA'
 );
 
+/*
+ * Compatibilidad con bases históricas:
+ * descripcionInterfaz puede conservar NVARCHAR(80) y además participar en
+ * índices existentes. Los textos funcionales se mantienen dentro de 80
+ * caracteres para no alterar el esquema ni reconstruir índices al arrancar.
+ */
 MERGE [dbo].[interfaz] AS destino
 USING
 (
-    SELECT N'diagnosticoIASolicitudPage', N'Solicitudes de diagnóstico IA', N'Crear solicitudes y consultar las propias.'
+    SELECT N'diagnosticoIASolicitudPage', N'Inspección fitosanitaria - Técnico', N'Crear inspecciones, gestionar fotos y ejecutar decisiones de la etapa técnica.'
     UNION ALL
-    SELECT N'diagnosticoIAAnalizadorPage', N'Análisis humano de diagnóstico IA', N'Revisar Gemini, clasificar y enviar para aprobación.'
+    SELECT N'diagnosticoIAAnalizadorPage', N'Inspección fitosanitaria - Analizador', N'Tomar expedientes, realizar análisis humano y enviarlos a aprobación.'
     UNION ALL
-    SELECT N'diagnosticoIAAprobadorPage', N'Aprobación de diagnóstico IA', N'Aprobar, devolver, rechazar y autorizar fotografías para el álbum.'
+    SELECT N'diagnosticoIAAprobadorPage', N'Inspección fitosanitaria - Aprobador', N'Tomar expedientes, aprobar, devolver o rechazar diagnósticos fitosanitarios.'
     UNION ALL
-    SELECT N'diagnosticoIAConfiguracionPage', N'Configuración de diagnóstico IA', N'Administrar el límite de revisiones adicionales solicitadas a Gemini.'
+    SELECT N'diagnosticoIAConfiguracionPage', N'Configuración fitosanitaria', N'Administrar parámetros, tipos de fotografía y catálogos del flujo fitosanitario.'
 ) AS origen([NombreInterfaz], [NombreAmigable], [Descripcion])
 ON destino.[nombreInterfaz] = origen.[NombreInterfaz]
 WHEN MATCHED THEN UPDATE SET
@@ -559,31 +565,9 @@ WHEN NOT MATCHED THEN
     );
 
 /*
- * El rol Administrador recibe estos permisos únicamente si todavía no existe
- * una relación para la interfaz. A partir de ese momento la matriz de permisos
- * es la fuente de verdad y el inicializador no vuelve a sobrescribir cambios.
+ * Ningún rol recibe permisos automáticamente por su nombre. Las interfaces
+ * quedan disponibles en la matriz y cada rol debe configurarse explícitamente.
  */
-MERGE [dbo].[rolInterfaz] AS destino
-USING
-(
-    SELECT r.[rolId], i.[interfazId]
-    FROM [dbo].[Rol] r
-    CROSS JOIN [dbo].[interfaz] i
-    WHERE r.[activo] = 1
-      AND UPPER(LTRIM(RTRIM(r.[nombreRol]))) = N'ADMINISTRADOR'
-      AND i.[nombreInterfaz] IN
-      (
-          N'diagnosticoIASolicitudPage',
-          N'diagnosticoIAAnalizadorPage',
-          N'diagnosticoIAAprobadorPage',
-          N'diagnosticoIAConfiguracionPage'
-      )
-) AS origen
-ON destino.[rolId] = origen.[rolId]
-   AND destino.[interfazId] = origen.[interfazId]
-WHEN NOT MATCHED THEN
-    INSERT ([rolId], [interfazId], [leer], [agregar], [actualizar], [eliminar])
-    VALUES (origen.[rolId], origen.[interfazId], 1, 1, 1, 1);
 
 UPDATE [dbo].[interfaz]
 SET [activo] = 0

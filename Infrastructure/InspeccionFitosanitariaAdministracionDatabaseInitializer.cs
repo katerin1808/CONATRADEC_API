@@ -4,10 +4,9 @@ using Microsoft.EntityFrameworkCore;
 namespace CONATRADEC_API.Infrastructure
 {
     /// <summary>
-    /// Instala de forma idempotente el permiso y la bitácora específica del
-    /// Centro de Control Fitosanitario. El administrador recibe el permiso solo
-    /// al crearse la relación por primera vez; después, cualquier cambio hecho
-    /// desde la matriz de permisos se respeta igual que para los demás roles.
+    /// Instala de forma idempotente la interfaz y la bitácora específica del
+    /// Centro de Control Fitosanitario. La creación de la interfaz no asigna
+    /// permisos a ningún rol; estos se administran únicamente desde la matriz.
     /// </summary>
     public sealed class InspeccionFitosanitariaAdministracionDatabaseInitializer
     {
@@ -40,6 +39,12 @@ namespace CONATRADEC_API.Infrastructure
 IF OBJECT_ID(N'dbo.interfaz', N'U') IS NULL
     THROW 51000, N'No existe dbo.interfaz.', 1;
 
+/*
+ * Compatibilidad con bases históricas:
+ * descripcionInterfaz puede conservar NVARCHAR(80) y además participar en
+ * índices existentes. Los textos funcionales se mantienen dentro de 80
+ * caracteres para no alterar el esquema ni reconstruir índices al arrancar.
+ */
 IF NOT EXISTS
 (
     SELECT 1
@@ -73,59 +78,34 @@ BEGIN
 END;
 
 /*
- * Se crea una asignación inicial para el rol Administrador únicamente cuando
- * todavía no existe. No se sobrescriben permisos ya configurados manualmente.
+ * Nombres funcionales mostrados en la matriz. Los códigos internos no cambian
+ * para conservar compatibilidad con Web, Android, Windows y la API.
  */
-IF OBJECT_ID(N'dbo.Rol', N'U') IS NOT NULL
-   AND OBJECT_ID(N'dbo.rolInterfaz', N'U') IS NOT NULL
-BEGIN
-    DECLARE @interfazId INT =
-    (
-        SELECT TOP(1) interfazId
-        FROM dbo.interfaz
-        WHERE nombreInterfaz = N'diagnosticoIAControlPage'
-    );
+UPDATE dbo.interfaz
+SET nombreAmigableInterfaz = N'Inspección fitosanitaria - Técnico',
+    descripcionInterfaz = N'Crear inspecciones, gestionar fotos y ejecutar decisiones de la etapa técnica.'
+WHERE nombreInterfaz = N'diagnosticoIASolicitudPage';
 
-    DECLARE @rolAdministradorId INT =
-    (
-        SELECT TOP(1) rolId
-        FROM dbo.Rol
-        WHERE UPPER(LTRIM(RTRIM(nombreRol))) = N'ADMINISTRADOR'
-          AND activo = 1
-        ORDER BY rolId
-    );
+UPDATE dbo.interfaz
+SET nombreAmigableInterfaz = N'Inspección fitosanitaria - Analizador',
+    descripcionInterfaz = N'Tomar expedientes, realizar análisis humano y enviarlos a aprobación.'
+WHERE nombreInterfaz = N'diagnosticoIAAnalizadorPage';
 
-    IF @interfazId IS NOT NULL AND @rolAdministradorId IS NOT NULL
-    BEGIN
-        IF NOT EXISTS
-        (
-            SELECT 1
-            FROM dbo.rolInterfaz
-            WHERE rolId = @rolAdministradorId
-              AND interfazId = @interfazId
-        )
-        BEGIN
-            INSERT INTO dbo.rolInterfaz
-            (
-                rolId,
-                interfazId,
-                leer,
-                agregar,
-                actualizar,
-                eliminar
-            )
-            VALUES
-            (
-                @rolAdministradorId,
-                @interfazId,
-                1,
-                1,
-                1,
-                1
-            );
-        END
-    END;
-END;
+UPDATE dbo.interfaz
+SET nombreAmigableInterfaz = N'Inspección fitosanitaria - Aprobador',
+    descripcionInterfaz = N'Tomar expedientes, aprobar, devolver o rechazar diagnósticos fitosanitarios.'
+WHERE nombreInterfaz = N'diagnosticoIAAprobadorPage';
+
+UPDATE dbo.interfaz
+SET nombreAmigableInterfaz = N'Configuración fitosanitaria',
+    descripcionInterfaz = N'Administrar parámetros, tipos de fotografía y catálogos del flujo fitosanitario.'
+WHERE nombreInterfaz = N'diagnosticoIAConfiguracionPage';
+
+/*
+ * La interfaz se registra sin conceder permisos automáticamente. Cualquier
+ * rol, incluido el que administre el sistema, debe recibir Leer/Agregar/
+ * Actualizar/Eliminar desde la matriz de permisos.
+ */
 
 IF OBJECT_ID(N'dbo.diagnosticoIAAdministracionHistorial', N'U') IS NULL
 BEGIN

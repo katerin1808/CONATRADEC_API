@@ -16,10 +16,11 @@ namespace CONATRADEC_API.Controllers
     /// analizador, aprobador e historial comparten el mismo cálculo de estado
     /// por fotografía para evitar resultados distintos entre vistas.
     ///
-    /// Las bandejas de analizador y aprobador muestran tanto expedientes sin
-    /// asignar como expedientes asignados a otros responsables. La asignación
-    /// controla la edición, no la consulta; así todos los usuarios con permiso
-    /// pueden revisar el contexto sin apropiarse del expediente.
+    /// Analizador y aprobador trabajan con tres vistas independientes:
+    /// expedientes propios, disponibles sin responsable y revisados. Una vez
+    /// que un usuario toma un expediente, desaparece de Disponibles para los
+    /// demás y solamente una reasignación administrativa puede cambiar al
+    /// responsable persistente de esa etapa.
     /// </summary>
     [ApiController]
     [Authorize]
@@ -74,7 +75,7 @@ namespace CONATRADEC_API.Controllers
             if (!EsModoValido(modoNormalizado))
             {
                 return BadRequest(Error(
-                    "La bandeja admite mis, decisiones, analizador, analizador-revisadas, aprobador, aprobador-revisadas o historial."));
+                    "La bandeja admite mis, decisiones, analizador, analizador-disponibles, analizador-revisadas, aprobador, aprobador-disponibles, aprobador-revisadas o historial."));
             }
 
             ResultadoPermisoApi permiso = await permisos.ValidarAsync(
@@ -481,13 +482,35 @@ WITH bandeja AS
           (
               @modo = N'analizador'
               AND ISNULL(d.CerradaDefinitiva, 0) = 0
+              AND asignacion.UsuarioAnalizadorId = @usuarioId
+              AND
+              (
+                  ISNULL(d.EtapaTecnicaFinalizada, 0) = 0
+                  OR EXISTS
+                  (
+                      SELECT 1 FROM dbo.diagnosticoIAImagen ia
+                      WHERE ia.DiagnosticoIAId = d.DiagnosticoIAId
+                        AND ISNULL(ia.Activo, 1) = 1
+                        AND ISNULL(ia.Descartada, 0) = 0
+                        AND UPPER(ISNULL(ia.Estado, N'BORRADOR')) IN
+                            (N'PENDIENTE_ANALIZADOR', N'EN_ANALISIS_HUMANO',
+                             N'DEVUELTA_AL_ANALIZADOR', N'DEVUELTO_PARA_CORRECCION',
+                             N'DEVUELTA_AL_TECNICO')
+                  )
+              )
+          )
+          OR
+          (
+              @modo = N'analizador-disponibles'
+              AND ISNULL(d.CerradaDefinitiva, 0) = 0
+              AND asignacion.UsuarioAnalizadorId IS NULL
               AND EXISTS
               (
-                  SELECT 1 FROM dbo.diagnosticoIAImagen ia
-                  WHERE ia.DiagnosticoIAId = d.DiagnosticoIAId
-                    AND ISNULL(ia.Activo, 1) = 1
-                    AND ISNULL(ia.Descartada, 0) = 0
-                    AND UPPER(ISNULL(ia.Estado, N'BORRADOR')) IN
+                  SELECT 1 FROM dbo.diagnosticoIAImagen iaDisponible
+                  WHERE iaDisponible.DiagnosticoIAId = d.DiagnosticoIAId
+                    AND ISNULL(iaDisponible.Activo, 1) = 1
+                    AND ISNULL(iaDisponible.Descartada, 0) = 0
+                    AND UPPER(ISNULL(iaDisponible.Estado, N'BORRADOR')) IN
                         (N'PENDIENTE_ANALIZADOR', N'EN_ANALISIS_HUMANO',
                          N'DEVUELTA_AL_ANALIZADOR', N'DEVUELTO_PARA_CORRECCION',
                          N'DEVUELTA_AL_TECNICO')
@@ -524,6 +547,7 @@ WITH bandeja AS
               @modo = N'aprobador'
               AND ISNULL(d.CerradaDefinitiva, 0) = 0
               AND ISNULL(d.EtapaTecnicaFinalizada, 0) = 1
+              AND asignacion.UsuarioAprobadorId = @usuarioId
               AND EXISTS
               (
                   SELECT 1 FROM dbo.diagnosticoIAImagen ap
@@ -531,6 +555,21 @@ WITH bandeja AS
                     AND ISNULL(ap.Activo, 1) = 1
                     AND ISNULL(ap.Descartada, 0) = 0
                     AND UPPER(ISNULL(ap.Estado, N'BORRADOR')) = N'PENDIENTE_APROBACION'
+              )
+          )
+          OR
+          (
+              @modo = N'aprobador-disponibles'
+              AND ISNULL(d.CerradaDefinitiva, 0) = 0
+              AND ISNULL(d.EtapaTecnicaFinalizada, 0) = 1
+              AND asignacion.UsuarioAprobadorId IS NULL
+              AND EXISTS
+              (
+                  SELECT 1 FROM dbo.diagnosticoIAImagen apDisponible
+                  WHERE apDisponible.DiagnosticoIAId = d.DiagnosticoIAId
+                    AND ISNULL(apDisponible.Activo, 1) = 1
+                    AND ISNULL(apDisponible.Descartada, 0) = 0
+                    AND UPPER(ISNULL(apDisponible.Estado, N'BORRADOR')) = N'PENDIENTE_APROBACION'
               )
           )
           OR
@@ -723,13 +762,34 @@ WHERE d.Activo = 1
       (
           @modo = N'analizador'
           AND ISNULL(d.CerradaDefinitiva, 0) = 0
+          AND asignacion.UsuarioAnalizadorId = @usuarioId
+          AND
+          (
+              ISNULL(d.EtapaTecnicaFinalizada, 0) = 0
+              OR EXISTS
+              (
+                  SELECT 1 FROM dbo.diagnosticoIAImagen i
+                  WHERE i.DiagnosticoIAId = d.DiagnosticoIAId
+                    AND ISNULL(i.Activo, 1) = 1
+                    AND ISNULL(i.Descartada, 0) = 0
+                    AND UPPER(ISNULL(i.Estado, N'')) IN
+                        (N'PENDIENTE_ANALIZADOR', N'EN_ANALISIS_HUMANO',
+                         N'DEVUELTA_AL_ANALIZADOR', N'DEVUELTO_PARA_CORRECCION', N'DEVUELTA_AL_TECNICO')
+              )
+          )
+      )
+      OR
+      (
+          @modo = N'analizador-disponibles'
+          AND ISNULL(d.CerradaDefinitiva, 0) = 0
+          AND asignacion.UsuarioAnalizadorId IS NULL
           AND EXISTS
           (
-              SELECT 1 FROM dbo.diagnosticoIAImagen i
-              WHERE i.DiagnosticoIAId = d.DiagnosticoIAId
-                AND ISNULL(i.Activo, 1) = 1
-                AND ISNULL(i.Descartada, 0) = 0
-                AND UPPER(ISNULL(i.Estado, N'')) IN
+              SELECT 1 FROM dbo.diagnosticoIAImagen iDisponible
+              WHERE iDisponible.DiagnosticoIAId = d.DiagnosticoIAId
+                AND ISNULL(iDisponible.Activo, 1) = 1
+                AND ISNULL(iDisponible.Descartada, 0) = 0
+                AND UPPER(ISNULL(iDisponible.Estado, N'')) IN
                     (N'PENDIENTE_ANALIZADOR', N'EN_ANALISIS_HUMANO',
                      N'DEVUELTA_AL_ANALIZADOR', N'DEVUELTO_PARA_CORRECCION', N'DEVUELTA_AL_TECNICO')
           )
@@ -764,12 +824,27 @@ WHERE d.Activo = 1
           @modo = N'aprobador'
           AND ISNULL(d.CerradaDefinitiva, 0) = 0
           AND ISNULL(d.EtapaTecnicaFinalizada, 0) = 1
+          AND asignacion.UsuarioAprobadorId = @usuarioId
           AND EXISTS
           (
               SELECT 1 FROM dbo.diagnosticoIAImagen i
               WHERE i.DiagnosticoIAId = d.DiagnosticoIAId
                 AND ISNULL(i.Activo, 1) = 1
                 AND UPPER(ISNULL(i.Estado, N'')) = N'PENDIENTE_APROBACION'
+          )
+      )
+      OR
+      (
+          @modo = N'aprobador-disponibles'
+          AND ISNULL(d.CerradaDefinitiva, 0) = 0
+          AND ISNULL(d.EtapaTecnicaFinalizada, 0) = 1
+          AND asignacion.UsuarioAprobadorId IS NULL
+          AND EXISTS
+          (
+              SELECT 1 FROM dbo.diagnosticoIAImagen iDisponible
+              WHERE iDisponible.DiagnosticoIAId = d.DiagnosticoIAId
+                AND ISNULL(iDisponible.Activo, 1) = 1
+                AND UPPER(ISNULL(iDisponible.Estado, N'')) = N'PENDIENTE_APROBACION'
           )
       )
       OR
@@ -851,23 +926,27 @@ ORDER BY NombreCompleto, NombreUsuario;
             "mis" or
             "decisiones" or
             "analizador" or
+            "analizador-disponibles" or
             "analizador-revisadas" or
             "aprobador" or
+            "aprobador-disponibles" or
             "aprobador-revisadas" or
             "historial";
 
         private static bool EsModoTecnicosValido(string modo) => modo is
             "analizador" or
+            "analizador-disponibles" or
             "analizador-revisadas" or
             "aprobador" or
+            "aprobador-disponibles" or
             "aprobador-revisadas" or
             "historial";
 
         private static string ObtenerInterfaz(string modo) => modo switch
         {
-            "analizador" or "analizador-revisadas" =>
+            "analizador" or "analizador-disponibles" or "analizador-revisadas" =>
                 DiagnosticoIAFlujo.InterfazAnalizador,
-            "aprobador" or "aprobador-revisadas" =>
+            "aprobador" or "aprobador-disponibles" or "aprobador-revisadas" =>
                 DiagnosticoIAFlujo.InterfazAprobador,
             _ => DiagnosticoIAFlujo.InterfazSolicitud
         };
@@ -876,9 +955,11 @@ ORDER BY NombreCompleto, NombreUsuario;
         {
             "mis" => "Inspecciones del usuario obtenidas correctamente.",
             "decisiones" => "Inspecciones con decisiones técnicas pendientes obtenidas correctamente.",
-            "analizador" => "Fotografías disponibles para el analizador obtenidas correctamente.",
+            "analizador" => "Expedientes asignados al analizador actual obtenidos correctamente.",
+            "analizador-disponibles" => "Expedientes disponibles para tomar como analizador obtenidos correctamente.",
             "analizador-revisadas" => "Inspecciones revisadas por el analizador obtenidas correctamente.",
-            "aprobador" => "Fotografías pendientes de aprobación obtenidas correctamente.",
+            "aprobador" => "Expedientes asignados al aprobador actual obtenidos correctamente.",
+            "aprobador-disponibles" => "Expedientes disponibles para tomar como aprobador obtenidos correctamente.",
             "aprobador-revisadas" => "Inspecciones revisadas por el aprobador obtenidas correctamente.",
             "historial" => "Historial fitosanitario obtenido correctamente.",
             _ => "Inspecciones obtenidas correctamente."

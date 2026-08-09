@@ -4,6 +4,8 @@ using CONATRADEC_API.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Data;
+using System.Data.Common;
 using System.Security.Claims;
 
 namespace CONATRADEC_API.Controllers
@@ -152,6 +154,24 @@ namespace CONATRADEC_API.Controllers
             {
                 return NotFound(Error(
                     "La inspección indicada no existe o ya no está activa."));
+            }
+
+            /*
+             * La toma solo puede ocurrir desde una etapa que realmente tenga
+             * trabajo disponible. Esto hace que la API aplique la misma regla
+             * que las bandejas y evita asignaciones forzadas por URL directa.
+             * En ANALIZADOR no se exige el cierre técnico: una recepción
+             * parcial es válida desde que existe evidencia enviada a revisión.
+             */
+            if (!await TieneTrabajoDisponibleParaTomarAsync(
+                    id,
+                    etapa,
+                    cancellationToken))
+            {
+                return Conflict(Error(
+                    etapa == "ANALIZADOR"
+                        ? "La inspección no tiene fotografías disponibles para ser tomadas por un analizador."
+                        : "La inspección no tiene fotografías disponibles para ser tomadas por un aprobador."));
             }
 
             InspeccionFitosanitariaAsignacionRegistro anterior =
@@ -422,6 +442,98 @@ namespace CONATRADEC_API.Controllers
                 success = true,
                 message = "Bloqueo liberado correctamente."
             });
+        }
+
+        /// <summary>
+        /// Valida que la inspección esté realmente disponible para tomar en la
+        /// etapa solicitada. Se consulta con SQL porque los campos operativos
+        /// agregados al flujo V2 se administran desde los inicializadores y las
+        /// consultas especializadas del módulo.
+        /// </summary>
+        private async Task<bool> TieneTrabajoDisponibleParaTomarAsync(
+            int inspeccionId,
+            string etapa,
+            CancellationToken cancellationToken)
+        {
+            const string sql = """
+SELECT CONVERT(BIT, CASE WHEN EXISTS
+(
+    SELECT 1
+    FROM dbo.diagnosticoIA d
+    WHERE d.DiagnosticoIAId = @id
+      AND d.Activo = 1
+      AND ISNULL(d.CerradaDefinitiva, 0) = 0
+      AND
+      (
+          (
+              @etapa = N'ANALIZADOR'
+              AND EXISTS
+              (
+                  SELECT 1
+                  FROM dbo.diagnosticoIAImagen i
+                  WHERE i.DiagnosticoIAId = d.DiagnosticoIAId
+                    AND ISNULL(i.Activo, 1) = 1
+                    AND ISNULL(i.Descartada, 0) = 0
+                    AND UPPER(ISNULL(i.Estado, N'BORRADOR')) IN
+                        (N'PENDIENTE_ANALIZADOR', N'EN_ANALISIS_HUMANO',
+                         N'DEVUELTA_AL_ANALIZADOR', N'DEVUELTO_PARA_CORRECCION',
+                         N'DEVUELTA_AL_TECNICO')
+              )
+          )
+          OR
+          (
+              @etapa = N'APROBADOR'
+              AND ISNULL(d.EtapaTecnicaFinalizada, 0) = 1
+              AND EXISTS
+              (
+                  SELECT 1
+                  FROM dbo.diagnosticoIAImagen i
+                  WHERE i.DiagnosticoIAId = d.DiagnosticoIAId
+                    AND ISNULL(i.Activo, 1) = 1
+                    AND ISNULL(i.Descartada, 0) = 0
+                    AND UPPER(ISNULL(i.Estado, N'BORRADOR')) = N'PENDIENTE_APROBACION'
+              )
+          )
+      )
+) THEN 1 ELSE 0 END);
+""";
+
+            DbConnection conexion = diagnosticoDb.Database.GetDbConnection();
+            bool cerrar = conexion.State != ConnectionState.Open;
+            if (cerrar)
+                await conexion.OpenAsync(cancellationToken);
+
+            try
+            {
+                await using DbCommand comando = conexion.CreateCommand();
+                comando.CommandText = sql;
+                comando.CommandType = CommandType.Text;
+                comando.CommandTimeout = 60;
+
+                DbParameter id = comando.CreateParameter();
+                id.ParameterName = "@id";
+                id.DbType = DbType.Int32;
+                id.Value = inspeccionId;
+                comando.Parameters.Add(id);
+
+                DbParameter etapaParametro = comando.CreateParameter();
+                etapaParametro.ParameterName = "@etapa";
+                etapaParametro.DbType = DbType.String;
+                etapaParametro.Value = etapa;
+                comando.Parameters.Add(etapaParametro);
+
+                object? resultado =
+                    await comando.ExecuteScalarAsync(cancellationToken);
+
+                return resultado != null &&
+                       resultado != DBNull.Value &&
+                       Convert.ToBoolean(resultado);
+            }
+            finally
+            {
+                if (cerrar && diagnosticoDb.Database.CurrentTransaction == null)
+                    await conexion.CloseAsync();
+            }
         }
 
         private async Task<IActionResult?> ValidarPermisoAsync(

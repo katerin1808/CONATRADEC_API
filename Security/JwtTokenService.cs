@@ -68,14 +68,32 @@ namespace CONATRADEC_API.Security
                 usuario.Rol?.nombreRol ??
                 string.Empty;
 
+            string usuarioId =
+                usuario.UsuarioId.ToString();
+
+            /*
+             * La API utiliza MapInboundClaims = false. Por eso se mantienen
+             * los identificadores JWT actuales (sub y uid) y se agregan los
+             * nombres que todavía consumen algunos controladores existentes.
+             *
+             * Esto no concede permisos ni depende del nombre del rol.
+             * La autorización continúa resolviéndose mediante los permisos
+             * persistidos para el rol del usuario.
+             */
             Claim[] claims =
             [
                 new(
                     JwtRegisteredClaimNames.Sub,
-                    usuario.UsuarioId.ToString()),
+                    usuarioId),
                 new(
                     "uid",
-                    usuario.UsuarioId.ToString()),
+                    usuarioId),
+                new(
+                    ClaimTypes.NameIdentifier,
+                    usuarioId),
+                new(
+                    "UsuarioId",
+                    usuarioId),
                 new(
                     "sv",
                     usuario.versionSesion.ToString()),
