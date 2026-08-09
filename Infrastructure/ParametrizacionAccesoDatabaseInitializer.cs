@@ -161,6 +161,155 @@ public sealed class ParametrizacionAccesoDatabaseInitializer
                         activo);
             END;
 
+            /*
+             * Compatibilidad con bases de datos anteriores a la
+             * normalización propietario -> propietarioTerreno -> terreno.
+             *
+             * Algunas instalaciones conservan en dbo.terreno las columnas
+             * históricas del propietario como NOT NULL y, además, poseen
+             * índices que dependen de ellas. No se modifica su nulabilidad ni
+             * se eliminan índices: se agregan valores DEFAULT únicamente cuando
+             * la columna sigue siendo obligatoria y todavía no tiene uno.
+             *
+             * De esta forma el INSERT actual puede omitir los campos antiguos y
+             * la propiedad real continúa almacenándose en propietarioTerreno.
+             */
+            IF OBJECT_ID(N'dbo.terreno', N'U') IS NOT NULL
+            BEGIN
+                IF EXISTS
+                (
+                    SELECT 1
+                    FROM sys.columns c
+                    WHERE c.object_id =
+                        OBJECT_ID(N'dbo.terreno')
+                      AND c.name =
+                        N'identificacionPropietarioTerreno'
+                      AND c.is_nullable = 0
+                )
+                AND NOT EXISTS
+                (
+                    SELECT 1
+                    FROM sys.default_constraints dc
+                    INNER JOIN sys.columns c
+                        ON c.object_id = dc.parent_object_id
+                       AND c.column_id = dc.parent_column_id
+                    WHERE dc.parent_object_id =
+                        OBJECT_ID(N'dbo.terreno')
+                      AND c.name =
+                        N'identificacionPropietarioTerreno'
+                )
+                BEGIN
+                    ALTER TABLE dbo.terreno
+                        ADD CONSTRAINT
+                            DF_terreno_identificacionPropietario_Compat
+                        DEFAULT(N'')
+                        FOR identificacionPropietarioTerreno;
+                END;
+
+                IF EXISTS
+                (
+                    SELECT 1
+                    FROM sys.columns c
+                    WHERE c.object_id =
+                        OBJECT_ID(N'dbo.terreno')
+                      AND c.name =
+                        N'nombrePropietarioTerreno'
+                      AND c.is_nullable = 0
+                )
+                AND NOT EXISTS
+                (
+                    SELECT 1
+                    FROM sys.default_constraints dc
+                    INNER JOIN sys.columns c
+                        ON c.object_id = dc.parent_object_id
+                       AND c.column_id = dc.parent_column_id
+                    WHERE dc.parent_object_id =
+                        OBJECT_ID(N'dbo.terreno')
+                      AND c.name =
+                        N'nombrePropietarioTerreno'
+                )
+                BEGIN
+                    ALTER TABLE dbo.terreno
+                        ADD CONSTRAINT
+                            DF_terreno_nombrePropietario_Compat
+                        DEFAULT(N'')
+                        FOR nombrePropietarioTerreno;
+                END;
+
+                IF EXISTS
+                (
+                    SELECT 1
+                    FROM sys.columns c
+                    WHERE c.object_id =
+                        OBJECT_ID(N'dbo.terreno')
+                      AND c.name = N'telefonoPropietario'
+                      AND c.is_nullable = 0
+                )
+                AND NOT EXISTS
+                (
+                    SELECT 1
+                    FROM sys.default_constraints dc
+                    INNER JOIN sys.columns c
+                        ON c.object_id = dc.parent_object_id
+                       AND c.column_id = dc.parent_column_id
+                    WHERE dc.parent_object_id =
+                        OBJECT_ID(N'dbo.terreno')
+                      AND c.name = N'telefonoPropietario'
+                )
+                BEGIN
+                    ALTER TABLE dbo.terreno
+                        ADD CONSTRAINT
+                            DF_terreno_telefonoPropietario_Compat
+                        DEFAULT(0)
+                        FOR telefonoPropietario;
+                END;
+            END;
+
+            /*
+             * Si propietarioTerreno ya existía antes de incorporar el historial
+             * de asignaciones, completa únicamente las columnas faltantes. La
+             * operación es idempotente y conserva todas las relaciones actuales.
+             */
+            IF OBJECT_ID(
+                    N'dbo.propietarioTerreno',
+                    N'U') IS NOT NULL
+            BEGIN
+                IF COL_LENGTH(
+                        N'dbo.propietarioTerreno',
+                        N'fechaAsignacionUtc') IS NULL
+                BEGIN
+                    ALTER TABLE dbo.propietarioTerreno
+                        ADD fechaAsignacionUtc DATETIME2(0) NOT NULL
+                            CONSTRAINT
+                                DF_propietarioTerreno_fechaAsignacionUtc
+                            DEFAULT(SYSUTCDATETIME()) WITH VALUES;
+                END;
+
+                IF COL_LENGTH(
+                        N'dbo.propietarioTerreno',
+                        N'fechaDesasignacionUtc') IS NULL
+                BEGIN
+                    ALTER TABLE dbo.propietarioTerreno
+                        ADD fechaDesasignacionUtc DATETIME2(0) NULL;
+                END;
+
+                IF COL_LENGTH(
+                        N'dbo.propietarioTerreno',
+                        N'asignadoPorUsuarioId') IS NULL
+                BEGIN
+                    ALTER TABLE dbo.propietarioTerreno
+                        ADD asignadoPorUsuarioId INT NULL;
+                END;
+
+                IF COL_LENGTH(
+                        N'dbo.propietarioTerreno',
+                        N'desasignadoPorUsuarioId') IS NULL
+                BEGIN
+                    ALTER TABLE dbo.propietarioTerreno
+                        ADD desasignadoPorUsuarioId INT NULL;
+                END;
+            END;
+
             IF OBJECT_ID(
                     N'dbo.usuarioPropietario',
                     N'U') IS NULL
