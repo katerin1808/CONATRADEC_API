@@ -8,8 +8,8 @@ namespace CONATRADEC_API.Infrastructure
 {
     /// <summary>
     /// Controla la asignación exclusiva de las etapas de análisis y aprobación.
-    /// La primera escritura de cada etapa toma el expediente; las siguientes
-    /// escrituras solo se aceptan para el mismo usuario de esa etapa.
+    /// Tomar una inspección es una acción explícita; las operaciones técnicas
+    /// posteriores únicamente validan que el usuario ya sea el responsable.
     ///
     /// Un mismo usuario puede asumir análisis y aprobación únicamente cuando
     /// sus permisos de interfaz lo autorizan. La trazabilidad conserva ambos
@@ -141,27 +141,102 @@ WHERE DiagnosticoIAId = @id;
             }, cancellationToken);
         }
 
+        /// <summary>
+        /// Valida que el usuario ya sea el analizador asignado. No crea una
+        /// asignación implícita; una etapa libre debe tomarse expresamente.
+        /// </summary>
         public Task<ResultadoAsignacionFlujo> TomarAnalizadorAsync(
             int inspeccionId,
             int usuarioId,
             CancellationToken cancellationToken = default) =>
-            TomarAsync(
+            ValidarResponsableAsync(
                 inspeccionId,
                 usuarioId,
                 etapaAnalizador: true,
                 cancellationToken);
 
+        /// <summary>
+        /// Valida que el usuario ya sea el aprobador asignado. No crea una
+        /// asignación implícita; una etapa libre debe tomarse expresamente.
+        /// </summary>
         public Task<ResultadoAsignacionFlujo> TomarAprobadorAsync(
             int inspeccionId,
             int usuarioId,
             CancellationToken cancellationToken = default) =>
-            TomarAsync(
+            ValidarResponsableAsync(
                 inspeccionId,
                 usuarioId,
                 etapaAnalizador: false,
                 cancellationToken);
 
-        private async Task<ResultadoAsignacionFlujo> TomarAsync(
+        /// <summary>
+        /// Asigna de forma explícita una etapa libre al analizador autenticado.
+        /// Se usa únicamente por la acción visible "Tomar inspección".
+        /// </summary>
+        public Task<ResultadoAsignacionFlujo> AsignarAnalizadorAsync(
+            int inspeccionId,
+            int usuarioId,
+            CancellationToken cancellationToken = default) =>
+            AsignarSiDisponibleAsync(
+                inspeccionId,
+                usuarioId,
+                etapaAnalizador: true,
+                cancellationToken);
+
+        /// <summary>
+        /// Asigna de forma explícita una etapa libre al aprobador autenticado.
+        /// Se usa únicamente por la acción visible "Tomar inspección".
+        /// </summary>
+        public Task<ResultadoAsignacionFlujo> AsignarAprobadorAsync(
+            int inspeccionId,
+            int usuarioId,
+            CancellationToken cancellationToken = default) =>
+            AsignarSiDisponibleAsync(
+                inspeccionId,
+                usuarioId,
+                etapaAnalizador: false,
+                cancellationToken);
+
+        private async Task<ResultadoAsignacionFlujo> ValidarResponsableAsync(
+            int inspeccionId,
+            int usuarioId,
+            bool etapaAnalizador,
+            CancellationToken cancellationToken)
+        {
+            InspeccionFitosanitariaAsignacionRegistro registro =
+                await ObtenerAsync(inspeccionId, cancellationToken);
+
+            int? asignado = etapaAnalizador
+                ? registro.UsuarioAnalizadorId
+                : registro.UsuarioAprobadorId;
+
+            if (!asignado.HasValue)
+            {
+                return new ResultadoAsignacionFlujo(
+                    false,
+                    etapaAnalizador
+                        ? "La inspección todavía no tiene analizador asignado. Use 'Tomar inspección' antes de realizar acciones de análisis."
+                        : "La inspección todavía no tiene aprobador asignado. Use 'Tomar inspección' antes de realizar acciones de aprobación.",
+                    registro);
+            }
+
+            if (asignado.Value != usuarioId)
+            {
+                return new ResultadoAsignacionFlujo(
+                    false,
+                    $"La inspección ya está asignada al usuario #{asignado.Value} para esta etapa.",
+                    registro);
+            }
+
+            return new ResultadoAsignacionFlujo(
+                true,
+                etapaAnalizador
+                    ? "El usuario actual es el analizador responsable."
+                    : "El usuario actual es el aprobador responsable.",
+                registro);
+        }
+
+        private async Task<ResultadoAsignacionFlujo> AsignarSiDisponibleAsync(
             int inspeccionId,
             int usuarioId,
             bool etapaAnalizador,

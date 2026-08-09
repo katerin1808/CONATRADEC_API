@@ -1,4 +1,4 @@
-﻿using CONATRADEC_API.Infrastructure;
+using CONATRADEC_API.Infrastructure;
 using CONATRADEC_API.Models;
 using CONATRADEC_API.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -12,8 +12,9 @@ namespace CONATRADEC_API.Controllers
     /// Reserva temporalmente una inspección para una sola sesión por etapa.
     /// ANALIZADOR y APROBADOR poseen bloqueos independientes para conservar el
     /// trabajo por fotografía sin permitir dos usuarios simultáneos en la
-    /// misma etapa. Cuando la etapa aún no tiene responsable, adquirir el
-    /// bloqueo también toma la asignación para el usuario autenticado.
+    /// misma etapa. La asignación persistente y el bloqueo temporal son acciones
+    /// separadas: una etapa sin responsable debe tomarse explícitamente antes
+    /// de iniciar una sesión de edición.
     /// </summary>
     [ApiController]
     [Authorize]
@@ -37,6 +38,191 @@ namespace CONATRADEC_API.Controllers
             bloqueos = new InspeccionFitosanitariaBloqueoDatabase(diagnosticoDb);
             asignaciones = new InspeccionFitosanitariaAsignacionDatabase(
                 diagnosticoDb);
+        }
+
+        /// <summary>
+        /// Consulta la asignación persistente de la etapa sin adquirir ningún
+        /// bloqueo. Se utiliza para presentar correctamente los estados
+        /// "sin asignar", "asignada a mí" y "asignada a otro usuario".
+        /// </summary>
+        [HttpGet("asignacion")]
+        public async Task<IActionResult> ObtenerAsignacion(
+            int id,
+            [FromQuery] string modo,
+            CancellationToken cancellationToken = default)
+        {
+            int? usuarioId = ObtenerUsuarioId();
+            if (!usuarioId.HasValue)
+                return Forbid();
+
+            string etapa = NormalizarModo(modo);
+            if (string.IsNullOrWhiteSpace(etapa))
+            {
+                return BadRequest(Error(
+                    "La asignación solo está disponible para analizador o aprobador."));
+            }
+
+            IActionResult? acceso = await ValidarPermisoAsync(
+                usuarioId.Value,
+                etapa,
+                TipoPermisoApi.Leer,
+                cancellationToken);
+
+            if (acceso != null)
+                return acceso;
+
+            bool existe = await diagnosticoDb.Diagnosticos
+                .AsNoTracking()
+                .AnyAsync(item =>
+                    item.DiagnosticoIAId == id &&
+                    item.Activo,
+                    cancellationToken);
+
+            if (!existe)
+            {
+                return NotFound(Error(
+                    "La inspección indicada no existe o ya no está activa."));
+            }
+
+            InspeccionFitosanitariaAsignacionRegistro asignacion =
+                await asignaciones.ObtenerAsync(id, cancellationToken);
+
+            int? asignado = etapa == "ANALIZADOR"
+                ? asignacion.UsuarioAnalizadorId
+                : asignacion.UsuarioAprobadorId;
+
+            string nombreAsignado = await ObtenerNombreUsuarioAsync(
+                asignado,
+                cancellationToken);
+
+            return Ok(new
+            {
+                success = true,
+                message = asignado.HasValue
+                    ? "Asignación de la etapa obtenida correctamente."
+                    : "La etapa todavía no tiene un responsable asignado.",
+                data = CrearEstadoAsignacion(
+                    id,
+                    etapa,
+                    usuarioId.Value,
+                    asignado,
+                    nombreAsignado)
+            });
+        }
+
+        /// <summary>
+        /// Toma explícitamente una etapa todavía sin responsable. Esta acción
+        /// no adquiere el bloqueo de edición; el cliente debe solicitarlo
+        /// inmediatamente después de una asignación exitosa.
+        /// </summary>
+        [HttpPost("tomar")]
+        public async Task<IActionResult> Tomar(
+            int id,
+            [FromQuery] string modo,
+            CancellationToken cancellationToken = default)
+        {
+            int? usuarioId = ObtenerUsuarioId();
+            if (!usuarioId.HasValue)
+                return Forbid();
+
+            string etapa = NormalizarModo(modo);
+            if (string.IsNullOrWhiteSpace(etapa))
+            {
+                return BadRequest(Error(
+                    "Solo puede tomar una inspección como analizador o aprobador."));
+            }
+
+            IActionResult? acceso = await ValidarPermisoAsync(
+                usuarioId.Value,
+                etapa,
+                TipoPermisoApi.Actualizar,
+                cancellationToken);
+
+            if (acceso != null)
+                return acceso;
+
+            bool existe = await diagnosticoDb.Diagnosticos
+                .AsNoTracking()
+                .AnyAsync(item =>
+                    item.DiagnosticoIAId == id &&
+                    item.Activo,
+                    cancellationToken);
+
+            if (!existe)
+            {
+                return NotFound(Error(
+                    "La inspección indicada no existe o ya no está activa."));
+            }
+
+            InspeccionFitosanitariaAsignacionRegistro anterior =
+                await asignaciones.ObtenerAsync(id, cancellationToken);
+
+            int? asignadoAnterior = etapa == "ANALIZADOR"
+                ? anterior.UsuarioAnalizadorId
+                : anterior.UsuarioAprobadorId;
+
+            if (asignadoAnterior.HasValue &&
+                asignadoAnterior.Value != usuarioId.Value)
+            {
+                string nombreAsignado = await ObtenerNombreUsuarioAsync(
+                    asignadoAnterior,
+                    cancellationToken);
+
+                return Conflict(CrearConflictoAsignacion(
+                    id,
+                    etapa,
+                    asignadoAnterior.Value,
+                    nombreAsignado));
+            }
+
+            ResultadoAsignacionFlujo resultado = etapa == "ANALIZADOR"
+                ? await asignaciones.AsignarAnalizadorAsync(
+                    id,
+                    usuarioId.Value,
+                    cancellationToken)
+                : await asignaciones.AsignarAprobadorAsync(
+                    id,
+                    usuarioId.Value,
+                    cancellationToken);
+
+            if (!resultado.Exitoso)
+            {
+                int? responsableReal = etapa == "ANALIZADOR"
+                    ? resultado.Asignacion.UsuarioAnalizadorId
+                    : resultado.Asignacion.UsuarioAprobadorId;
+
+                string nombreResponsable = await ObtenerNombreUsuarioAsync(
+                    responsableReal,
+                    cancellationToken);
+
+                return Conflict(CrearConflictoAsignacion(
+                    id,
+                    etapa,
+                    responsableReal ?? 0,
+                    nombreResponsable));
+            }
+
+            int? asignado = etapa == "ANALIZADOR"
+                ? resultado.Asignacion.UsuarioAnalizadorId
+                : resultado.Asignacion.UsuarioAprobadorId;
+
+            string usuarioNombre = await ObtenerNombreUsuarioAsync(
+                asignado,
+                cancellationToken);
+
+            return Ok(new
+            {
+                success = true,
+                message = asignadoAnterior.HasValue
+                    ? $"La inspección ya estaba asignada al usuario actual como {NombreEtapa(etapa)}."
+                    : $"La inspección quedó asignada al usuario actual como {NombreEtapa(etapa)}.",
+                data = CrearEstadoAsignacion(
+                    id,
+                    etapa,
+                    usuarioId.Value,
+                    asignado,
+                    usuarioNombre)
+            });
         }
 
         [HttpPost("adquirir")]
@@ -79,37 +265,36 @@ namespace CONATRADEC_API.Controllers
             }
 
             /*
-             * La asignación representa al responsable persistente de la etapa.
-             * Si ya existe otro responsable, el expediente puede consultarse,
-             * pero este endpoint no concede edición ni sustituye la asignación.
+             * El bloqueo ya no crea asignaciones. La etapa debe haberse tomado
+             * de forma explícita o haber sido asignada/reasignada previamente.
              */
-            InspeccionFitosanitariaAsignacionRegistro asignacionAnterior =
+            InspeccionFitosanitariaAsignacionRegistro asignacionActual =
                 await asignaciones.ObtenerAsync(id, cancellationToken);
 
-            int? asignadoAnterior = etapa == "ANALIZADOR"
-                ? asignacionAnterior.UsuarioAnalizadorId
-                : asignacionAnterior.UsuarioAprobadorId;
+            int? asignadoActual = etapa == "ANALIZADOR"
+                ? asignacionActual.UsuarioAnalizadorId
+                : asignacionActual.UsuarioAprobadorId;
 
-            if (asignadoAnterior.HasValue &&
-                asignadoAnterior.Value != usuarioId.Value)
+            if (!asignadoActual.HasValue)
+            {
+                return Conflict(CrearConflictoSinAsignacion(
+                    id,
+                    etapa));
+            }
+
+            if (asignadoActual.Value != usuarioId.Value)
             {
                 string nombreAsignado = await ObtenerNombreUsuarioAsync(
-                    asignadoAnterior,
+                    asignadoActual,
                     cancellationToken);
 
                 return Conflict(CrearConflictoAsignacion(
                     id,
                     etapa,
-                    asignadoAnterior.Value,
+                    asignadoActual.Value,
                     nombreAsignado));
             }
 
-            /*
-             * Primero se obtiene el bloqueo temporal. Así, dos usuarios que
-             * intenten tomar al mismo tiempo una etapa todavía sin asignar no
-             * pueden apropiársela simultáneamente. Solo quien obtuvo el bloqueo
-             * continúa con la autoasignación.
-             */
             ResultadoAdquisicionBloqueoInspeccion resultado =
                 await bloqueos.AdquirirAsync(
                     id,
@@ -140,47 +325,6 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
-            bool autoAsignada = !asignadoAnterior.HasValue;
-            ResultadoAsignacionFlujo asignacionTomada = etapa == "ANALIZADOR"
-                ? await asignaciones.TomarAnalizadorAsync(
-                    id,
-                    usuarioId.Value,
-                    cancellationToken)
-                : await asignaciones.TomarAprobadorAsync(
-                    id,
-                    usuarioId.Value,
-                    cancellationToken);
-
-            if (!asignacionTomada.Exitoso)
-            {
-                /*
-                 * Una reasignación administrativa pudo ocurrir entre la lectura
-                 * inicial y la adquisición del bloqueo. En ese caso se libera
-                 * inmediatamente el lease obtenido para no dejar una reserva
-                 * huérfana y se informa el responsable real.
-                 */
-                await bloqueos.LiberarAsync(
-                    id,
-                    usuarioId.Value,
-                    etapa,
-                    resultado.Bloqueo.TokenSesion,
-                    CancellationToken.None);
-
-                int? responsableReal = etapa == "ANALIZADOR"
-                    ? asignacionTomada.Asignacion.UsuarioAnalizadorId
-                    : asignacionTomada.Asignacion.UsuarioAprobadorId;
-
-                string nombreResponsable = await ObtenerNombreUsuarioAsync(
-                    responsableReal,
-                    cancellationToken);
-
-                return Conflict(CrearConflictoAsignacion(
-                    id,
-                    etapa,
-                    responsableReal ?? 0,
-                    nombreResponsable));
-            }
-
             string usuarioNombre = await ObtenerNombreUsuarioAsync(
                 usuarioId,
                 cancellationToken);
@@ -188,14 +332,13 @@ namespace CONATRADEC_API.Controllers
             return Ok(new
             {
                 success = true,
-                message = autoAsignada
-                    ? $"La inspección fue tomada por {usuarioNombre} como {NombreEtapa(etapa)} y quedó bloqueada para esta sesión."
-                    : $"La inspección quedó bloqueada para esta sesión de {NombreEtapa(etapa)}.",
+                message =
+                    $"La inspección quedó bloqueada para esta sesión de {NombreEtapa(etapa)}.",
                 data = CrearRespuesta(
                     resultado.Bloqueo,
                     usuarioNombre,
                     adquirido: true,
-                    autoAsignada: autoAsignada)
+                    autoAsignada: false)
             });
         }
 
@@ -329,6 +472,51 @@ namespace CONATRADEC_API.Controllers
 
             return $"usuario #{usuarioId.Value}";
         }
+
+        private static object CrearEstadoAsignacion(
+            int inspeccionId,
+            string etapa,
+            int usuarioActualId,
+            int? usuarioAsignadoId,
+            string usuarioAsignadoNombre)
+        {
+            bool asignadaAlUsuarioActual =
+                usuarioAsignadoId.HasValue &&
+                usuarioAsignadoId.Value == usuarioActualId;
+
+            return new
+            {
+                inspeccionId,
+                modo = etapa.ToLowerInvariant(),
+                usuarioAsignadoId,
+                usuarioAsignadoNombre = usuarioAsignadoNombre ?? string.Empty,
+                asignadaAlUsuarioActual,
+                disponibleParaTomar = !usuarioAsignadoId.HasValue,
+                asignadaAOtroUsuario =
+                    usuarioAsignadoId.HasValue &&
+                    !asignadaAlUsuarioActual
+            };
+        }
+
+        private static object CrearConflictoSinAsignacion(
+            int inspeccionId,
+            string etapa) =>
+            new
+            {
+                success = false,
+                message =
+                    $"La etapa de {NombreEtapa(etapa)} todavía no tiene un responsable. Use la opción 'Tomar inspección' antes de iniciar la edición.",
+                data = new
+                {
+                    inspeccionId,
+                    modo = etapa.ToLowerInvariant(),
+                    usuarioAsignadoId = (int?)null,
+                    usuarioAsignadoNombre = string.Empty,
+                    asignadaAlUsuarioActual = false,
+                    disponibleParaTomar = true,
+                    asignadaAOtroUsuario = false
+                }
+            };
 
         private static object CrearConflictoAsignacion(
             int inspeccionId,
