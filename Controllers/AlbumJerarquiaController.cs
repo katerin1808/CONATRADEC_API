@@ -730,13 +730,21 @@ namespace CONATRADEC_API.Controllers
              * PENDIENTE_REVISION mientras una evidencia concreta todavía está
              * PENDIENTE_ANALIZADOR. Por eso la autorización de esta operación
              * se realiza contra el estado individual de la fotografía.
+             *
+             * La clasificación del Álbum es una decisión administrativa
+             * independiente de la aprobación técnica. El aprobador puede
+             * resolverla antes o después de aprobar, pero nunca se mueve una
+             * publicación activa de forma silenciosa a otra subcategoría.
              */
             string estadoFotografia = (foto.Estado ?? string.Empty)
                 .Trim()
                 .ToUpperInvariant();
 
             bool estadoPermitido = esAprobador
-                ? estadoFotografia == "PENDIENTE_APROBACION"
+                ? estadoFotografia is
+                    "PENDIENTE_APROBACION" or
+                    "APROBADA" or
+                    "APROBADA_CON_CORRECCION"
                 : estadoFotografia is
                     "PENDIENTE_ANALIZADOR" or
                     "EN_ANALISIS_HUMANO" or
@@ -749,7 +757,7 @@ namespace CONATRADEC_API.Controllers
                 {
                     success = false,
                     message = esAprobador
-                        ? "La fotografía no está pendiente de aprobación y su clasificación no puede modificarse en esta etapa."
+                        ? "La clasificación del aprobador solo puede administrarse mientras la fotografía está pendiente de aprobación o después de una aprobación técnica. Si ya fue publicada en el Álbum Botánico, retire primero la publicación antes de reclasificarla."
                         : "La fotografía no está disponible para revisión del analizador en su estado actual."
                 });
             }
