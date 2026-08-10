@@ -10,11 +10,18 @@ namespace CONATRADEC_API.Controllers
     /// Solo devuelve la página solicitada. Los indicadores de balance,
     /// enmienda y fertilización mixta se consultan después de conocer los
     /// identificadores visibles, evitando subconsultas pesadas por cada fila.
+    ///
+    /// El alcance global no depende del nombre del rol. Leer MainPage habilita
+    /// el módulo y AnalisisSueloTodosPage habilita explícitamente la consulta
+    /// de análisis creados por otros usuarios.
     /// </summary>
     [ApiController]
     [Route("api/analisis-listado")]
     public sealed class AnalisisListadoOptimizadoController : ControllerBase
     {
+        private const string InterfazAnalisis = "MainPage";
+        private const string InterfazVerTodos = "AnalisisSueloTodosPage";
+
         private readonly DBContext db;
 
         public AnalisisListadoOptimizadoController(DBContext db)
@@ -101,7 +108,13 @@ namespace CONATRADEC_API.Controllers
                         : usuario.nombreUsuario
                 };
 
-            if (!sesion.EsAdministrador || soloPropios)
+            /*
+             * Regla de seguridad del servidor:
+             * aunque el cliente envíe soloPropios=false, sin el permiso
+             * AnalisisSueloTodosPage la consulta siempre queda limitada al
+             * usuario autenticado.
+             */
+            if (!sesion.PuedeVerTodos || soloPropios)
             {
                 consulta = consulta.Where(x =>
                     x.usuarioId == sesion.UsuarioId);
@@ -289,17 +302,21 @@ namespace CONATRADEC_API.Controllers
                     totalRegistros,
                     totalPaginas,
                     tieneMas = pagina < totalPaginas,
-                    esAdministrador =
-                        sesion.EsAdministrador,
+                    /*
+                     * Se conserva esAdministrador para clientes anteriores,
+                     * pero su significado desde esta versión es permiso de
+                     * alcance global, no nombre del rol.
+                     */
+                    esAdministrador = sesion.PuedeVerTodos,
+                    puedeVerTodos = sesion.PuedeVerTodos,
                     usuarios = Array.Empty<object>()
                 }
             });
         }
 
         /// <summary>
-        /// Catálogo para el filtro administrativo.
-        /// Se solicita después de renderizar la primera página y no forma
-        /// parte de la carga inicial.
+        /// Catálogo para el filtro global. Solo se entrega a quien tenga el
+        /// permiso explícito AnalisisSueloTodosPage/Leer.
         /// </summary>
         [HttpGet("usuarios")]
         public async Task<ActionResult> ListarUsuarios(
@@ -325,7 +342,7 @@ namespace CONATRADEC_API.Controllers
 
             SesionAnalisis sesion = resultadoSesion.Sesion!;
 
-            if (!sesion.EsAdministrador)
+            if (!sesion.PuedeVerTodos)
             {
                 return StatusCode(
                     StatusCodes.Status403Forbidden,
@@ -333,7 +350,7 @@ namespace CONATRADEC_API.Controllers
                     {
                         success = false,
                         message =
-                            "Solo un administrador puede filtrar por usuario."
+                            "No tiene permiso para consultar análisis de otros usuarios."
                     });
             }
 
@@ -402,7 +419,7 @@ namespace CONATRADEC_API.Controllers
                 .Select(x => new
                 {
                     x.UsuarioId,
-                    Rol = x.Rol.nombreRol
+                    x.rolId
                 })
                 .FirstOrDefaultAsync(cancellationToken);
 
@@ -413,23 +430,11 @@ namespace CONATRADEC_API.Controllers
                     "El usuario autenticado no existe o está inactivo.");
             }
 
-            bool puedeLeer = await (
-                from usuario in db.Usuarios.AsNoTracking()
-                join permiso in db.RolInterfaz.AsNoTracking()
-                    on usuario.rolId equals permiso.rolId
-                join interfaz in db.Interfaz.AsNoTracking()
-                    on permiso.interfazId equals
-                       interfaz.interfazId
-                where
-                    usuario.UsuarioId ==
-                        usuarioSesion.UsuarioId &&
-                    usuario.activo &&
-                    interfaz.activo &&
-                    interfaz.nombreInterfaz ==
-                        "MainPage" &&
-                    permiso.leer == true
-                select permiso.rolInterfazId)
-                .AnyAsync(cancellationToken);
+            bool puedeLeer =
+                await TienePermisoLecturaAsync(
+                    usuarioSesion.rolId,
+                    InterfazAnalisis,
+                    cancellationToken);
 
             if (!puedeLeer)
             {
@@ -438,19 +443,36 @@ namespace CONATRADEC_API.Controllers
                     "No tiene permiso para consultar análisis de suelo.");
             }
 
-            bool esAdministrador =
-                !string.IsNullOrWhiteSpace(
-                    usuarioSesion.Rol) &&
-                usuarioSesion.Rol.Contains(
-                    "ADMIN",
-                    StringComparison.OrdinalIgnoreCase);
+            bool puedeVerTodos =
+                await TienePermisoLecturaAsync(
+                    usuarioSesion.rolId,
+                    InterfazVerTodos,
+                    cancellationToken);
 
             return ResultadoSesion.Ok(
                 new SesionAnalisis
                 {
                     UsuarioId = usuarioSesion.UsuarioId,
-                    EsAdministrador = esAdministrador
+                    PuedeVerTodos = puedeVerTodos
                 });
+        }
+
+        private async Task<bool> TienePermisoLecturaAsync(
+            int rolId,
+            string codigoInterfaz,
+            CancellationToken cancellationToken)
+        {
+            return await (
+                from permiso in db.RolInterfaz.AsNoTracking()
+                join interfaz in db.Interfaz.AsNoTracking()
+                    on permiso.interfazId equals interfaz.interfazId
+                where
+                    permiso.rolId == rolId &&
+                    interfaz.activo &&
+                    interfaz.nombreInterfaz == codigoInterfaz &&
+                    permiso.leer == true
+                select permiso.rolInterfazId)
+                .AnyAsync(cancellationToken);
         }
 
         private sealed class IndicadorCalculo
@@ -462,7 +484,7 @@ namespace CONATRADEC_API.Controllers
         private sealed class SesionAnalisis
         {
             public int UsuarioId { get; init; }
-            public bool EsAdministrador { get; init; }
+            public bool PuedeVerTodos { get; init; }
         }
 
         private sealed class ResultadoSesion
