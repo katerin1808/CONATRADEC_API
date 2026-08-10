@@ -297,7 +297,7 @@ namespace CONATRADEC_API.Models
                     .IsRequired();
 
                 entity.Property(e => e.materiaOrganica)
-                    .HasPrecision(10, 4);
+                    .HasPrecision(18, 4);
 
                 entity.Property(e => e.acidezTotal)
                     .HasPrecision(10, 4);
