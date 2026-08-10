@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System.Data;
 using System.Security.Claims;
+using System.Text.Json;
 
 namespace CONATRADEC_API.Controllers
 {
@@ -23,6 +24,12 @@ namespace CONATRADEC_API.Controllers
     public sealed class InspeccionFitosanitariaPublicacionAlbumController :
         ControllerBase
     {
+        private static readonly JsonSerializerOptions JsonOptions =
+            new(JsonSerializerDefaults.Web)
+            {
+                PropertyNameCaseInsensitive = true
+            };
+
         private readonly DiagnosticoIADbContext db;
         private readonly AlbumJerarquiaDbContext albumJerarquia;
         private readonly PermisoApiService permisos;
@@ -45,11 +52,6 @@ namespace CONATRADEC_API.Controllers
             control = new InspeccionFitosanitariaControlDatabaseInitializer(db);
         }
 
-        /// <summary>
-        /// Devuelve el estado vivo de la publicación. También reconcilia una
-        /// publicación cuando su copia fotográfica fue retirada directamente;
-        /// desactivar la ficha o la categoría solo controla su visibilidad.
-        /// </summary>
         [HttpGet("{inspeccionId:int}/fotografias/{fotografiaId:int}/estado")]
         public async Task<IActionResult> ObtenerEstado(
             int inspeccionId,
@@ -102,8 +104,8 @@ namespace CONATRADEC_API.Controllers
 
         /// <summary>
         /// Publica directamente una fotografía aprobada cuya clasificación fue
-        /// confirmada por el aprobador. Publicar es una operación posterior e
-        /// independiente y no requiere mantener activo el lease de revisión.
+        /// confirmada por el aprobador. La ruta del Álbum se obtiene siempre de
+        /// la evidencia original almacenada; nunca de una imagen derivada de IA.
         /// </summary>
         [HttpPost("{inspeccionId:int}/fotografias/{fotografiaId:int}")]
         [HttpPost("~/api/inspecciones-fitosanitarias/{inspeccionId:int}/fotografias/{fotografiaId:int}/publicar-album")]
@@ -206,11 +208,6 @@ namespace CONATRADEC_API.Controllers
                         "La fotografía no tiene una aprobación técnica registrada."));
                 }
 
-                /*
-                 * La clasificación oficial es la única clasificación válida
-                 * para publicar. El cliente no puede enviar otra categoría o
-                 * subcategoría distinta a la confirmada por el aprobador.
-                 */
                 DiagnosticoIAClasificacionJerarquia? clasificacionOficial =
                     await albumJerarquia.ClasificacionesJerarquia
                         .AsNoTracking()
@@ -275,12 +272,29 @@ namespace CONATRADEC_API.Controllers
                         "La categoría o subcategoría de la clasificación oficial está inactiva. Actívela antes de publicar."));
                 }
 
+                /*
+                 * Garantía defensiva: no se acepta ruta del cliente y tampoco
+                 * se usa UrlImagen como respaldo. RutaRelativa pertenece a la
+                 * evidencia original creada al registrar la fotografía.
+                 */
                 string rutaAlbum = ResolverRutaAlbum(imagen);
                 if (string.IsNullOrWhiteSpace(rutaAlbum))
                 {
                     return Conflict(Error(
-                        "La ruta de la fotografía no puede almacenarse de forma segura en el Álbum Botánico. Actualice el almacenamiento de la evidencia antes de publicar."));
+                        "La evidencia original no posee una ruta persistente segura. No se utilizará ninguna imagen derivada para el Álbum Botánico."));
                 }
+
+                string descripcionAlbum = ConstruirDescripcionAlbum(
+                    request.Descripcion,
+                    aprobacion.DiagnosticosFinalesJson,
+                    aprobacion.DiagnosticoFinal,
+                    500);
+
+                string descripcionPublicacion = ConstruirDescripcionAlbum(
+                    request.Descripcion,
+                    aprobacion.DiagnosticosFinalesJson,
+                    aprobacion.DiagnosticoFinal,
+                    1000);
 
                 int orden =
                     (await db.FotosAlbum
@@ -291,12 +305,6 @@ namespace CONATRADEC_API.Controllers
                         .Select(item => (int?)item.Orden)
                         .MaxAsync(cancellationToken) ?? 0) + 1;
 
-                /*
-                 * La portada no la decide el cliente. Si la ficha no tiene
-                 * fotografías activas, esta primera publicación se convierte
-                 * automáticamente en portada. Si ya existen fotografías, la
-                 * nueva solo se agrega y la portada existente se conserva.
-                 */
                 bool existenFotosActivas = await db.FotosAlbum
                     .AsNoTracking()
                     .AnyAsync(item =>
@@ -311,7 +319,7 @@ namespace CONATRADEC_API.Controllers
                 {
                     AlbumBotanicoCafeId = request.AlbumBotanicoCafeId,
                     RutaFoto = rutaAlbum,
-                    DescripcionFoto = Limitar(request.Descripcion, 500),
+                    DescripcionFoto = descripcionAlbum,
                     EsPortada = esPortada,
                     Orden = orden,
                     Activo = true
@@ -335,8 +343,7 @@ namespace CONATRADEC_API.Controllers
                         fotoAlbum.AlbumBotanicoCafeFotoId,
                     UsuarioPublicacionId = usuarioId.Value,
                     FechaPublicacionUtc = DateTime.UtcNow,
-                    DescripcionPublicacion =
-                        Limitar(request.Descripcion, 1000),
+                    DescripcionPublicacion = descripcionPublicacion,
                     ClasificacionFinal = Limitar(subcategoria.Titulo, 50),
                     DiagnosticoFinal =
                         Limitar(aprobacion.DiagnosticoFinal, 300),
@@ -356,7 +363,7 @@ VALUES
 (
     {fotografiaId}, {usuarioId.Value}, {meta.Estado}, {meta.Estado},
     N'FOTO_COPIADA_ALBUM',
-    N'La fotografía con clasificación oficial fue copiada al Álbum Botánico sin modificar el expediente original.',
+    N'La fotografía original limpia con clasificación oficial fue copiada al Álbum Botánico. Las imágenes marcadas de IA no participan en esta publicación.',
     SYSUTCDATETIME()
 );
 """, cancellationToken);
@@ -372,7 +379,7 @@ VALUES
                 {
                     success = true,
                     message =
-                        "La fotografía fue publicada en el Álbum Botánico. La aprobación técnica y la clasificación oficial permanecen inalterables.",
+                        "La fotografía original fue publicada en el Álbum Botánico. La aprobación técnica y la clasificación oficial permanecen inalterables.",
                     data = new
                     {
                         fotografiaId,
@@ -412,11 +419,6 @@ VALUES
             }
         }
 
-        /// <summary>
-        /// Retira únicamente la copia activa del Álbum Botánico. La aprobación
-        /// técnica y la clasificación oficial se conservan para permitir una
-        /// publicación posterior en la misma subcategoría confirmada.
-        /// </summary>
         [HttpPatch("{inspeccionId:int}/fotografias/{fotografiaId:int}/publicacion/retirar")]
         public async Task<IActionResult> RetirarPublicacion(
             int inspeccionId,
@@ -596,12 +598,6 @@ VALUES
                 item.DiagnosticoIAImagenId == fotografiaId,
                 cancellationToken);
 
-        /// <summary>
-        /// Reconciliación defensiva de una publicación cuya copia fotográfica
-        /// fue retirada directamente. La inactividad de la categoría o de la
-        /// ficha solo controla visibilidad y no revoca la publicación de la
-        /// inspección.
-        /// </summary>
         private async Task SincronizarPublicacionesInactivasAsync(
             int fotografiaId,
             CancellationToken cancellationToken)
@@ -630,11 +626,6 @@ VALUES
                 if (fotoAlbum?.Activo == true)
                     continue;
 
-                /*
-                 * Solo una copia fotográfica realmente inactiva rompe la
-                 * publicación. Una ficha o categoría inactiva puede volver a
-                 * mostrarse sin perder la decisión tomada en la inspección.
-                 */
                 publicacion.Activo = false;
                 huboCambio = true;
 
@@ -658,10 +649,6 @@ VALUES
             }
         }
 
-        /// <summary>
-        /// Mantiene la regla del Álbum Botánico: una ficha que posee
-        /// fotografías activas debe tener exactamente una portada activa.
-        /// </summary>
         private async Task GarantizarPortadaActivaAsync(
             int albumBotanicoCafeId,
             CancellationToken cancellationToken)
@@ -792,11 +779,6 @@ VALUES
             {
                 FotografiaId = fotografiaId,
                 Aprobada = aprobada,
-                /*
-                 * Campo legado para clientes anteriores. Ya no representa una
-                 * etapa separada: indica que la fotografía está técnicamente
-                 * aprobada y tiene clasificación oficial publicable.
-                 */
                 Autorizada = aprobada && clasificacionOficial,
                 PublicadaActiva = publicada,
                 TuvoPublicacion = tuvoPublicacion,
@@ -813,17 +795,81 @@ VALUES
             };
         }
 
+        /// <summary>
+        /// Devuelve exclusivamente la ruta original persistida. La ruta de una
+        /// imagen marcada de IA nunca se consulta desde este controlador.
+        /// </summary>
         private static string ResolverRutaAlbum(DiagnosticoIAImagen imagen)
         {
             string relativa = imagen.RutaRelativa?.Trim() ?? string.Empty;
-            if (!string.IsNullOrWhiteSpace(relativa) && relativa.Length <= 500)
-                return relativa;
+            return !string.IsNullOrWhiteSpace(relativa) && relativa.Length <= 500
+                ? relativa
+                : string.Empty;
+        }
 
-            string publica = imagen.UrlImagen?.Trim() ?? string.Empty;
-            if (!string.IsNullOrWhiteSpace(publica) && publica.Length <= 500)
-                return publica;
+        private static string ConstruirDescripcionAlbum(
+            string? descripcionBase,
+            string? diagnosticosFinalesJson,
+            string? diagnosticoPrincipalResumen,
+            int maximo)
+        {
+            string baseNormalizada = (descripcionBase ?? string.Empty).Trim();
+            List<InspeccionDiagnosticoVisualDto> diagnosticos =
+                DeserializarDiagnosticos(diagnosticosFinalesJson);
 
-            return string.Empty;
+            InspeccionDiagnosticoVisualDto? principal =
+                diagnosticos.FirstOrDefault(item => item.EsPrincipal);
+
+            string principalNombre = principal?.Diagnostico?.Trim() ??
+                (diagnosticoPrincipalResumen ?? string.Empty).Trim();
+
+            List<string> secundarios = diagnosticos
+                .Where(item => !item.EsPrincipal)
+                .Select(item => item.Diagnostico?.Trim() ?? string.Empty)
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Where(item => !string.Equals(
+                    item,
+                    principalNombre,
+                    StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (secundarios.Count == 0)
+                return Limitar(baseNormalizada, maximo);
+
+            string complemento =
+                $"Otras afectaciones observadas: {string.Join(", ", secundarios)}.";
+
+            if (string.IsNullOrWhiteSpace(baseNormalizada))
+                return Limitar(complemento, maximo);
+
+            int disponibleBase = Math.Max(
+                0,
+                maximo - complemento.Length - Environment.NewLine.Length * 2);
+            string baseLimitada = Limitar(baseNormalizada, disponibleBase);
+
+            return Limitar(
+                $"{baseLimitada}{Environment.NewLine}{Environment.NewLine}{complemento}",
+                maximo);
+        }
+
+        private static List<InspeccionDiagnosticoVisualDto>
+            DeserializarDiagnosticos(string? json)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+                return [];
+
+            try
+            {
+                return JsonSerializer.Deserialize<
+                    List<InspeccionDiagnosticoVisualDto>>(
+                        json,
+                        JsonOptions) ?? [];
+            }
+            catch (JsonException)
+            {
+                return [];
+            }
         }
 
         private int? ObtenerUsuarioId()
@@ -846,6 +892,8 @@ VALUES
         private static string Limitar(string? valor, int maximo)
         {
             string texto = (valor ?? string.Empty).Trim();
+            if (maximo <= 0)
+                return string.Empty;
             return texto.Length <= maximo ? texto : texto[..maximo];
         }
 

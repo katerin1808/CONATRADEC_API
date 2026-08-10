@@ -42,6 +42,7 @@ namespace CONATRADEC_API.Controllers
         private readonly InspeccionFitosanitariaDatabase database;
         private readonly InspeccionFitosanitariaControlDatabaseInitializer control;
         private readonly InspeccionFitosanitariaAsignacionDatabase asignaciones;
+        private readonly DiagnosticoIAImagenMarcadaService imagenMarcadaService;
 
         public InspeccionFitosanitariaController(
             DiagnosticoIADbContext diagnosticoDb,
@@ -66,6 +67,9 @@ namespace CONATRADEC_API.Controllers
             database = new InspeccionFitosanitariaDatabase(diagnosticoDb);
             asignaciones = new InspeccionFitosanitariaAsignacionDatabase(
                 diagnosticoDb);
+            imagenMarcadaService = new DiagnosticoIAImagenMarcadaService(
+                storage,
+                logger);
         }
 
         [HttpPost]
@@ -795,6 +799,13 @@ namespace CONATRADEC_API.Controllers
                             "La fotografía no se encuentra en un estado válido para esta evaluación de IA.");
                     }
 
+                    /*
+                     * El metadato fue leído antes de incrementar IntentosIA.
+                     * Por eso +1 identifica de forma estable la revisión que
+                     * estamos generando y nunca reutiliza un archivo anterior.
+                     */
+                    int revisionVisual = meta.IntentosIA + 1;
+
                     await database.CambiarEstadoFotoAsync(
                         fotografiaId,
                         usuarioId,
@@ -825,6 +836,27 @@ namespace CONATRADEC_API.Controllers
                             retroalimentacion,
                             diagnosticoPropuesto,
                             cancellationToken);
+
+                    ResultadoImagenMarcadaGenerada? imagenMarcada =
+                        await imagenMarcadaService.GenerarAsync(
+                            inspeccion.DiagnosticoIAId,
+                            imagen,
+                            revisionVisual,
+                            resultado.Diagnosticos,
+                            cancellationToken);
+
+                    string diagnosticosJson = JsonSerializer.Serialize(
+                        resultado.Diagnosticos ?? [],
+                        JsonOptions);
+
+                    await database.GuardarResultadoVisualAsync(
+                        fotografiaId,
+                        revisionVisual,
+                        diagnosticosJson,
+                        imagenMarcada?.RutaRelativa ?? string.Empty,
+                        resultado.Proveedor,
+                        resultado.Modelo,
+                        cancellationToken);
 
                     AplicarResultadoIA(imagen, resultado);
                     await diagnosticoDb.SaveChangesAsync(cancellationToken);
@@ -995,6 +1027,11 @@ namespace CONATRADEC_API.Controllers
                     inspeccionId,
                     cancellationToken);
 
+            Dictionary<int, ResultadoVisualRegistro> resultadosVisuales =
+                await database.ObtenerResultadosVisualesVigentesAsync(
+                    inspeccionId,
+                    cancellationToken);
+
             InspeccionFitosanitariaControlRegistro registro =
                 await control.ObtenerAsync(
                     inspeccionId,
@@ -1152,6 +1189,7 @@ namespace CONATRADEC_API.Controllers
                     .Select(imagen => CrearFotoDto(
                         imagen,
                         metadatos,
+                        resultadosVisuales,
                         humanos,
                         aprobaciones,
                         historiales,
@@ -1160,9 +1198,10 @@ namespace CONATRADEC_API.Controllers
             };
         }
 
-        private static InspeccionFotoDto CrearFotoDto(
+        private InspeccionFotoDto CrearFotoDto(
             DiagnosticoIAImagen imagen,
             IReadOnlyCollection<FotoMetadatos> metadatos,
+            IReadOnlyDictionary<int, ResultadoVisualRegistro> resultadosVisuales,
             IReadOnlyDictionary<int, AnalisisHumanoRegistro> humanos,
             IReadOnlyDictionary<int, AprobacionRegistro> aprobaciones,
             IReadOnlyDictionary<int, List<HistorialFotoRegistro>> historiales,
@@ -1171,12 +1210,20 @@ namespace CONATRADEC_API.Controllers
             FotoMetadatos meta = metadatos.First(item =>
                 item.FotografiaId == imagen.DiagnosticoIAImagenId);
 
+            resultadosVisuales.TryGetValue(
+                imagen.DiagnosticoIAImagenId,
+                out ResultadoVisualRegistro? visual);
             humanos.TryGetValue(
                 imagen.DiagnosticoIAImagenId,
                 out AnalisisHumanoRegistro? humano);
             aprobaciones.TryGetValue(
                 imagen.DiagnosticoIAImagenId,
                 out AprobacionRegistro? aprobacion);
+
+            string urlMarcada = !string.IsNullOrWhiteSpace(
+                visual?.RutaImagenMarcada)
+                    ? ConstruirUrlPublica(visual.RutaImagenMarcada)
+                    : string.Empty;
 
             return new InspeccionFotoDto
             {
@@ -1185,6 +1232,9 @@ namespace CONATRADEC_API.Controllers
                 TipoFotografia = imagen.TipoFotografia,
                 NombreArchivoOriginal = imagen.NombreArchivoOriginal,
                 UrlImagen = imagen.UrlImagen,
+                UrlImagenMarcadaIA = urlMarcada,
+                TieneImagenMarcadaIA = !string.IsNullOrWhiteSpace(urlMarcada),
+                VersionImagenMarcadaIA = visual?.Revision,
                 Estado = meta.Estado,
                 FechaIdentificacionCampo = meta.FechaIdentificacionCampo,
                 FechaRegistroSistemaUtc = meta.FechaRegistroSistemaUtc,
@@ -1200,7 +1250,8 @@ namespace CONATRADEC_API.Controllers
                     item.Activo),
                 ResultadoIA = CrearResultadoDto(
                     imagen.ResultadoIA,
-                    meta.FechaAnalisisIAUtc),
+                    meta.FechaAnalisisIAUtc,
+                    visual),
                 UltimoAnalisisHumano = humano == null
                     ? null
                     : new InspeccionFotoAnalisisHumanoDto
@@ -1223,7 +1274,9 @@ namespace CONATRADEC_API.Controllers
                         NivelCerteza = humano.NivelCerteza,
                         Observaciones = humano.Observaciones,
                         FechaCreacionUtc = humano.FechaCreacionUtc,
-                        FechaEnvioUtc = humano.FechaEnvioUtc
+                        FechaEnvioUtc = humano.FechaEnvioUtc,
+                        Diagnosticos = DeserializarDiagnosticos(
+                            humano.DiagnosticosJson)
                     },
                 UltimaAprobacion = aprobacion == null
                     ? null
@@ -1241,7 +1294,9 @@ namespace CONATRADEC_API.Controllers
                             aprobacion.AutorizaPublicacionAlbum,
                         MismoUsuarioQueAnalizo =
                             aprobacion.MismoUsuarioQueAnalizo,
-                        FechaAprobacionUtc = aprobacion.FechaAprobacionUtc
+                        FechaAprobacionUtc = aprobacion.FechaAprobacionUtc,
+                        DiagnosticosFinales = DeserializarDiagnosticos(
+                            aprobacion.DiagnosticosFinalesJson)
                     },
                 Historial = (historiales.GetValueOrDefault(
                         imagen.DiagnosticoIAImagenId) ?? [])
@@ -1264,10 +1319,14 @@ namespace CONATRADEC_API.Controllers
 
         private static InspeccionFotoResultadoIADto? CrearResultadoDto(
             DiagnosticoIAImagenResultadoIA? resultado,
-            DateTime? fechaAnalisis)
+            DateTime? fechaAnalisis,
+            ResultadoVisualRegistro? visual)
         {
             if (resultado == null)
                 return null;
+
+            List<InspeccionDiagnosticoVisualDto> diagnosticos =
+                DeserializarDiagnosticos(visual?.DiagnosticosJson);
 
             return new InspeccionFotoResultadoIADto
             {
@@ -1313,7 +1372,11 @@ namespace CONATRADEC_API.Controllers
                     resultado.RecomendacionesCapturaJson),
                 Advertencias = DeserializarLista(
                     resultado.AdvertenciasJson),
-                FechaAnalisisIAUtc = fechaAnalisis
+                FechaAnalisisIAUtc = fechaAnalisis,
+                Diagnosticos = diagnosticos,
+                LocalizacionVisualDisponible =
+                    diagnosticos.Any(item => item.Lesiones.Count > 0),
+                VersionVisual = visual?.Revision
             };
         }
 
@@ -1887,6 +1950,25 @@ namespace CONATRADEC_API.Controllers
                 return JsonSerializer.Deserialize<List<string>>(
                     json,
                     JsonOptions) ?? [];
+            }
+            catch (JsonException)
+            {
+                return [];
+            }
+        }
+
+        private static List<InspeccionDiagnosticoVisualDto>
+            DeserializarDiagnosticos(string? json)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+                return [];
+
+            try
+            {
+                return JsonSerializer.Deserialize<
+                    List<InspeccionDiagnosticoVisualDto>>(
+                        json,
+                        JsonOptions) ?? [];
             }
             catch (JsonException)
             {

@@ -49,27 +49,113 @@ namespace CONATRADEC_API.DTOs
         public string Motivo { get; set; } = string.Empty;
     }
 
+    /// <summary>
+    /// Área visual detectada dentro de la fotografía. Box2d utiliza el orden
+    /// [ymin, xmin, ymax, xmax] en una escala normalizada de 0 a 1000.
+    /// </summary>
+    public sealed class InspeccionLesionVisualDto
+    {
+        [MaxLength(20)]
+        public string Id { get; set; } = string.Empty;
+
+        [MaxLength(500)]
+        public string Descripcion { get; set; } = string.Empty;
+
+        public List<int> Box2d { get; set; } = [];
+    }
+
+    /// <summary>
+    /// Diagnóstico individual dentro de una valoración fotográfica. El estado
+    /// del flujo continúa perteneciendo a la fotografía completa.
+    /// </summary>
+    public sealed class InspeccionDiferencialVisualDto
+    {
+        [MaxLength(300)]
+        public string Diagnostico { get; set; } = string.Empty;
+
+        [MaxLength(9)]
+        public string ColorMarcador { get; set; } = "#1E88E5";
+
+        public List<InspeccionLesionVisualDto> Lesiones { get; set; } = [];
+    }
+
+    public sealed class InspeccionDiagnosticoVisualDto
+    {
+        [MaxLength(20)]
+        public string Id { get; set; } = string.Empty;
+
+        [MaxLength(20)]
+        public string IdOrigenIA { get; set; } = string.Empty;
+
+        [MaxLength(30)]
+        public string AccionHumana { get; set; } = string.Empty;
+
+        [MaxLength(300)]
+        public string Diagnostico { get; set; } = string.Empty;
+
+        [MaxLength(50)]
+        public string Categoria { get; set; } = string.Empty;
+
+        [MaxLength(80)]
+        public string TipoDiagnostico { get; set; } = string.Empty;
+
+        public bool EsPrincipal { get; set; }
+
+        [MaxLength(30)]
+        public string NivelCerteza { get; set; } = string.Empty;
+
+        [MaxLength(30)]
+        public string Severidad { get; set; } = string.Empty;
+
+        public List<string> DiagnosticosDiferenciales { get; set; } = [];
+        public List<InspeccionDiferencialVisualDto> DiferencialesLocalizados { get; set; } = [];
+        public List<InspeccionLesionVisualDto> Lesiones { get; set; } = [];
+
+        /// <summary>
+        /// Color hexadecimal asignado por backend para que la imagen marcada y
+        /// la leyenda MAUI representen el mismo diagnóstico de forma estable.
+        /// </summary>
+        [MaxLength(9)]
+        public string ColorMarcador { get; set; } = string.Empty;
+    }
+
     public sealed class InspeccionFotoAnalisisHumanoItemRequest
     {
         [Range(1, int.MaxValue)]
         public int FotografiaId { get; set; }
+
         [Required, MaxLength(30)]
         public string CalidadEvaluacion { get; set; } = "NO_EVALUABLE";
+
         [Required, MaxLength(40)]
         public string EstadoGeneral { get; set; } = "INDETERMINADA";
+
         [Required, MaxLength(50)]
         public string CategoriaPrincipal { get; set; } = "NO_APLICA";
+
         public List<string> CategoriasSecundarias { get; set; } = [];
-        [Required, MaxLength(300)]
+
+        [MaxLength(300)]
         public string Diagnostico { get; set; } = string.Empty;
+
         [MaxLength(80)]
         public string TipoDiagnostico { get; set; } = string.Empty;
+
         [Required, MaxLength(30)]
         public string Severidad { get; set; } = "NO_EVALUABLE";
+
         [Required, MaxLength(30)]
         public string NivelCerteza { get; set; } = "NO_DETERMINADO";
+
         [MaxLength(3000)]
         public string Observaciones { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Conjunto de diagnósticos resultante de la revisión humana. Cada
+        /// elemento puede confirmar, corregir, descartar o agregar una
+        /// afectación sin crear estados independientes por enfermedad.
+        /// </summary>
+        public List<InspeccionDiagnosticoVisualDto> Diagnosticos { get; set; } = [];
     }
 
     public sealed class InspeccionFotosAnalisisHumanoRequest
@@ -83,26 +169,43 @@ namespace CONATRADEC_API.DTOs
     {
         [Range(1, int.MaxValue)]
         public int FotografiaId { get; set; }
+
         [Required, MaxLength(40)]
         public string Decision { get; set; } = string.Empty;
+
         [MaxLength(30)]
         public string CalidadEvaluacionFinal { get; set; } = string.Empty;
+
         [MaxLength(40)]
         public string EstadoGeneralFinal { get; set; } = string.Empty;
+
         [MaxLength(50)]
         public string CategoriaPrincipalFinal { get; set; } = string.Empty;
+
         public List<string> CategoriasSecundariasFinales { get; set; } = [];
+
         [MaxLength(300)]
         public string DiagnosticoFinal { get; set; } = string.Empty;
+
         [MaxLength(80)]
         public string TipoDiagnosticoFinal { get; set; } = string.Empty;
+
         [MaxLength(30)]
         public string SeveridadFinal { get; set; } = string.Empty;
+
         [MaxLength(30)]
         public string NivelCertezaFinal { get; set; } = string.Empty;
+
         [MaxLength(3000)]
         public string Observaciones { get; set; } = string.Empty;
+
         public bool AutorizaPublicacionAlbum { get; set; }
+
+        /// <summary>
+        /// Conjunto definitivo aprobado para la fotografía. Solo uno puede ser
+        /// principal cuando exista una clasificación oficial para el Álbum.
+        /// </summary>
+        public List<InspeccionDiagnosticoVisualDto> DiagnosticosFinales { get; set; } = [];
     }
 
     public sealed class InspeccionFotosAprobacionRequest
@@ -115,10 +218,13 @@ namespace CONATRADEC_API.DTOs
     {
         [Range(1, int.MaxValue)]
         public int CategoriaAlbumBotanicoId { get; set; }
+
         [Range(1, int.MaxValue)]
         public int AlbumBotanicoCafeId { get; set; }
+
         [MaxLength(500)]
         public string Descripcion { get; set; } = string.Empty;
+
         public bool EsPortada { get; set; }
         public int Orden { get; set; }
     }
@@ -187,6 +293,10 @@ namespace CONATRADEC_API.DTOs
         public List<string> RecomendacionesCaptura { get; set; } = [];
         public List<string> Advertencias { get; set; } = [];
         public DateTime? FechaAnalisisIAUtc { get; set; }
+
+        public List<InspeccionDiagnosticoVisualDto> Diagnosticos { get; set; } = [];
+        public bool LocalizacionVisualDisponible { get; set; }
+        public int? VersionVisual { get; set; }
     }
 
     public sealed class InspeccionFotoAnalisisHumanoDto
@@ -207,6 +317,7 @@ namespace CONATRADEC_API.DTOs
         public string Observaciones { get; set; } = string.Empty;
         public DateTime FechaCreacionUtc { get; set; }
         public DateTime? FechaEnvioUtc { get; set; }
+        public List<InspeccionDiagnosticoVisualDto> Diagnosticos { get; set; } = [];
     }
 
     public sealed class InspeccionFotoAprobacionDto
@@ -220,6 +331,7 @@ namespace CONATRADEC_API.DTOs
         public bool AutorizaPublicacionAlbum { get; set; }
         public bool MismoUsuarioQueAnalizo { get; set; }
         public DateTime FechaAprobacionUtc { get; set; }
+        public List<InspeccionDiagnosticoVisualDto> DiagnosticosFinales { get; set; } = [];
     }
 
     public sealed class InspeccionFotoHistorialDto
@@ -240,7 +352,17 @@ namespace CONATRADEC_API.DTOs
         public int Orden { get; set; }
         public string TipoFotografia { get; set; } = string.Empty;
         public string NombreArchivoOriginal { get; set; } = string.Empty;
+
+        /// <summary>
+        /// URL de la evidencia original limpia. Esta URL nunca representa una
+        /// imagen derivada de IA.
+        /// </summary>
         public string UrlImagen { get; set; } = string.Empty;
+
+        public string UrlImagenMarcadaIA { get; set; } = string.Empty;
+        public bool TieneImagenMarcadaIA { get; set; }
+        public int? VersionImagenMarcadaIA { get; set; }
+
         public string Estado { get; set; } = string.Empty;
         public DateTime? FechaIdentificacionCampo { get; set; }
         public DateTime FechaRegistroSistemaUtc { get; set; }
@@ -306,20 +428,28 @@ namespace CONATRADEC_API.DTOs
     {
         [Required, MaxLength(40)]
         public string Proveedor { get; set; } = "GEMINI";
+
         [Required, MaxLength(40)]
         public string Protocolo { get; set; } = "GEMINI_NATIVO";
+
         [Required, MaxLength(500)]
         public string BaseUrl { get; set; } = string.Empty;
+
         [Required, MaxLength(300)]
         public string Endpoint { get; set; } = string.Empty;
+
         [MaxLength(2000)]
         public string? ApiKey { get; set; }
+
         [Required, MaxLength(160)]
         public string ModeloPrincipal { get; set; } = string.Empty;
+
         [MaxLength(160)]
         public string ModeloRespaldo { get; set; } = string.Empty;
+
         [Range(15, 600)]
         public int TimeoutSegundos { get; set; } = 180;
+
         public bool Activo { get; set; } = true;
     }
 

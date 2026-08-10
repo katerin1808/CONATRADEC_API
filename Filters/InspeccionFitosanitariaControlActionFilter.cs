@@ -3,7 +3,10 @@ using CONATRADEC_API.Models;
 using CONATRADEC_API.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.EntityFrameworkCore;
 using System.Collections;
+using System.Data;
+using System.Data.Common;
 using System.Reflection;
 using System.Security.Claims;
 
@@ -17,7 +20,9 @@ namespace CONATRADEC_API.Filters
     ///   técnica todavía continúe abierta;
     /// - el aprobador interviene después de finalizar la revisión humana;
     /// - el cierre definitivo convierte todo el expediente en solo lectura;
-    /// - las decisiones individuales conservan el historial de cada fotografía.
+    /// - las decisiones individuales conservan el historial de cada fotografía;
+    /// - el límite de reevaluaciones IA se aplica por fotografía y se valida
+    ///   también en backend antes de iniciar una nueva llamada al proveedor.
     /// </summary>
     public sealed class InspeccionFitosanitariaControlActionFilter :
         IAsyncActionFilter
@@ -29,6 +34,7 @@ namespace CONATRADEC_API.Filters
         private const string RutaPublicacionAlbum =
             "/api/publicaciones-album-fitosanitarias";
 
+        private readonly DiagnosticoIADbContext diagnosticoDb;
         private readonly InspeccionFitosanitariaControlDatabaseInitializer control;
         private readonly InspeccionFitosanitariaDevolucionDatabase devoluciones;
         private readonly InspeccionFitosanitariaAsignacionDatabase asignaciones;
@@ -39,6 +45,7 @@ namespace CONATRADEC_API.Filters
             InspeccionFitosanitariaControlDatabaseInitializer control,
             PermisoApiService permisos)
         {
+            diagnosticoDb = db;
             this.control = control;
             this.permisos = permisos;
             devoluciones = new InspeccionFitosanitariaDevolucionDatabase(db);
@@ -72,6 +79,20 @@ namespace CONATRADEC_API.Filters
                         message =
                             "Esta operación debe enviarse para una sola fotografía. Cada evidencia conserva sus propios motivos, decisiones, análisis e historial."
                     });
+                    return;
+                }
+            }
+
+            if (EsRutaSolicitudRevisionIA(ruta))
+            {
+                IActionResult? errorLimite =
+                    await ValidarLimiteReevaluacionIAAsync(
+                        context,
+                        cancellationToken);
+
+                if (errorLimite != null)
+                {
+                    context.Result = errorLimite;
                     return;
                 }
             }
@@ -215,6 +236,56 @@ namespace CONATRADEC_API.Filters
                 context,
                 ejecutado.Result,
                 cancellationToken);
+        }
+
+        private async Task<IActionResult?> ValidarLimiteReevaluacionIAAsync(
+            ActionExecutingContext context,
+            CancellationToken cancellationToken)
+        {
+            int[] fotografiaIds = ObtenerFotografiaIds(context);
+            if (fotografiaIds.Length != 1)
+                return null;
+
+            DiagnosticoIAConfiguracion? configuracion =
+                await diagnosticoDb.Configuraciones
+                    .AsNoTracking()
+                    .OrderBy(item => item.DiagnosticoIAConfiguracionId)
+                    .FirstOrDefaultAsync(cancellationToken);
+
+            bool ilimitadas =
+                configuracion?.RevisionesIlimitadas ?? false;
+
+            if (ilimitadas)
+                return null;
+
+            int maximo = Math.Clamp(
+                configuracion?.MaximoRevisionesGemini ?? 2,
+                1,
+                20);
+
+            Dictionary<int, int> completadas =
+                await ObtenerReevaluacionesCompletadasAsync(
+                    fotografiaIds,
+                    cancellationToken);
+
+            int utilizadas = completadas.GetValueOrDefault(fotografiaIds[0]);
+            if (utilizadas < maximo)
+                return null;
+
+            return new BadRequestObjectResult(new
+            {
+                success = false,
+                message =
+                    $"Esta fotografía ya alcanzó el máximo de {maximo} reevaluaciones adicionales de Gemini. El análisis inicial no cuenta dentro de este límite.",
+                data = new
+                {
+                    fotografiaId = fotografiaIds[0],
+                    revisionesCompletadas = utilizadas,
+                    maximoRevisiones = maximo,
+                    revisionesIlimitadas = false,
+                    revisionesRestantes = 0
+                }
+            });
         }
 
         private async Task<IActionResult?> ValidarDescarteTecnicoAsync(
@@ -447,6 +518,10 @@ namespace CONATRADEC_API.Filters
             detalle["VersionAsignacion"] =
                 asignacion.VersionConcurrencia;
 
+            await EnriquecerLimiteReevaluacionesAsync(
+                detalle,
+                cancellationToken);
+
             if (registro.EtapaTecnicaFinalizada &&
                 TryObtenerValor(
                     detalle,
@@ -532,6 +607,152 @@ namespace CONATRADEC_API.Filters
 
             sobre["data"] = detalle;
             objectResult.Value = sobre;
+        }
+
+        private async Task EnriquecerLimiteReevaluacionesAsync(
+            Dictionary<string, object?> detalle,
+            CancellationToken cancellationToken)
+        {
+            if (!TryObtenerValor(detalle, "Fotografias", out object? valor) ||
+                valor is not IEnumerable enumerable ||
+                valor is string)
+            {
+                return;
+            }
+
+            List<object> fotografias = enumerable.Cast<object>().ToList();
+            int[] ids = fotografias
+                .Select(item =>
+                {
+                    Dictionary<string, object?> atributos = Atributos(item);
+                    return TryObtenerEntero(
+                        atributos,
+                        "FotografiaId",
+                        out int fotografiaId)
+                            ? fotografiaId
+                            : 0;
+                })
+                .Where(item => item > 0)
+                .Distinct()
+                .ToArray();
+
+            if (ids.Length == 0)
+                return;
+
+            DiagnosticoIAConfiguracion? configuracion =
+                await diagnosticoDb.Configuraciones
+                    .AsNoTracking()
+                    .OrderBy(item => item.DiagnosticoIAConfiguracionId)
+                    .FirstOrDefaultAsync(cancellationToken);
+
+            int maximo = Math.Clamp(
+                configuracion?.MaximoRevisionesGemini ?? 2,
+                1,
+                20);
+            bool ilimitadas =
+                configuracion?.RevisionesIlimitadas ?? false;
+
+            Dictionary<int, int> completadas =
+                await ObtenerReevaluacionesCompletadasAsync(
+                    ids,
+                    cancellationToken);
+
+            var enriquecidas = new List<Dictionary<string, object?>>();
+
+            foreach (object fotografia in fotografias)
+            {
+                Dictionary<string, object?> atributos = Atributos(fotografia);
+                if (!TryObtenerEntero(
+                        atributos,
+                        "FotografiaId",
+                        out int fotografiaId))
+                {
+                    enriquecidas.Add(atributos);
+                    continue;
+                }
+
+                int utilizadas = completadas.GetValueOrDefault(fotografiaId);
+                int restantes = ilimitadas
+                    ? int.MaxValue
+                    : Math.Max(0, maximo - utilizadas);
+
+                atributos["RevisionesIACompletadas"] = utilizadas;
+                atributos["MaximoRevisionesIA"] = maximo;
+                atributos["RevisionesIAIlimitadas"] = ilimitadas;
+                atributos["RevisionesIARestantes"] = restantes;
+                atributos["PuedeSolicitarRevisionIA"] =
+                    ilimitadas || utilizadas < maximo;
+
+                enriquecidas.Add(atributos);
+            }
+
+            detalle["Fotografias"] = enriquecidas;
+        }
+
+        private async Task<Dictionary<int, int>>
+            ObtenerReevaluacionesCompletadasAsync(
+                IReadOnlyCollection<int> fotografiaIds,
+                CancellationToken cancellationToken)
+        {
+            int[] ids = fotografiaIds
+                .Where(item => item > 0)
+                .Distinct()
+                .ToArray();
+
+            var resultado = ids.ToDictionary(item => item, _ => 0);
+            if (ids.Length == 0)
+                return resultado;
+
+            DbConnection conexion = diagnosticoDb.Database.GetDbConnection();
+            bool cerrarConexion = conexion.State != ConnectionState.Open;
+
+            if (cerrarConexion)
+                await conexion.OpenAsync(cancellationToken);
+
+            try
+            {
+                await using DbCommand comando = conexion.CreateCommand();
+                string parametros = string.Join(
+                    ", ",
+                    ids.Select((_, indice) => $"@foto{indice}"));
+
+                comando.CommandText = $"""
+SELECT
+    DiagnosticoIAImagenId,
+    COUNT(1) AS Total
+FROM dbo.diagnosticoIAImagenRevisionIA
+WHERE DiagnosticoIAImagenId IN ({parametros})
+  AND TipoRevision = N'REVISION_SOLICITADA'
+  AND Estado = N'COMPLETADA'
+GROUP BY DiagnosticoIAImagenId;
+""";
+
+                for (int indice = 0; indice < ids.Length; indice++)
+                {
+                    DbParameter parametro = comando.CreateParameter();
+                    parametro.ParameterName = $"@foto{indice}";
+                    parametro.Value = ids[indice];
+                    parametro.DbType = DbType.Int32;
+                    comando.Parameters.Add(parametro);
+                }
+
+                await using DbDataReader reader =
+                    await comando.ExecuteReaderAsync(cancellationToken);
+
+                while (await reader.ReadAsync(cancellationToken))
+                {
+                    int fotografiaId = reader.GetInt32(0);
+                    int total = reader.GetInt32(1);
+                    resultado[fotografiaId] = total;
+                }
+            }
+            finally
+            {
+                if (cerrarConexion)
+                    await conexion.CloseAsync();
+            }
+
+            return resultado;
         }
 
         private static string CrearMotivoCierreTecnico(
@@ -635,6 +856,11 @@ namespace CONATRADEC_API.Filters
                 StringComparison.OrdinalIgnoreCase) ||
             ruta.Contains(
                 "/api/publicaciones-album-fitosanitarias/",
+                StringComparison.OrdinalIgnoreCase);
+
+        private static bool EsRutaSolicitudRevisionIA(string ruta) =>
+            ruta.TrimEnd('/').EndsWith(
+                "/solicitar-revision-ia",
                 StringComparison.OrdinalIgnoreCase);
 
         private static bool EsOperacionTecnico(string ruta)

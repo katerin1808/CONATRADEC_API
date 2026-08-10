@@ -13,7 +13,16 @@ namespace CONATRADEC_API.Infrastructure
                 ("album-botanico", "/resources/uploads/album-botanico"),
                 ("categorias-album", "/resources/uploads/categorias-album"),
                 ("noticias", "/resources/uploads/noticias"),
-                ("diagnosticos-ia", "/resources/uploads/diagnosticos-ia")
+                ("diagnosticos-ia", "/resources/uploads/diagnosticos-ia"),
+
+                /*
+                 * Las imágenes marcadas de Inspección Fitosanitaria son
+                 * derivados de la evidencia original y se almacenan en una
+                 * carpeta independiente. Este mapeo permite servir también las
+                 * revisiones ya generadas sin modificar ni duplicar la foto
+                 * original ubicada en diagnosticos-ia.
+                 */
+                ("diagnostico-ia", "/resources/uploads/diagnostico-ia")
             ];
 
         public static IServiceCollection AddConatradecImageStorage(

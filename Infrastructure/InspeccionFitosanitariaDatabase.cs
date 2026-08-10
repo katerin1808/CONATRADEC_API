@@ -10,6 +10,10 @@ namespace CONATRADEC_API.Infrastructure
     /// Persistencia del expediente independiente por fotografía. El control de
     /// etapas se delega a InspeccionFitosanitariaControlDatabaseInitializer y
     /// no conserva ningún campo heredado llamado CerradaTecnico.
+    ///
+    /// Las valoraciones visuales de IA se guardan en una tabla de historial
+    /// separada para conservar todas las revisiones sin alterar el resultado
+    /// resumen vigente utilizado por las pantallas anteriores.
     /// </summary>
     public sealed class InspeccionFitosanitariaDatabase
     {
@@ -336,6 +340,68 @@ IF NOT EXISTS
         ON dbo.diagnosticoIAImagenRevisionIA
            (DiagnosticoIAImagenId, FechaSolicitudUtc DESC);
 
+/*
+ * Historial visual de IA. No sustituye el resultado resumen vigente de la
+ * tabla histórica; conserva todas las reevaluaciones y la ruta de cada copia
+ * marcada generada por backend.
+ */
+IF OBJECT_ID(N'dbo.diagnosticoIAImagenResultadoVisualV2', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.diagnosticoIAImagenResultadoVisualV2
+    (
+        DiagnosticoIAImagenResultadoVisualId INT IDENTITY(1,1) NOT NULL,
+        DiagnosticoIAImagenId INT NOT NULL,
+        Revision INT NOT NULL,
+        EsVigente BIT NOT NULL
+            CONSTRAINT DF_diagIAVisual_vigente DEFAULT(1),
+        DiagnosticosJson NVARCHAR(MAX) NOT NULL
+            CONSTRAINT DF_diagIAVisual_diag DEFAULT(N'[]'),
+        RutaImagenMarcada NVARCHAR(600) NOT NULL
+            CONSTRAINT DF_diagIAVisual_ruta DEFAULT(N''),
+        ProveedorIA NVARCHAR(40) NOT NULL
+            CONSTRAINT DF_diagIAVisual_proveedor DEFAULT(N''),
+        ModeloIA NVARCHAR(160) NOT NULL
+            CONSTRAINT DF_diagIAVisual_modelo DEFAULT(N''),
+        FechaGeneracionUtc DATETIME2(0) NOT NULL,
+        CONSTRAINT PK_diagIAImagenResultadoVisualV2
+            PRIMARY KEY (DiagnosticoIAImagenResultadoVisualId),
+        CONSTRAINT FK_diagIAImagenResultadoVisualV2_imagen
+            FOREIGN KEY (DiagnosticoIAImagenId)
+            REFERENCES dbo.diagnosticoIAImagen(DiagnosticoIAImagenId)
+    );
+END;
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE name = N'UX_diagIAVisual_fotoRevision'
+      AND object_id = OBJECT_ID(N'dbo.diagnosticoIAImagenResultadoVisualV2')
+)
+    CREATE UNIQUE INDEX UX_diagIAVisual_fotoRevision
+        ON dbo.diagnosticoIAImagenResultadoVisualV2
+           (DiagnosticoIAImagenId, Revision);
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE name = N'IX_diagIAVisual_vigente'
+      AND object_id = OBJECT_ID(N'dbo.diagnosticoIAImagenResultadoVisualV2')
+)
+    CREATE INDEX IX_diagIAVisual_vigente
+        ON dbo.diagnosticoIAImagenResultadoVisualV2
+           (DiagnosticoIAImagenId, EsVigente, FechaGeneracionUtc DESC);
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE name = N'UX_diagIAVisual_unVigentePorFoto'
+      AND object_id = OBJECT_ID(N'dbo.diagnosticoIAImagenResultadoVisualV2')
+)
+    CREATE UNIQUE INDEX UX_diagIAVisual_unVigentePorFoto
+        ON dbo.diagnosticoIAImagenResultadoVisualV2
+           (DiagnosticoIAImagenId)
+        WHERE EsVigente = 1;
+
 IF OBJECT_ID(N'dbo.diagnosticoIAImagenAnalisisHumano', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.diagnosticoIAImagenAnalisisHumano
@@ -357,6 +423,8 @@ BEGIN
         NivelCerteza NVARCHAR(30) NOT NULL,
         Observaciones NVARCHAR(3000) NOT NULL
             CONSTRAINT DF_diagIAImgHum_obs DEFAULT(N''),
+        DiagnosticosJson NVARCHAR(MAX) NOT NULL
+            CONSTRAINT DF_diagIAImgHum_diags DEFAULT(N'[]'),
         FechaCreacionUtc DATETIME2(0) NOT NULL,
         FechaActualizacionUtc DATETIME2(0) NOT NULL,
         FechaEnvioUtc DATETIME2(0) NULL,
@@ -366,6 +434,13 @@ BEGIN
             FOREIGN KEY (DiagnosticoIAImagenId)
             REFERENCES dbo.diagnosticoIAImagen(DiagnosticoIAImagenId)
     );
+END;
+
+IF COL_LENGTH(N'dbo.diagnosticoIAImagenAnalisisHumano', N'DiagnosticosJson') IS NULL
+BEGIN
+    ALTER TABLE dbo.diagnosticoIAImagenAnalisisHumano
+        ADD DiagnosticosJson NVARCHAR(MAX) NOT NULL
+            CONSTRAINT DF_diagIAImgHum_diags DEFAULT(N'[]') WITH VALUES;
 END;
 
 IF NOT EXISTS
@@ -405,6 +480,8 @@ BEGIN
             CONSTRAINT DF_diagIAImgApr_certeza DEFAULT(N''),
         Observaciones NVARCHAR(3000) NOT NULL
             CONSTRAINT DF_diagIAImgApr_obs DEFAULT(N''),
+        DiagnosticosFinalesJson NVARCHAR(MAX) NOT NULL
+            CONSTRAINT DF_diagIAImgApr_diags DEFAULT(N'[]'),
         AutorizaPublicacionAlbum BIT NOT NULL
             CONSTRAINT DF_diagIAImgApr_album DEFAULT(0),
         MismoUsuarioQueAnalizo BIT NOT NULL
@@ -420,6 +497,13 @@ BEGIN
             REFERENCES dbo.diagnosticoIAImagenAnalisisHumano
                        (DiagnosticoIAImagenAnalisisHumanoId)
     );
+END;
+
+IF COL_LENGTH(N'dbo.diagnosticoIAImagenAprobacionV2', N'DiagnosticosFinalesJson') IS NULL
+BEGIN
+    ALTER TABLE dbo.diagnosticoIAImagenAprobacionV2
+        ADD DiagnosticosFinalesJson NVARCHAR(MAX) NOT NULL
+            CONSTRAINT DF_diagIAImgApr_diags DEFAULT(N'[]') WITH VALUES;
 END;
 
 IF NOT EXISTS
@@ -772,6 +856,140 @@ WHERE DiagnosticoIAImagenRevisionIAId = @revisionId;
                 ("@respuesta", respuestaJson ?? string.Empty),
                 ("@error", Limitar(error, 2000)));
 
+        /// <summary>
+        /// Guarda una nueva revisión visual y deja de marcar como vigente a las
+        /// anteriores. Los archivos físicos anteriores no se eliminan.
+        /// </summary>
+        public Task GuardarResultadoVisualAsync(
+            int fotografiaId,
+            int revision,
+            string diagnosticosJson,
+            string rutaImagenMarcada,
+            string proveedor,
+            string modelo,
+            CancellationToken cancellationToken = default) =>
+            EjecutarAsync(
+                """
+SET XACT_ABORT ON;
+BEGIN TRANSACTION;
+BEGIN TRY
+    UPDATE dbo.diagnosticoIAImagenResultadoVisualV2
+    SET EsVigente = 0
+    WHERE DiagnosticoIAImagenId = @fotoId
+      AND EsVigente = 1;
+
+    INSERT INTO dbo.diagnosticoIAImagenResultadoVisualV2
+    (
+        DiagnosticoIAImagenId, Revision, EsVigente,
+        DiagnosticosJson, RutaImagenMarcada,
+        ProveedorIA, ModeloIA, FechaGeneracionUtc
+    )
+    VALUES
+    (
+        @fotoId, @revision, 1, @diagnosticosJson, @rutaMarcada,
+        @proveedor, @modelo, SYSUTCDATETIME()
+    );
+
+    COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0
+        ROLLBACK TRANSACTION;
+    THROW;
+END CATCH;
+""",
+                cancellationToken,
+                ("@fotoId", fotografiaId),
+                ("@revision", revision),
+                ("@diagnosticosJson", string.IsNullOrWhiteSpace(diagnosticosJson)
+                    ? "[]"
+                    : diagnosticosJson),
+                ("@rutaMarcada", Limitar(rutaImagenMarcada, 600)),
+                ("@proveedor", Limitar(proveedor, 40)),
+                ("@modelo", Limitar(modelo, 160)));
+
+        public async Task<ResultadoVisualRegistro?>
+            ObtenerResultadoVisualVigenteAsync(
+                int fotografiaId,
+                CancellationToken cancellationToken = default)
+        {
+            await InicializarAsync(cancellationToken);
+            const string sql = """
+SELECT TOP(1)
+    DiagnosticoIAImagenResultadoVisualId,
+    DiagnosticoIAImagenId, Revision, EsVigente,
+    DiagnosticosJson, RutaImagenMarcada,
+    ProveedorIA, ModeloIA, FechaGeneracionUtc
+FROM dbo.diagnosticoIAImagenResultadoVisualV2
+WHERE DiagnosticoIAImagenId = @fotoId
+ORDER BY EsVigente DESC, Revision DESC,
+         DiagnosticoIAImagenResultadoVisualId DESC;
+""";
+
+            await using DbCommand comando = CrearComando(sql);
+            AgregarParametro(comando, "@fotoId", fotografiaId);
+            await AbrirAsync(comando.Connection!, cancellationToken);
+            await using DbDataReader reader =
+                await comando.ExecuteReaderAsync(cancellationToken);
+            return await reader.ReadAsync(cancellationToken)
+                ? LeerResultadoVisual(reader)
+                : null;
+        }
+
+        public async Task<Dictionary<int, ResultadoVisualRegistro>>
+            ObtenerResultadosVisualesVigentesAsync(
+                int diagnosticoId,
+                CancellationToken cancellationToken = default)
+        {
+            await InicializarAsync(cancellationToken);
+            const string sql = """
+WITH visuales AS
+(
+    SELECT
+        v.DiagnosticoIAImagenResultadoVisualId,
+        v.DiagnosticoIAImagenId, v.Revision, v.EsVigente,
+        v.DiagnosticosJson, v.RutaImagenMarcada,
+        v.ProveedorIA, v.ModeloIA, v.FechaGeneracionUtc,
+        ROW_NUMBER() OVER
+        (
+            PARTITION BY v.DiagnosticoIAImagenId
+            ORDER BY v.EsVigente DESC, v.Revision DESC,
+                     v.DiagnosticoIAImagenResultadoVisualId DESC
+        ) AS rn
+    FROM dbo.diagnosticoIAImagenResultadoVisualV2 v
+    INNER JOIN dbo.diagnosticoIAImagen i
+        ON i.DiagnosticoIAImagenId = v.DiagnosticoIAImagenId
+    WHERE i.DiagnosticoIAId = @diagnosticoId
+)
+SELECT
+    DiagnosticoIAImagenResultadoVisualId,
+    DiagnosticoIAImagenId, Revision, EsVigente,
+    DiagnosticosJson, RutaImagenMarcada,
+    ProveedorIA, ModeloIA, FechaGeneracionUtc
+FROM visuales
+WHERE rn = 1;
+""";
+
+            await using DbCommand comando = CrearComando(sql);
+            AgregarParametro(comando, "@diagnosticoId", diagnosticoId);
+            await AbrirAsync(comando.Connection!, cancellationToken);
+            var resultado = new Dictionary<int, ResultadoVisualRegistro>();
+            await using DbDataReader reader =
+                await comando.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                ResultadoVisualRegistro registro = LeerResultadoVisual(reader);
+                resultado[registro.FotografiaId] = registro;
+            }
+            return resultado;
+        }
+
+        /// <summary>
+        /// Compatibilidad con controladores que todavía reenvían el último
+        /// análisis humano sin conocer la nueva colección Diagnosticos.
+        /// Conserva automáticamente dicha colección para no perder el trabajo
+        /// por diagnóstico al crear una nueva versión ENVIADO.
+        /// </summary>
         public async Task<int> GuardarAnalisisHumanoAsync(
             int fotografiaId,
             int usuarioId,
@@ -784,6 +1002,44 @@ WHERE DiagnosticoIAImagenRevisionIAId = @revisionId;
             string severidad,
             string certeza,
             string observaciones,
+            bool enviar,
+            CancellationToken cancellationToken = default)
+        {
+            AnalisisHumanoRegistro? anterior =
+                await ObtenerUltimoAnalisisHumanoAsync(
+                    fotografiaId,
+                    cancellationToken);
+
+            return await GuardarAnalisisHumanoAsync(
+                fotografiaId,
+                usuarioId,
+                calidad,
+                estadoGeneral,
+                categoria,
+                categoriasJson,
+                diagnostico,
+                tipo,
+                severidad,
+                certeza,
+                observaciones,
+                anterior?.DiagnosticosJson ?? "[]",
+                enviar,
+                cancellationToken);
+        }
+
+        public async Task<int> GuardarAnalisisHumanoAsync(
+            int fotografiaId,
+            int usuarioId,
+            string calidad,
+            string estadoGeneral,
+            string categoria,
+            string categoriasJson,
+            string diagnostico,
+            string tipo,
+            string severidad,
+            string certeza,
+            string observaciones,
+            string diagnosticosJson,
             bool enviar,
             CancellationToken cancellationToken = default)
         {
@@ -801,14 +1057,15 @@ INSERT INTO dbo.diagnosticoIAImagenAnalisisHumano
     EstadoRegistro, CalidadEvaluacion, EstadoGeneral,
     CategoriaPrincipal, CategoriasSecundariasJson, Diagnostico,
     TipoDiagnostico, Severidad, NivelCerteza, Observaciones,
-    FechaCreacionUtc, FechaActualizacionUtc, FechaEnvioUtc
+    DiagnosticosJson, FechaCreacionUtc, FechaActualizacionUtc,
+    FechaEnvioUtc
 )
 VALUES
 (
     @fotoId, @usuarioId, @version,
     CASE WHEN @enviar = 1 THEN N'ENVIADO' ELSE N'BORRADOR' END,
     @calidad, @estadoGeneral, @categoria, @categoriasJson, @diagnostico,
-    @tipo, @severidad, @certeza, @observaciones,
+    @tipo, @severidad, @certeza, @observaciones, @diagnosticosJson,
     SYSUTCDATETIME(), SYSUTCDATETIME(),
     CASE WHEN @enviar = 1 THEN SYSUTCDATETIME() ELSE NULL END
 );
@@ -829,7 +1086,10 @@ SELECT CAST(SCOPE_IDENTITY() AS INT);
                 ("@tipo", Limitar(tipo, 80)),
                 ("@severidad", Limitar(severidad, 30)),
                 ("@certeza", Limitar(certeza, 30)),
-                ("@observaciones", Limitar(observaciones, 3000)));
+                ("@observaciones", Limitar(observaciones, 3000)),
+                ("@diagnosticosJson", string.IsNullOrWhiteSpace(diagnosticosJson)
+                    ? "[]"
+                    : diagnosticosJson));
         }
 
         public async Task<AnalisisHumanoRegistro?> ObtenerUltimoAnalisisHumanoAsync(
@@ -842,8 +1102,8 @@ SELECT TOP(1)
     UsuarioAnalizadorId, Version, EstadoRegistro,
     CalidadEvaluacion, EstadoGeneral, CategoriaPrincipal,
     CategoriasSecundariasJson, Diagnostico, TipoDiagnostico,
-    Severidad, NivelCerteza, Observaciones, FechaCreacionUtc,
-    FechaEnvioUtc
+    Severidad, NivelCerteza, Observaciones, DiagnosticosJson,
+    FechaCreacionUtc, FechaEnvioUtc
 FROM dbo.diagnosticoIAImagenAnalisisHumano
 WHERE DiagnosticoIAImagenId = @fotoId
 ORDER BY Version DESC, DiagnosticoIAImagenAnalisisHumanoId DESC;
@@ -875,7 +1135,8 @@ WITH ultimos AS
         h.EstadoGeneral, h.CategoriaPrincipal,
         h.CategoriasSecundariasJson, h.Diagnostico,
         h.TipoDiagnostico, h.Severidad, h.NivelCerteza,
-        h.Observaciones, h.FechaCreacionUtc, h.FechaEnvioUtc,
+        h.Observaciones, h.DiagnosticosJson,
+        h.FechaCreacionUtc, h.FechaEnvioUtc,
         ROW_NUMBER() OVER
         (
             PARTITION BY h.DiagnosticoIAImagenId
@@ -892,8 +1153,8 @@ SELECT
     UsuarioAnalizadorId, Version, EstadoRegistro,
     CalidadEvaluacion, EstadoGeneral, CategoriaPrincipal,
     CategoriasSecundariasJson, Diagnostico, TipoDiagnostico,
-    Severidad, NivelCerteza, Observaciones, FechaCreacionUtc,
-    FechaEnvioUtc
+    Severidad, NivelCerteza, Observaciones, DiagnosticosJson,
+    FechaCreacionUtc, FechaEnvioUtc
 FROM ultimos
 WHERE rn = 1;
 """;
@@ -926,15 +1187,11 @@ WHERE rn = 1;
             string severidad,
             string certeza,
             string observaciones,
+            string diagnosticosFinalesJson,
             bool autorizaAlbum,
             bool mismoUsuario,
             CancellationToken cancellationToken = default)
         {
-            /*
-             * La autorización se controla por permisos en la capa de negocio.
-             * Si una misma cuenta participa como analizador y aprobador, se
-             * conserva explícitamente esa coincidencia para la auditoría.
-             */
             const string sql = """
 INSERT INTO dbo.diagnosticoIAImagenAprobacionV2
 (
@@ -943,15 +1200,15 @@ INSERT INTO dbo.diagnosticoIAImagenAprobacionV2
     EstadoGeneralFinal, CategoriaPrincipalFinal,
     CategoriasSecundariasFinalJson, DiagnosticoFinal,
     TipoDiagnosticoFinal, SeveridadFinal, NivelCertezaFinal,
-    Observaciones, AutorizaPublicacionAlbum,
+    Observaciones, DiagnosticosFinalesJson, AutorizaPublicacionAlbum,
     MismoUsuarioQueAnalizo, FechaAprobacionUtc
 )
 VALUES
 (
     @fotoId, @analisisId, @usuarioId, @decision, @calidad,
     @estadoGeneral, @categoria, @categoriasJson, @diagnostico,
-    @tipo, @severidad, @certeza, @observaciones, @autorizaAlbum,
-    @mismoUsuario, SYSUTCDATETIME()
+    @tipo, @severidad, @certeza, @observaciones, @diagnosticosFinalesJson,
+    @autorizaAlbum, @mismoUsuario, SYSUTCDATETIME()
 );
 SELECT CAST(SCOPE_IDENTITY() AS INT);
 """;
@@ -972,6 +1229,10 @@ SELECT CAST(SCOPE_IDENTITY() AS INT);
                 ("@severidad", Limitar(severidad, 30)),
                 ("@certeza", Limitar(certeza, 30)),
                 ("@observaciones", Limitar(observaciones, 3000)),
+                ("@diagnosticosFinalesJson",
+                    string.IsNullOrWhiteSpace(diagnosticosFinalesJson)
+                        ? "[]"
+                        : diagnosticosFinalesJson),
                 ("@autorizaAlbum", autorizaAlbum),
                 ("@mismoUsuario", mismoUsuario));
         }
@@ -985,8 +1246,8 @@ SELECT TOP(1)
     DiagnosticoIAImagenAprobacionId, DiagnosticoIAImagenId,
     DiagnosticoIAImagenAnalisisHumanoId, UsuarioAprobadorId,
     Decision, DiagnosticoFinal, Observaciones,
-    AutorizaPublicacionAlbum, MismoUsuarioQueAnalizo,
-    FechaAprobacionUtc
+    DiagnosticosFinalesJson, AutorizaPublicacionAlbum,
+    MismoUsuarioQueAnalizo, FechaAprobacionUtc
 FROM dbo.diagnosticoIAImagenAprobacionV2
 WHERE DiagnosticoIAImagenId = @fotoId
 ORDER BY FechaAprobacionUtc DESC,
@@ -1018,6 +1279,7 @@ WITH ultimas AS
         a.DiagnosticoIAImagenAnalisisHumanoId,
         a.UsuarioAprobadorId, a.Decision,
         a.DiagnosticoFinal, a.Observaciones,
+        a.DiagnosticosFinalesJson,
         a.AutorizaPublicacionAlbum, a.MismoUsuarioQueAnalizo,
         a.FechaAprobacionUtc,
         ROW_NUMBER() OVER
@@ -1035,8 +1297,8 @@ SELECT
     DiagnosticoIAImagenAprobacionId, DiagnosticoIAImagenId,
     DiagnosticoIAImagenAnalisisHumanoId, UsuarioAprobadorId,
     Decision, DiagnosticoFinal, Observaciones,
-    AutorizaPublicacionAlbum, MismoUsuarioQueAnalizo,
-    FechaAprobacionUtc
+    DiagnosticosFinalesJson, AutorizaPublicacionAlbum,
+    MismoUsuarioQueAnalizo, FechaAprobacionUtc
 FROM ultimas
 WHERE rn = 1;
 """;
@@ -1217,8 +1479,7 @@ VALUES
             comando.CommandText = sql;
             comando.CommandType = CommandType.Text;
             comando.CommandTimeout = 180;
-            comando.Transaction =
-                db.Database.CurrentTransaction?.GetDbTransaction();
+            comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
             return comando;
         }
 
@@ -1285,31 +1546,66 @@ VALUES
                 reader.IsDBNull(14) ? null : reader.GetDateTime(14),
                 reader.GetBoolean(15));
 
+        private static ResultadoVisualRegistro LeerResultadoVisual(
+            DbDataReader reader) =>
+            new(
+                reader.GetInt32(0),
+                reader.GetInt32(1),
+                reader.GetInt32(2),
+                reader.GetBoolean(3),
+                reader.GetString(4),
+                reader.GetString(5),
+                reader.GetString(6),
+                reader.GetString(7),
+                reader.GetDateTime(8));
+
         private static AnalisisHumanoRegistro LeerAnalisisHumano(
             DbDataReader reader) =>
             new(
-                reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2),
-                reader.GetInt32(3), reader.GetString(4), reader.GetString(5),
-                reader.GetString(6), reader.GetString(7), reader.GetString(8),
-                reader.GetString(9), reader.GetString(10), reader.GetString(11),
-                reader.GetString(12), reader.GetString(13), reader.GetDateTime(14),
-                reader.IsDBNull(15) ? null : reader.GetDateTime(15));
+                reader.GetInt32(0),
+                reader.GetInt32(1),
+                reader.GetInt32(2),
+                reader.GetInt32(3),
+                reader.GetString(4),
+                reader.GetString(5),
+                reader.GetString(6),
+                reader.GetString(7),
+                reader.GetString(8),
+                reader.GetString(9),
+                reader.GetString(10),
+                reader.GetString(11),
+                reader.GetString(12),
+                reader.GetString(13),
+                reader.GetString(14),
+                reader.GetDateTime(15),
+                reader.IsDBNull(16) ? null : reader.GetDateTime(16));
 
         private static AprobacionRegistro LeerAprobacion(
             DbDataReader reader) =>
             new(
-                reader.GetInt32(0), reader.GetInt32(1),
+                reader.GetInt32(0),
+                reader.GetInt32(1),
                 reader.IsDBNull(2) ? null : reader.GetInt32(2),
-                reader.GetInt32(3), reader.GetString(4), reader.GetString(5),
-                reader.GetString(6), reader.GetBoolean(7), reader.GetBoolean(8),
-                reader.GetDateTime(9));
+                reader.GetInt32(3),
+                reader.GetString(4),
+                reader.GetString(5),
+                reader.GetString(6),
+                reader.GetString(7),
+                reader.GetBoolean(8),
+                reader.GetBoolean(9),
+                reader.GetDateTime(10));
 
         private static HistorialFotoRegistro LeerHistorial(
             DbDataReader reader) =>
             new(
-                reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2),
-                reader.GetString(3), reader.GetString(4), reader.GetString(5),
-                reader.GetString(6), reader.GetDateTime(7));
+                reader.GetInt32(0),
+                reader.GetInt32(1),
+                reader.GetInt32(2),
+                reader.GetString(3),
+                reader.GetString(4),
+                reader.GetString(5),
+                reader.GetString(6),
+                reader.GetDateTime(7));
 
         private static string Limitar(string? valor, int maximo)
         {
@@ -1336,6 +1632,17 @@ VALUES
         DateTime? FechaDescarteUtc,
         bool Activo);
 
+    public sealed record ResultadoVisualRegistro(
+        int ResultadoVisualId,
+        int FotografiaId,
+        int Revision,
+        bool EsVigente,
+        string DiagnosticosJson,
+        string RutaImagenMarcada,
+        string ProveedorIA,
+        string ModeloIA,
+        DateTime FechaGeneracionUtc);
+
     public sealed record AnalisisHumanoRegistro(
         int AnalisisHumanoId,
         int FotografiaId,
@@ -1351,6 +1658,7 @@ VALUES
         string Severidad,
         string NivelCerteza,
         string Observaciones,
+        string DiagnosticosJson,
         DateTime FechaCreacionUtc,
         DateTime? FechaEnvioUtc);
 
@@ -1362,6 +1670,7 @@ VALUES
         string Decision,
         string DiagnosticoFinal,
         string Observaciones,
+        string DiagnosticosFinalesJson,
         bool AutorizaPublicacionAlbum,
         bool MismoUsuarioQueAnalizo,
         DateTime FechaAprobacionUtc);

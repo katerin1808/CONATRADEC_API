@@ -15,9 +15,8 @@ namespace CONATRADEC_API.Controllers
     /// trabajar con las evidencias que el técnico ya envió, aunque todavía
     /// existan otras fotografías bajo responsabilidad del técnico.
     ///
-    /// Cada fotografía puede enviarse al aprobador de forma independiente. La
-    /// asignación y los permisos determinan quién puede operar cada etapa, y la
-    /// trazabilidad conserva si un mismo usuario participó en ambas etapas.
+    /// Una fotografía puede contener varios diagnósticos, pero todos pertenecen
+    /// al mismo expediente y comparten un solo estado de flujo.
     /// </summary>
     [ApiController]
     [Authorize]
@@ -25,6 +24,16 @@ namespace CONATRADEC_API.Controllers
     public sealed class InspeccionFitosanitariaFlujoIndependienteController :
         ControllerBase
     {
+        private const int MaximoDiagnosticosPorFoto = 8;
+        private const int MaximoLesionesPorDiagnostico = 25;
+        private const int MaximoLesionesPorFoto = 80;
+
+        private static readonly JsonSerializerOptions JsonOptions =
+            new(JsonSerializerDefaults.Web)
+            {
+                PropertyNameCaseInsensitive = true
+            };
+
         private readonly DBContext db;
         private readonly DiagnosticoIADbContext diagnosticoDb;
         private readonly PermisoApiService permisos;
@@ -81,6 +90,60 @@ namespace CONATRADEC_API.Controllers
             InspeccionFotoAnalisisHumanoItemRequest item =
                 request.Fotografias[0];
 
+            IActionResult? validacionDiagnosticos =
+                ValidarConjuntoDiagnosticos(
+                    item.Diagnosticos,
+                    permitirAccionesHumanas: true);
+            if (validacionDiagnosticos != null)
+                return validacionDiagnosticos;
+
+            List<InspeccionDiagnosticoVisualDto> diagnosticosHumanos =
+                NormalizarDiagnosticosHumanos(item.Diagnosticos);
+
+            List<InspeccionDiagnosticoVisualDto> diagnosticosActivos =
+                diagnosticosHumanos
+                    .Where(diag => !string.Equals(
+                        diag.AccionHumana,
+                        "DESCARTAR",
+                        StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+            if (string.IsNullOrWhiteSpace(item.Diagnostico) &&
+                diagnosticosActivos.Count == 0 &&
+                item.Diagnosticos.Count == 0)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "Debe registrar al menos un diagnóstico humano o enviar explícitamente el conjunto revisado por el analizador."
+                });
+            }
+
+            if (item.Diagnosticos.Count > 0 &&
+                diagnosticosActivos.Count == 0)
+            {
+                /*
+                 * El analizador puede descartar todas las afectaciones IA sin
+                 * convertirlas en estados separados. El resumen legado queda
+                 * explícitamente sin diagnóstico para no conservar como vigente
+                 * una enfermedad que el humano descartó.
+                 */
+                item.Diagnostico = string.Empty;
+                item.CategoriaPrincipal = "NO_APLICA";
+                item.CategoriasSecundarias = [];
+                item.TipoDiagnostico = string.Empty;
+                item.Severidad = "NO_EVALUABLE";
+                item.NivelCerteza = "NO_DETERMINADO";
+            }
+            else
+            {
+                AplicarResumenDesdeDiagnosticos(
+                    diagnosticosActivos,
+                    item,
+                    soloSiExistePrincipal: true);
+            }
+
             await database.InicializarAsync(cancellationToken);
             await asignaciones.InicializarAsync(cancellationToken);
 
@@ -111,6 +174,65 @@ namespace CONATRADEC_API.Controllers
                     });
                 }
 
+                /*
+                 * Compatibilidad progresiva con la interfaz MAUI actual: si la
+                 * pantalla todavía envía únicamente el resumen humano, se parte
+                 * del último conjunto IA vigente para no perder diagnósticos
+                 * secundarios. El diagnóstico principal se marca como CORREGIR
+                 * solo cuando el analizador cambió su resumen; los secundarios
+                 * permanecen CONFIRMAR hasta que la nueva interfaz permita
+                 * decidirlos explícitamente uno por uno.
+                 */
+                if (diagnosticosHumanos.Count == 0)
+                {
+                    ResultadoVisualRegistro? visual =
+                        await database.ObtenerResultadoVisualVigenteAsync(
+                            item.FotografiaId,
+                            cancellationToken);
+
+                    diagnosticosHumanos = DeserializarDiagnosticos(
+                        visual?.DiagnosticosJson);
+
+                    foreach (InspeccionDiagnosticoVisualDto diagnosticoVisual
+                             in diagnosticosHumanos)
+                    {
+                        diagnosticoVisual.IdOrigenIA =
+                            string.IsNullOrWhiteSpace(diagnosticoVisual.IdOrigenIA)
+                                ? diagnosticoVisual.Id
+                                : diagnosticoVisual.IdOrigenIA;
+                        diagnosticoVisual.AccionHumana = "CONFIRMAR";
+                    }
+
+                    InspeccionDiagnosticoVisualDto? principal =
+                        diagnosticosHumanos.FirstOrDefault(value =>
+                            value.EsPrincipal) ??
+                        (diagnosticosHumanos.Count == 1
+                            ? diagnosticosHumanos[0]
+                            : null);
+
+                    if (principal != null &&
+                        !string.IsNullOrWhiteSpace(item.Diagnostico) &&
+                        !string.Equals(
+                            principal.Diagnostico?.Trim(),
+                            item.Diagnostico.Trim(),
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        principal.Diagnostico = item.Diagnostico.Trim();
+                        principal.Categoria = item.CategoriaPrincipal;
+                        principal.TipoDiagnostico = item.TipoDiagnostico;
+                        principal.Severidad = item.Severidad;
+                        principal.NivelCerteza = item.NivelCerteza;
+                        principal.AccionHumana = "CORREGIR";
+                    }
+
+                    diagnosticosActivos = diagnosticosHumanos
+                        .Where(diag => !string.Equals(
+                            diag.AccionHumana,
+                            "DESCARTAR",
+                            StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                }
+
                 FotoMetadatos? meta = await database.ObtenerFotoAsync(
                     item.FotografiaId,
                     cancellationToken);
@@ -135,15 +257,6 @@ namespace CONATRADEC_API.Controllers
                         success = false,
                         message =
                             "La fotografía no está disponible para análisis humano."
-                    });
-                }
-
-                if (string.IsNullOrWhiteSpace(item.Diagnostico))
-                {
-                    return BadRequest(new
-                    {
-                        success = false,
-                        message = "El diagnóstico humano es obligatorio."
                     });
                 }
 
@@ -183,6 +296,7 @@ namespace CONATRADEC_API.Controllers
                     item.Severidad,
                     item.NivelCerteza,
                     item.Observaciones,
+                    JsonSerializer.Serialize(diagnosticosHumanos, JsonOptions),
                     enviar: false,
                     cancellationToken);
 
@@ -265,6 +379,13 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
+            IActionResult? validacionDiagnosticos =
+                ValidarConjuntoDiagnosticos(
+                    item.DiagnosticosFinales,
+                    permitirAccionesHumanas: false);
+            if (validacionDiagnosticos != null)
+                return validacionDiagnosticos;
+
             await database.InicializarAsync(cancellationToken);
             await asignaciones.InicializarAsync(cancellationToken);
 
@@ -330,11 +451,6 @@ namespace CONATRADEC_API.Controllers
                     });
                 }
 
-                /*
-                 * Los permisos siguen siendo la barrera de autorización. Si el
-                 * mismo usuario posee permiso de analizador y aprobador se le
-                 * permite continuar y la auditoría conserva MismoUsuario=true.
-                 */
                 bool mismoUsuarioQueAnalizo =
                     analisis.UsuarioAnalizadorId == usuarioId.Value;
 
@@ -384,12 +500,83 @@ namespace CONATRADEC_API.Controllers
                     InspeccionFitosanitariaFlujo.FotoEstados
                         .AprobadaConCorreccion;
 
+                List<InspeccionDiagnosticoVisualDto> diagnosticosFinales =
+                    item.DiagnosticosFinales.Count > 0
+                        ? NormalizarDiagnosticosHumanos(item.DiagnosticosFinales)
+                        : DeserializarDiagnosticos(analisis.DiagnosticosJson)
+                            .Where(diag => !string.Equals(
+                                diag.AccionHumana,
+                                "DESCARTAR",
+                                StringComparison.OrdinalIgnoreCase))
+                            .Select(diag =>
+                            {
+                                diag.AccionHumana = string.Empty;
+                                return diag;
+                            })
+                            .ToList();
+
                 /*
-                 * La autorización se rige por permisos. Si la misma cuenta
-                 * posee permisos de analizador y aprobador, la aprobación se
-                 * registra directamente con MismoUsuarioQueAnalizo=1 para
-                 * mantener una sola regla en toda la capa de persistencia.
+                 * La pantalla actual del aprobador permite corregir el nombre
+                 * principal mediante el resumen. Ese cambio debe reflejarse
+                 * también dentro del conjunto final para que no exista una
+                 * discrepancia entre DiagnosticoFinal y DiagnosticosFinales.
                  */
+                if (string.Equals(
+                        decision,
+                        InspeccionFitosanitariaFlujo.DecisionesAprobacion
+                            .AprobarConCorreccion,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    !string.IsNullOrWhiteSpace(item.DiagnosticoFinal))
+                {
+                    InspeccionDiagnosticoVisualDto? principalFinal =
+                        diagnosticosFinales.FirstOrDefault(value =>
+                            value.EsPrincipal) ??
+                        (diagnosticosFinales.Count == 1
+                            ? diagnosticosFinales[0]
+                            : null);
+
+                    if (principalFinal != null)
+                    {
+                        principalFinal.Diagnostico =
+                            Limitar(item.DiagnosticoFinal, 300);
+
+                        if (!string.IsNullOrWhiteSpace(
+                                item.CategoriaPrincipalFinal))
+                        {
+                            principalFinal.Categoria = Limitar(
+                                item.CategoriaPrincipalFinal,
+                                50).ToUpperInvariant();
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(
+                                item.TipoDiagnosticoFinal))
+                        {
+                            principalFinal.TipoDiagnostico = Limitar(
+                                item.TipoDiagnosticoFinal,
+                                80);
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(item.SeveridadFinal))
+                        {
+                            principalFinal.Severidad = Limitar(
+                                item.SeveridadFinal,
+                                30).ToUpperInvariant();
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(item.NivelCertezaFinal))
+                        {
+                            principalFinal.NivelCerteza = Limitar(
+                                item.NivelCertezaFinal,
+                                30).ToUpperInvariant();
+                        }
+                    }
+                }
+
+                AplicarResumenDesdeDiagnosticos(
+                    diagnosticosFinales,
+                    item,
+                    soloSiExistePrincipal: true);
+
                 await database.RegistrarAprobacionAsync(
                     item.FotografiaId,
                     analisis.AnalisisHumanoId,
@@ -421,6 +608,7 @@ namespace CONATRADEC_API.Controllers
                         item.NivelCertezaFinal,
                         analisis.NivelCerteza),
                     item.Observaciones,
+                    JsonSerializer.Serialize(diagnosticosFinales, JsonOptions),
                     decisionPositiva && item.AutorizaPublicacionAlbum,
                     mismoUsuario: mismoUsuarioQueAnalizo,
                     cancellationToken);
@@ -465,6 +653,248 @@ namespace CONATRADEC_API.Controllers
             {
                 await transaccion.RollbackAsync(CancellationToken.None);
                 throw;
+            }
+        }
+
+        private IActionResult? ValidarConjuntoDiagnosticos(
+            IReadOnlyCollection<InspeccionDiagnosticoVisualDto>? diagnosticos,
+            bool permitirAccionesHumanas)
+        {
+            if (diagnosticos == null || diagnosticos.Count == 0)
+                return null;
+
+            if (diagnosticos.Count > MaximoDiagnosticosPorFoto)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        $"Una fotografía admite como máximo {MaximoDiagnosticosPorFoto} diagnósticos durante la revisión humana."
+                });
+            }
+
+            int totalLesiones = diagnosticos.Sum(item =>
+                item.Lesiones?.Count ?? 0);
+
+            if (totalLesiones > MaximoLesionesPorFoto ||
+                diagnosticos.Any(item =>
+                    (item.Lesiones?.Count ?? 0) > MaximoLesionesPorDiagnostico))
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        $"Una fotografía admite como máximo {MaximoLesionesPorFoto} lesiones en total y {MaximoLesionesPorDiagnostico} por diagnóstico."
+                });
+            }
+
+            int principales = diagnosticos.Count(item =>
+                item.EsPrincipal &&
+                !string.Equals(
+                    item.AccionHumana,
+                    "DESCARTAR",
+                    StringComparison.OrdinalIgnoreCase));
+
+            if (principales > 1)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "La fotografía puede tener como máximo un diagnóstico principal."
+                });
+            }
+
+            string[] accionesPermitidas =
+                ["", "CONFIRMAR", "CORREGIR", "DESCARTAR", "AGREGAR"];
+
+            foreach (InspeccionDiagnosticoVisualDto item in diagnosticos)
+            {
+                if (!permitirAccionesHumanas &&
+                    string.Equals(
+                        item.AccionHumana,
+                        "DESCARTAR",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        message =
+                            "Los diagnósticos finales del aprobador no pueden contener elementos descartados."
+                    });
+                }
+
+                if (permitirAccionesHumanas &&
+                    !accionesPermitidas.Contains(
+                        (item.AccionHumana ?? string.Empty)
+                            .Trim()
+                            .ToUpperInvariant()))
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        message =
+                            "La acción del diagnóstico debe ser CONFIRMAR, CORREGIR, DESCARTAR o AGREGAR."
+                    });
+                }
+
+                if (!string.Equals(
+                        item.AccionHumana,
+                        "DESCARTAR",
+                        StringComparison.OrdinalIgnoreCase) &&
+                    string.IsNullOrWhiteSpace(item.Diagnostico))
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        message =
+                            "Cada diagnóstico activo debe indicar su nombre."
+                    });
+                }
+
+                if ((item.Lesiones ?? []).Any(lesion =>
+                        lesion.Box2d == null ||
+                        lesion.Box2d.Count != 4 ||
+                        lesion.Box2d.Any(value => value is < 0 or > 1000) ||
+                        lesion.Box2d[0] >= lesion.Box2d[2] ||
+                        lesion.Box2d[1] >= lesion.Box2d[3]))
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        message =
+                            "Una lesión contiene coordenadas box2d inválidas."
+                    });
+                }
+            }
+
+            return null;
+        }
+
+        private static List<InspeccionDiagnosticoVisualDto>
+            NormalizarDiagnosticosHumanos(
+                IEnumerable<InspeccionDiagnosticoVisualDto>? diagnosticos)
+        {
+            int consecutivo = 0;
+            return (diagnosticos ?? [])
+                .Take(MaximoDiagnosticosPorFoto)
+                .Select(item =>
+                {
+                    consecutivo++;
+                    item.Id = Limitar(
+                        string.IsNullOrWhiteSpace(item.Id)
+                            ? $"H{consecutivo}"
+                            : item.Id,
+                        20);
+                    item.IdOrigenIA = Limitar(
+                        string.IsNullOrWhiteSpace(item.IdOrigenIA) &&
+                        !string.Equals(
+                            item.AccionHumana,
+                            "AGREGAR",
+                            StringComparison.OrdinalIgnoreCase)
+                            ? item.Id
+                            : item.IdOrigenIA,
+                        20);
+                    item.AccionHumana = Limitar(
+                        item.AccionHumana,
+                        30).ToUpperInvariant();
+                    item.Diagnostico = Limitar(item.Diagnostico, 300);
+                    item.Categoria = Limitar(item.Categoria, 50)
+                        .ToUpperInvariant();
+                    item.TipoDiagnostico = Limitar(item.TipoDiagnostico, 80);
+                    item.NivelCerteza = Limitar(item.NivelCerteza, 30)
+                        .ToUpperInvariant();
+                    item.Severidad = Limitar(item.Severidad, 30)
+                        .ToUpperInvariant();
+                    item.ColorMarcador = Limitar(item.ColorMarcador, 9);
+                    item.DiagnosticosDiferenciales =
+                        (item.DiagnosticosDiferenciales ?? [])
+                            .Where(value => !string.IsNullOrWhiteSpace(value))
+                            .Select(value => Limitar(value, 300))
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .Take(6)
+                            .ToList();
+                    item.Lesiones = (item.Lesiones ?? [])
+                        .Where(lesion => lesion.Box2d?.Count == 4)
+                        .Take(MaximoLesionesPorDiagnostico)
+                        .ToList();
+                    return item;
+                })
+                .ToList();
+        }
+
+        private static void AplicarResumenDesdeDiagnosticos(
+            IReadOnlyCollection<InspeccionDiagnosticoVisualDto> diagnosticos,
+            InspeccionFotoAnalisisHumanoItemRequest destino,
+            bool soloSiExistePrincipal)
+        {
+            InspeccionDiagnosticoVisualDto? principal =
+                diagnosticos.FirstOrDefault(item => item.EsPrincipal);
+
+            if (principal == null && soloSiExistePrincipal)
+                return;
+
+            principal ??= diagnosticos.FirstOrDefault();
+            if (principal == null)
+                return;
+
+            destino.Diagnostico = principal.Diagnostico;
+            destino.CategoriaPrincipal = principal.Categoria;
+            destino.TipoDiagnostico = principal.TipoDiagnostico;
+            destino.Severidad = principal.Severidad;
+            destino.NivelCerteza = principal.NivelCerteza;
+            destino.CategoriasSecundarias = diagnosticos
+                .Where(item => !ReferenceEquals(item, principal))
+                .Select(item => item.Categoria)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static void AplicarResumenDesdeDiagnosticos(
+            IReadOnlyCollection<InspeccionDiagnosticoVisualDto> diagnosticos,
+            InspeccionFotoAprobacionItemRequest destino,
+            bool soloSiExistePrincipal)
+        {
+            InspeccionDiagnosticoVisualDto? principal =
+                diagnosticos.FirstOrDefault(item => item.EsPrincipal);
+
+            if (principal == null && soloSiExistePrincipal)
+                return;
+
+            principal ??= diagnosticos.FirstOrDefault();
+            if (principal == null)
+                return;
+
+            destino.DiagnosticoFinal = principal.Diagnostico;
+            destino.CategoriaPrincipalFinal = principal.Categoria;
+            destino.TipoDiagnosticoFinal = principal.TipoDiagnostico;
+            destino.SeveridadFinal = principal.Severidad;
+            destino.NivelCertezaFinal = principal.NivelCerteza;
+            destino.CategoriasSecundariasFinales = diagnosticos
+                .Where(item => !ReferenceEquals(item, principal))
+                .Select(item => item.Categoria)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static List<InspeccionDiagnosticoVisualDto>
+            DeserializarDiagnosticos(string? json)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+                return [];
+
+            try
+            {
+                return JsonSerializer.Deserialize<
+                    List<InspeccionDiagnosticoVisualDto>>(
+                        json,
+                        JsonOptions) ?? [];
+            }
+            catch (JsonException)
+            {
+                return [];
             }
         }
 
@@ -660,6 +1090,12 @@ namespace CONATRADEC_API.Controllers
             string.IsNullOrWhiteSpace(nuevo)
                 ? anterior
                 : nuevo.Trim();
+
+        private static string Limitar(string? valor, int maximo)
+        {
+            string texto = (valor ?? string.Empty).Trim();
+            return texto.Length <= maximo ? texto : texto[..maximo];
+        }
     }
 
     /// <summary>

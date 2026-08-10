@@ -19,6 +19,7 @@ namespace CONATRADEC_API.Services
             "album-botanico",
             "categorias-album",
             "noticias",
+            "diagnostico-ia",
             ".miniaturas"
         ];
 
