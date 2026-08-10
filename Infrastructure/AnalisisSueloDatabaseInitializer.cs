@@ -54,6 +54,14 @@ namespace CONATRADEC_API.Infrastructure
                 await AsegurarBanderaElementosAsync(
                     cancellationToken);
 
+                /*
+                 * Corrige bases existentes creadas con decimal(10,4).
+                 * kg/ha MO puede superar 999,999.9999 sin que el dato sea
+                 * inválido, por ejemplo 2,000,000 kg/ha MO.
+                 */
+                await AsegurarPrecisionMateriaOrganicaAsync(
+                    cancellationToken);
+
                 await AsegurarTablasConversionesAsync(
                     cancellationToken);
 
@@ -149,6 +157,58 @@ BEGIN
             ) = N''EXCESIVO'';
         '
     );
+END;
+""";
+
+            await db.Database.ExecuteSqlRawAsync(
+                sql,
+                cancellationToken);
+        }
+
+        /// <summary>
+        /// Amplía la precisión de la materia orgánica guardada en el cálculo.
+        ///
+        /// El valor se conserva en la unidad original del laboratorio. En
+        /// kg/ha MO son válidos valores del orden de millones, por lo que
+        /// decimal(10,4) provocaba desbordamiento al persistir el análisis.
+        ///
+        /// La migración es idempotente y solo modifica la definición antigua
+        /// conocida decimal(10,4). Si la columna ya tiene una precisión mayor
+        /// o una configuración personalizada, se respeta.
+        /// </summary>
+        private async Task
+            AsegurarPrecisionMateriaOrganicaAsync(
+                CancellationToken cancellationToken)
+        {
+            const string sql = """
+IF OBJECT_ID(
+       N'[dbo].[analisisSueloCalculo]',
+       N'U') IS NOT NULL
+   AND COL_LENGTH(
+       N'dbo.analisisSueloCalculo',
+       N'materiaOrganica') IS NOT NULL
+   AND EXISTS
+   (
+       SELECT
+           1
+       FROM
+           sys.columns AS c
+       INNER JOIN
+           sys.types AS t
+               ON c.user_type_id = t.user_type_id
+       WHERE
+           c.object_id = OBJECT_ID(
+               N'[dbo].[analisisSueloCalculo]')
+           AND c.name = N'materiaOrganica'
+           AND t.name IN (N'decimal', N'numeric')
+           AND c.precision = 10
+           AND c.scale = 4
+   )
+BEGIN
+    ALTER TABLE
+        [dbo].[analisisSueloCalculo]
+    ALTER COLUMN
+        [materiaOrganica] DECIMAL(18,4) NULL;
 END;
 """;
 

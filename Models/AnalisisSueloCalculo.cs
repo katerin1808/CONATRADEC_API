@@ -18,7 +18,12 @@ namespace CONATRADEC_API.Models
         [Column(TypeName = "decimal(10,4)")]
         public decimal phAnalisisSuelo { get; set; }
 
-        [Column(TypeName = "decimal(10,4)")]
+        /*
+         * Materia orgánica conserva el valor original informado por el
+         * laboratorio. Unidades válidas como kg/ha MO pueden usar valores
+         * de 2,000,000 o superiores, por lo que decimal(10,4) era insuficiente.
+         */
+        [Column(TypeName = "decimal(18,4)")]
         public decimal? materiaOrganica { get; set; }
 
         [Column(TypeName = "decimal(10,4)")]
