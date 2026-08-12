@@ -11,6 +11,11 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Server.IIS;
 using Microsoft.EntityFrameworkCore;
 using QuestPDF.Infrastructure;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats.Jpeg;
+using SixLabors.ImageSharp.Processing;
+using ImageSharpImage = SixLabors.ImageSharp.Image;
+using ImageSharpSize = SixLabors.ImageSharp.Size;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -389,6 +394,290 @@ app.MapGet(
         catch (OperationCanceledException)
         {
             return Results.StatusCode(499);
+        }
+    });
+
+
+/*
+ * Copia JPEG para la preparación offline de Windows.
+ *
+ * Esta ruta es deliberadamente distinta al controlador experimental anterior
+ * para evitar conflictos si ese archivo aún existe en alguna publicación.
+ * Android y la navegación normal continúan usando /imagenes/miniatura (WebP).
+ */
+app.MapGet(
+    "/imagenes/offline-windows/jpeg-directo",
+    async Task<IResult> (
+        HttpContext context,
+        ImageStoragePathService storage,
+        ILoggerFactory loggerFactory,
+        string ruta,
+        int ancho = 720,
+        int alto = 720,
+        int calidad = 78,
+        CancellationToken cancellationToken = default) =>
+    {
+        ILogger logger =
+            loggerFactory.CreateLogger("ImagenOfflineWindows");
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(ruta))
+            {
+                return Results.BadRequest(new
+                {
+                    success = false,
+                    message = "La ruta de la imagen es obligatoria."
+                });
+            }
+
+            if (ancho < 120 || ancho > 1600 ||
+                alto < 120 || alto > 1600)
+            {
+                return Results.BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "Las dimensiones solicitadas no son válidas."
+                });
+            }
+
+            if (calidad < 50 || calidad > 90)
+            {
+                return Results.BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "La calidad solicitada no es válida."
+                });
+            }
+
+            string rutaNormalizada;
+
+            try
+            {
+                rutaNormalizada =
+                    Uri.UnescapeDataString(ruta.Trim());
+            }
+            catch
+            {
+                return Results.BadRequest(new
+                {
+                    success = false,
+                    message = "La ruta de la imagen no es válida."
+                });
+            }
+
+            if (Uri.TryCreate(
+                    rutaNormalizada,
+                    UriKind.Absolute,
+                    out Uri? uriImagen))
+            {
+                rutaNormalizada = uriImagen.AbsolutePath;
+            }
+
+            rutaNormalizada = rutaNormalizada
+                .Replace('\\', '/')
+                .Trim();
+
+            if (!rutaNormalizada.StartsWith('/'))
+                rutaNormalizada = "/" + rutaNormalizada;
+
+            /*
+             * El Álbum puede contener:
+             *
+             * - fotografías administradas directamente en album-botanico;
+             * - portadas de categorias-album;
+             * - evidencia original de Inspección/Diagnóstico IA publicada
+             *   oficialmente en el Álbum.
+             *
+             * El flujo fitosanitario conserva la ruta original de la evidencia,
+             * por lo que no debe exigirse que el archivo haya sido copiado a
+             * album-botanico. Se aceptan ambas carpetas históricas utilizadas
+             * por el backend para Diagnóstico IA.
+             */
+            bool perteneceAlbum =
+                rutaNormalizada.StartsWith(
+                    "/resources/uploads/album-botanico/",
+                    StringComparison.OrdinalIgnoreCase) ||
+                rutaNormalizada.StartsWith(
+                    "/resources/uploads/categorias-album/",
+                    StringComparison.OrdinalIgnoreCase) ||
+                rutaNormalizada.StartsWith(
+                    "/resources/uploads/diagnosticos-ia/",
+                    StringComparison.OrdinalIgnoreCase) ||
+                rutaNormalizada.StartsWith(
+                    "/resources/uploads/diagnostico-ia/",
+                    StringComparison.OrdinalIgnoreCase);
+
+            if (!perteneceAlbum ||
+                rutaNormalizada.Contains(
+                    "..",
+                    StringComparison.Ordinal))
+            {
+                return Results.BadRequest(new
+                {
+                    success = false,
+                    message =
+                        "La imagen solicitada no pertenece al Álbum Botánico.",
+                    ruta = rutaNormalizada
+                });
+            }
+
+            if (!storage.TryResolverRutaPublica(
+                    rutaNormalizada,
+                    out string rutaFisica))
+            {
+                return Results.NotFound(new
+                {
+                    success = false,
+                    message =
+                        "La ruta pública no pudo resolverse en el almacenamiento de imágenes.",
+                    ruta = rutaNormalizada
+                });
+            }
+
+            if (!File.Exists(rutaFisica))
+            {
+                /*
+                 * Compatibilidad con fotografías creadas antes de mover el
+                 * almacenamiento fuera del directorio de publicación.
+                 *
+                 * Si todavía existe una copia en resources/uploads, se
+                 * recupera automáticamente hacia la carpeta persistente.
+                 */
+                string prefijoPublico = "/resources/uploads/";
+                string relativaLegacy = rutaNormalizada.StartsWith(
+                        prefijoPublico,
+                        StringComparison.OrdinalIgnoreCase)
+                    ? rutaNormalizada[prefijoPublico.Length..]
+                    : string.Empty;
+
+                string legacyRoot = Path.GetFullPath(
+                    storage.LegacyRootPath);
+
+                string legacyCandidate = string.IsNullOrWhiteSpace(
+                        relativaLegacy)
+                    ? string.Empty
+                    : Path.GetFullPath(
+                        Path.Combine(
+                            legacyRoot,
+                            relativaLegacy.Replace(
+                                '/',
+                                Path.DirectorySeparatorChar)));
+
+                string legacyPrefix =
+                    legacyRoot.TrimEnd(
+                        Path.DirectorySeparatorChar,
+                        Path.AltDirectorySeparatorChar) +
+                    Path.DirectorySeparatorChar;
+
+                bool legacySeguro =
+                    !string.IsNullOrWhiteSpace(legacyCandidate) &&
+                    (
+                        legacyCandidate.StartsWith(
+                            legacyPrefix,
+                            StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(
+                            legacyCandidate,
+                            legacyRoot,
+                            StringComparison.OrdinalIgnoreCase)
+                    );
+
+                if (legacySeguro &&
+                    File.Exists(legacyCandidate))
+                {
+                    string? carpetaDestino =
+                        Path.GetDirectoryName(rutaFisica);
+
+                    if (!string.IsNullOrWhiteSpace(carpetaDestino))
+                        Directory.CreateDirectory(carpetaDestino);
+
+                    File.Copy(
+                        legacyCandidate,
+                        rutaFisica,
+                        overwrite: false);
+                }
+            }
+
+            if (!File.Exists(rutaFisica))
+            {
+                return Results.NotFound(new
+                {
+                    success = false,
+                    code = "ALBUM_IMAGE_FILE_MISSING",
+                    message =
+                        "La fotografía existe en los datos del álbum, pero el archivo físico no fue encontrado en el almacenamiento del servidor.",
+                    ruta = rutaNormalizada
+                });
+            }
+
+            await using FileStream input = new(
+                rutaFisica,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 81920,
+                useAsync: true);
+
+            using ImageSharpImage imagen =
+                await ImageSharpImage.LoadAsync(
+                    input,
+                    cancellationToken);
+
+            imagen.Mutate(x => x.AutoOrient());
+
+            if (imagen.Width > ancho ||
+                imagen.Height > alto)
+            {
+                imagen.Mutate(x => x.Resize(
+                    new ResizeOptions
+                    {
+                        Size = new ImageSharpSize(ancho, alto),
+                        Mode = ResizeMode.Max,
+                        Sampler = KnownResamplers.Lanczos3,
+                        Compand = true
+                    }));
+            }
+
+            await using var output = new MemoryStream();
+
+            await imagen.SaveAsync(
+                output,
+                new JpegEncoder
+                {
+                    Quality = calidad
+                },
+                cancellationToken);
+
+            context.Response.Headers["Cache-Control"] =
+                "public,max-age=604800";
+
+            context.Response.Headers["X-Content-Type-Options"] =
+                "nosniff";
+
+            return Results.File(
+                output.ToArray(),
+                "image/jpeg");
+        }
+        catch (OperationCanceledException)
+        {
+            return Results.StatusCode(499);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(
+                ex,
+                "No fue posible generar la copia JPEG offline de Windows para {Ruta}.",
+                ruta);
+
+            return Results.Problem(
+                statusCode:
+                    StatusCodes.Status500InternalServerError,
+                title:
+                    "No fue posible preparar la fotografía para Windows.",
+                detail:
+                    "El servidor no pudo convertir la fotografía solicitada a JPEG.");
         }
     });
 
