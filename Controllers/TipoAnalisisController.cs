@@ -1,5 +1,6 @@
 using CONATRADEC_API.Constants;
 using CONATRADEC_API.Models;
+using CONATRADEC_API.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,14 +10,20 @@ namespace CONATRADEC_API.Controllers
     [Route("api/configuracion/tipos-analisis-suelo")]
     public sealed class TipoAnalisisSueloController : ControllerBase
     {
+        private const string NombreInterfaz =
+            "tipoAnalisisSueloPage";
+
         private readonly DBContext db;
+        private readonly PermisoApiService permisoApiService;
         private readonly ILogger<TipoAnalisisSueloController> logger;
 
         public TipoAnalisisSueloController(
             DBContext db,
+            PermisoApiService permisoApiService,
             ILogger<TipoAnalisisSueloController> logger)
         {
             this.db = db;
+            this.permisoApiService = permisoApiService;
             this.logger = logger;
         }
 
@@ -27,6 +34,12 @@ namespace CONATRADEC_API.Controllers
         public async Task<ActionResult<IEnumerable<TipoAnalisisSueloRespuestaDto>>>
             Listar(CancellationToken cancellationToken)
         {
+            /*
+             * Este endpoint se conserva como catálogo compartido por formularios
+             * y selectores fuera de Configuración. La autenticación JWT global
+             * continúa protegiéndolo; los permisos funcionales se aplican en las
+             * operaciones administrativas y de escritura de este controlador.
+             */
             List<TipoAnalisisSueloRespuestaDto> data =
                 await db.TipoAnalisisSuelos
                     .AsNoTracking()
@@ -34,6 +47,8 @@ namespace CONATRADEC_API.Controllers
                         item.activo)
                     .OrderBy(item =>
                         item.nombreTipoAnalisisSuelo)
+                    .ThenBy(item =>
+                        item.tipoAnalisisSueloId)
                     .Select(item =>
                         new TipoAnalisisSueloRespuestaDto
                         {
@@ -90,8 +105,18 @@ namespace CONATRADEC_API.Controllers
                 [FromQuery] int tamanoPagina = 20,
                 [FromQuery] string orden = "nombre",
                 [FromQuery] string direccion = "asc",
+                [FromHeader(Name = "X-Usuario-Id")] int? usuarioSesionId = null,
                 CancellationToken cancellationToken = default)
         {
+            ActionResult? acceso =
+                await ValidarAccesoAsync(
+                    usuarioSesionId,
+                    TipoPermisoApi.Leer,
+                    cancellationToken);
+
+            if (acceso != null)
+                return acceso;
+
             pagina =
                 Math.Max(
                     1,
@@ -131,12 +156,22 @@ namespace CONATRADEC_API.Controllers
                     "desc",
                     StringComparison.OrdinalIgnoreCase);
 
+            /*
+             * El ID actúa como desempate estable. Dos registros con el mismo
+             * nombre ya no pueden intercambiar posición entre páginas.
+             */
             query =
                 descendente
-                    ? query.OrderByDescending(item =>
-                        item.nombreTipoAnalisisSuelo)
-                    : query.OrderBy(item =>
-                        item.nombreTipoAnalisisSuelo);
+                    ? query
+                        .OrderByDescending(item =>
+                            item.nombreTipoAnalisisSuelo)
+                        .ThenByDescending(item =>
+                            item.tipoAnalisisSueloId)
+                    : query
+                        .OrderBy(item =>
+                            item.nombreTipoAnalisisSuelo)
+                        .ThenBy(item =>
+                            item.tipoAnalisisSueloId);
 
             int totalRegistros =
                 await query.CountAsync(cancellationToken);
@@ -215,8 +250,18 @@ namespace CONATRADEC_API.Controllers
         public async Task<ActionResult<TipoAnalisisSueloRespuestaDto>>
             Obtener(
                 int id,
+                [FromHeader(Name = "X-Usuario-Id")] int? usuarioSesionId,
                 CancellationToken cancellationToken)
         {
+            ActionResult? acceso =
+                await ValidarAccesoAsync(
+                    usuarioSesionId,
+                    TipoPermisoApi.Leer,
+                    cancellationToken);
+
+            if (acceso != null)
+                return acceso;
+
             TipoAnalisisSueloRespuestaDto? data =
                 await db.TipoAnalisisSuelos
                     .AsNoTracking()
@@ -290,8 +335,18 @@ namespace CONATRADEC_API.Controllers
         // ==========================================================
         [HttpGet("diagnostico-relaciones")]
         public async Task<ActionResult> DiagnosticoRelaciones(
+            [FromHeader(Name = "X-Usuario-Id")] int? usuarioSesionId,
             CancellationToken cancellationToken)
         {
+            ActionResult? acceso =
+                await ValidarAccesoAsync(
+                    usuarioSesionId,
+                    TipoPermisoApi.Leer,
+                    cancellationToken);
+
+            if (acceso != null)
+                return acceso;
+
             int formulasSinRelacion =
                 await db.formulaNutricional
                     .AsNoTracking()
@@ -372,8 +427,18 @@ namespace CONATRADEC_API.Controllers
         [HttpPost]
         public async Task<ActionResult> Crear(
             [FromBody] CrearTipoAnalisisSueloDto? request,
+            [FromHeader(Name = "X-Usuario-Id")] int? usuarioSesionId,
             CancellationToken cancellationToken)
         {
+            ActionResult? acceso =
+                await ValidarAccesoAsync(
+                    usuarioSesionId,
+                    TipoPermisoApi.Agregar,
+                    cancellationToken);
+
+            if (acceso != null)
+                return acceso;
+
             if (request == null)
             {
                 return BadRequest(new
@@ -539,8 +604,18 @@ namespace CONATRADEC_API.Controllers
         public async Task<ActionResult> Actualizar(
             int id,
             [FromBody] ActualizarTipoAnalisisSueloDto? request,
+            [FromHeader(Name = "X-Usuario-Id")] int? usuarioSesionId,
             CancellationToken cancellationToken)
         {
+            ActionResult? acceso =
+                await ValidarAccesoAsync(
+                    usuarioSesionId,
+                    TipoPermisoApi.Actualizar,
+                    cancellationToken);
+
+            if (acceso != null)
+                return acceso;
+
             if (id <= 0)
             {
                 return BadRequest(new
@@ -683,8 +758,18 @@ namespace CONATRADEC_API.Controllers
         [HttpPut("{id:int}/eliminar")]
         public async Task<ActionResult> Eliminar(
             int id,
+            [FromHeader(Name = "X-Usuario-Id")] int? usuarioSesionId,
             CancellationToken cancellationToken)
         {
+            ActionResult? acceso =
+                await ValidarAccesoAsync(
+                    usuarioSesionId,
+                    TipoPermisoApi.Eliminar,
+                    cancellationToken);
+
+            if (acceso != null)
+                return acceso;
+
             TipoAnalisisSuelo? entity =
                 await db.TipoAnalisisSuelos
                     .FirstOrDefaultAsync(
@@ -950,6 +1035,30 @@ namespace CONATRADEC_API.Controllers
                 puedeEliminar =
                     !esSistema
             };
+        }
+
+        private async Task<ActionResult?> ValidarAccesoAsync(
+            int? usuarioSesionId,
+            TipoPermisoApi permiso,
+            CancellationToken cancellationToken)
+        {
+            ResultadoPermisoApi resultado =
+                await permisoApiService.ValidarAsync(
+                    usuarioSesionId,
+                    NombreInterfaz,
+                    permiso,
+                    cancellationToken);
+
+            if (resultado.Permitido)
+                return null;
+
+            return StatusCode(
+                resultado.CodigoEstado,
+                new
+                {
+                    success = false,
+                    message = resultado.Mensaje
+                });
         }
 
         private static string NormalizarNombre(
