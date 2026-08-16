@@ -69,30 +69,123 @@ namespace CONATRADEC_API.Controllers
             int totalRegistros =
                 await consulta.CountAsync(cancellationToken);
 
+            /*
+             * Orden natural ejecutado completamente en SQL Server antes de
+             * Skip/Take. Si el nombre termina en un bloque numérico separado
+             * por espacio, dicho bloque se compara como número. De esta forma:
+             *
+             * Usuario 2, Usuario 3, Usuario 10, Usuario 11...
+             *
+             * Los nombres que no terminan en número conservan el orden
+             * alfabético normal. Nunca se materializa el listado completo.
+             */
+            var conPosicionNumerica =
+                consulta.Select(item => new
+                {
+                    Usuario = item,
+                    PosicionNumero = EF.Functions.PatIndex(
+                        "% [0-9]%",
+                        item.nombreCompletoUsuario)
+                });
+
+            var conSufijo =
+                conPosicionNumerica.Select(item => new
+                {
+                    item.Usuario,
+                    Prefijo =
+                        item.PosicionNumero > 0
+                            ? item.Usuario.nombreCompletoUsuario
+                                .Substring(
+                                    0,
+                                    Convert.ToInt32(item.PosicionNumero) - 1)
+                                .Trim()
+                            : item.Usuario.nombreCompletoUsuario,
+                    Sufijo =
+                        item.PosicionNumero > 0
+                            ? item.Usuario.nombreCompletoUsuario
+                                .Substring(
+                                    Convert.ToInt32(item.PosicionNumero))
+                                .Trim()
+                            : string.Empty
+                });
+
+            var consultaOrdenable =
+                conSufijo.Select(item => new
+                {
+                    item.Usuario,
+                    item.Prefijo,
+                    item.Sufijo,
+                    EsSufijoNumerico =
+                        item.Sufijo.Length > 0 &&
+                        item.Sufijo.Length <= 18 &&
+                        EF.Functions.PatIndex(
+                            "%[^0-9]%",
+                            item.Sufijo) == 0
+                });
+
             List<UsuarioAdministracionDto> items =
-                await consulta
-                    .OrderBy(item => item.nombreCompletoUsuario)
-                    .ThenBy(item => item.UsuarioId)
+                await consultaOrdenable
+                    .OrderBy(item =>
+                        item.EsSufijoNumerico
+                            ? item.Prefijo
+                            : item.Usuario.nombreCompletoUsuario)
+                    .ThenBy(item =>
+                        item.EsSufijoNumerico ? 0 : 1)
+                    .ThenBy(item =>
+                        item.EsSufijoNumerico
+                            ? Convert.ToInt64(item.Sufijo)
+                            : 0L)
+                    .ThenBy(item =>
+                        item.Usuario.nombreCompletoUsuario)
+                    .ThenBy(item => item.Usuario.UsuarioId)
                     .Skip((pagina - 1) * tamanoPagina)
                     .Take(tamanoPagina)
                     .Select(item => new UsuarioAdministracionDto
                     {
-                        UsuarioId = item.UsuarioId,
-                        NombreUsuario = item.nombreUsuario,
-                        IdentificacionUsuario = item.identificacionUsuario,
-                        NombreCompletoUsuario = item.nombreCompletoUsuario,
-                        CorreoUsuario = item.correoUsuario,
-                        TelefonoUsuario = item.telefonoUsuario ?? string.Empty,
-                        FechaNacimientoUsuario = item.fechaNacimientoUsuario,
-                        RolId = item.rolId,
-                        ProcedenciaId = item.procedenciaId,
-                        MunicipioId = item.municipioId,
-                        RolNombre = item.Rol.nombreRol,
+                        UsuarioId = item.Usuario.UsuarioId,
+                        NombreUsuario = item.Usuario.nombreUsuario,
+                        IdentificacionUsuario =
+                            item.Usuario.identificacionUsuario,
+                        NombreCompletoUsuario =
+                            item.Usuario.nombreCompletoUsuario,
+                        CorreoUsuario = item.Usuario.correoUsuario,
+                        TelefonoUsuario =
+                            item.Usuario.telefonoUsuario ?? string.Empty,
+                        FechaNacimientoUsuario =
+                            item.Usuario.fechaNacimientoUsuario,
+                        RolId = item.Usuario.rolId,
+                        ProcedenciaId = item.Usuario.procedenciaId,
+                        MunicipioId = item.Usuario.municipioId,
+                        DepartamentoId =
+                            item.Usuario.Municipio != null
+                                ? item.Usuario.Municipio.DepartamentoId
+                                : null,
+                        PaisId =
+                            item.Usuario.Municipio != null
+                                ? item.Usuario.Municipio.Departamento.PaisId
+                                : null,
+                        RolNombre = item.Usuario.Rol.nombreRol,
                         ProcedenciaNombre =
-                            item.Procedencia.nombreProcedencia,
+                            item.Usuario.Procedencia.nombreProcedencia,
+                        MunicipioNombre =
+                            item.Usuario.Municipio != null
+                                ? item.Usuario.Municipio.NombreMunicipio
+                                : string.Empty,
+                        DepartamentoNombre =
+                            item.Usuario.Municipio != null
+                                ? item.Usuario.Municipio.Departamento
+                                    .NombreDepartamento
+                                : string.Empty,
+                        PaisNombre =
+                            item.Usuario.Municipio != null
+                                ? item.Usuario.Municipio.Departamento.Pais
+                                    .NombrePais
+                                : string.Empty,
                         EsInterno =
-                            item.Procedencia.nombreProcedencia == "Interno",
-                        UrlImagenUsuario = item.urlImagenUsuario ?? string.Empty
+                            item.Usuario.Procedencia.nombreProcedencia ==
+                                "Interno",
+                        UrlImagenUsuario =
+                            item.Usuario.urlImagenUsuario ?? string.Empty
                     })
                     .ToListAsync(cancellationToken);
 

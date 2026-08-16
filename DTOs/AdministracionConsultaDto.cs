@@ -12,8 +12,13 @@ namespace CONATRADEC_API.DTOs
         public int? RolId { get; set; }
         public int? ProcedenciaId { get; set; }
         public int? MunicipioId { get; set; }
+        public int? DepartamentoId { get; set; }
+        public int? PaisId { get; set; }
         public string RolNombre { get; set; } = string.Empty;
         public string ProcedenciaNombre { get; set; } = string.Empty;
+        public string MunicipioNombre { get; set; } = string.Empty;
+        public string DepartamentoNombre { get; set; } = string.Empty;
+        public string PaisNombre { get; set; } = string.Empty;
         public bool EsInterno { get; set; }
         public string UrlImagenUsuario { get; set; } = string.Empty;
     }

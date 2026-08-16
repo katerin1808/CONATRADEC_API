@@ -1,4 +1,4 @@
-using CONATRADEC_API.DTOs;
+﻿using CONATRADEC_API.DTOs;
 using CONATRADEC_API.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -23,7 +23,8 @@ namespace CONATRADEC_API.Controllers
     {
         private readonly DBContext db;
 
-        public PropietariosDisponiblesPaginadosController(DBContext db)
+        public PropietariosDisponiblesPaginadosController(
+            DBContext db)
         {
             this.db = db;
         }
@@ -35,29 +36,55 @@ namespace CONATRADEC_API.Controllers
                 [FromQuery] int pagina = 1,
                 [FromQuery] int tamanoPagina = 12,
                 [FromQuery] string? buscar = null,
+                [FromQuery] int? excluirPropietarioId = null,
                 CancellationToken cancellationToken = default)
         {
-            pagina = Math.Max(1, pagina);
-            tamanoPagina = Math.Clamp(tamanoPagina, 6, 100);
-            string texto = (buscar ?? string.Empty).Trim();
+            pagina =
+                Math.Max(
+                    1,
+                    pagina);
 
-            int totalRegistros = await ConsultarTotalAsync(
-                texto,
-                cancellationToken);
+            tamanoPagina =
+                Math.Clamp(
+                    tamanoPagina,
+                    6,
+                    100);
 
-            int totalPaginas = totalRegistros == 0
-                ? 0
-                : (int)Math.Ceiling(
-                    totalRegistros / (double)tamanoPagina);
+            string texto =
+                (buscar ??
+                 string.Empty)
+                    .Trim();
 
-            if (totalPaginas > 0 && pagina > totalPaginas)
+            int? excluirId =
+                excluirPropietarioId is > 0
+                    ? excluirPropietarioId
+                    : null;
+
+            int totalRegistros =
+                await ConsultarTotalAsync(
+                    texto,
+                    excluirId,
+                    cancellationToken);
+
+            int totalPaginas =
+                totalRegistros == 0
+                    ? 0
+                    : (int)Math.Ceiling(
+                        totalRegistros /
+                        (double)tamanoPagina);
+
+            if (totalPaginas > 0 &&
+                pagina > totalPaginas)
+            {
                 pagina = totalPaginas;
+            }
 
             List<PropietarioPaginadoItemDto> items =
                 totalRegistros == 0
                     ? []
                     : await ConsultarPaginaAsync(
                         texto,
+                        excluirId,
                         pagina,
                         tamanoPagina,
                         cancellationToken);
@@ -81,60 +108,93 @@ namespace CONATRADEC_API.Controllers
         {
             if (propietarioId <= 0)
             {
-                return BadRequest(new
-                {
-                    success = false,
-                    message = "El identificador del propietario no es válido."
-                });
+                return BadRequest(
+                    new
+                    {
+                        success = false,
+                        message =
+                            "El identificador del propietario no es válido."
+                    });
             }
 
             PropietarioPaginadoItemDto? propietario =
                 await db.Propietarios
                     .AsNoTracking()
                     .Where(item =>
-                        item.propietarioId == propietarioId &&
+                        item.propietarioId ==
+                            propietarioId &&
                         item.activo)
-                    .Select(item => new PropietarioPaginadoItemDto
-                    {
-                        PropietarioId = item.propietarioId,
-                        Identificacion = item.identificacion,
-                        NombreCompleto = item.nombreCompleto,
-                        Telefono = item.telefono,
-                        Correo = item.correo,
-                        Direccion = item.direccion,
-                        Activo = item.activo,
-                        FechaRegistroUtc = item.fechaRegistroUtc,
-                        TotalTerrenos = db.PropietarioTerrenos
-                            .Count(relacion =>
-                                relacion.propietarioId ==
-                                    item.propietarioId &&
-                                relacion.activo),
-                        UsuarioPortalId = null,
-                        UsuarioPortal = null
-                    })
-                    .FirstOrDefaultAsync(cancellationToken);
+                    .Select(item =>
+                        new PropietarioPaginadoItemDto
+                        {
+                            PropietarioId =
+                                item.propietarioId,
+
+                            Identificacion =
+                                item.identificacion,
+
+                            NombreCompleto =
+                                item.nombreCompleto,
+
+                            Telefono =
+                                item.telefono,
+
+                            Correo =
+                                item.correo,
+
+                            Direccion =
+                                item.direccion,
+
+                            Activo =
+                                item.activo,
+
+                            FechaRegistroUtc =
+                                item.fechaRegistroUtc,
+
+                            TotalTerrenos =
+                                db.PropietarioTerrenos
+                                    .Count(relacion =>
+                                        relacion.propietarioId ==
+                                            item.propietarioId &&
+                                        relacion.activo),
+
+                            UsuarioPortalId =
+                                null,
+
+                            UsuarioPortal =
+                                null
+                        })
+                    .FirstOrDefaultAsync(
+                        cancellationToken);
 
             if (propietario == null)
             {
-                return NotFound(new
-                {
-                    success = false,
-                    message =
-                        "No se encontró el propietario activo solicitado."
-                });
+                return NotFound(
+                    new
+                    {
+                        success = false,
+                        message =
+                            "No se encontró el propietario activo solicitado."
+                    });
             }
 
-            return Ok(propietario);
+            return Ok(
+                propietario);
         }
 
         private async Task<int> ConsultarTotalAsync(
             string texto,
+            int? excluirPropietarioId,
             CancellationToken cancellationToken)
         {
             const string sql = """
                 SELECT COUNT_BIG(1)
                 FROM dbo.propietario p
                 WHERE p.activo = 1
+                  AND (
+                        @excluirPropietarioId IS NULL
+                        OR p.propietarioId <> @excluirPropietarioId
+                      )
                   AND (
                         @buscar = N''
                         OR p.identificacion LIKE N'%' + @buscar + N'%'
@@ -146,13 +206,24 @@ namespace CONATRADEC_API.Controllers
             return await EjecutarEscalarEnteroAsync(
                 sql,
                 command =>
-                    AgregarParametro(command, "@buscar", texto),
+                {
+                    AgregarParametro(
+                        command,
+                        "@buscar",
+                        texto);
+
+                    AgregarParametro(
+                        command,
+                        "@excluirPropietarioId",
+                        excluirPropietarioId);
+                },
                 cancellationToken);
         }
 
         private async Task<List<PropietarioPaginadoItemDto>>
             ConsultarPaginaAsync(
                 string texto,
+                int? excluirPropietarioId,
                 int pagina,
                 int tamanoPagina,
                 CancellationToken cancellationToken)
@@ -178,6 +249,10 @@ namespace CONATRADEC_API.Controllers
                         ) AS numeroFila
                     FROM dbo.propietario p
                     WHERE p.activo = 1
+                      AND (
+                            @excluirPropietarioId IS NULL
+                            OR p.propietarioId <> @excluirPropietarioId
+                          )
                       AND (
                             @buscar = N''
                             OR p.identificacion LIKE N'%' + @buscar + N'%'
@@ -206,19 +281,46 @@ namespace CONATRADEC_API.Controllers
                 ORDER BY p.numeroFila;
                 """;
 
-            int offset = (pagina - 1) * tamanoPagina;
-            DbConnection connection = db.Database.GetDbConnection();
-            bool cerrar = connection.State != ConnectionState.Open;
+            int offset =
+                (pagina - 1) *
+                tamanoPagina;
+
+            DbConnection connection =
+                db.Database.GetDbConnection();
+
+            bool cerrar =
+                connection.State !=
+                ConnectionState.Open;
 
             if (cerrar)
-                await connection.OpenAsync(cancellationToken);
+            {
+                await connection.OpenAsync(
+                    cancellationToken);
+            }
 
             try
             {
-                await using DbCommand command = connection.CreateCommand();
-                command.CommandText = sql;
-                AgregarParametro(command, "@buscar", texto);
-                AgregarParametro(command, "@offset", offset);
+                await using DbCommand command =
+                    connection.CreateCommand();
+
+                command.CommandText =
+                    sql;
+
+                AgregarParametro(
+                    command,
+                    "@buscar",
+                    texto);
+
+                AgregarParametro(
+                    command,
+                    "@excluirPropietarioId",
+                    excluirPropietarioId);
+
+                AgregarParametro(
+                    command,
+                    "@offset",
+                    offset);
+
                 AgregarParametro(
                     command,
                     "@tamanoPagina",
@@ -229,24 +331,57 @@ namespace CONATRADEC_API.Controllers
                         tamanoPagina);
 
                 await using DbDataReader reader =
-                    await command.ExecuteReaderAsync(cancellationToken);
+                    await command.ExecuteReaderAsync(
+                        cancellationToken);
 
-                while (await reader.ReadAsync(cancellationToken))
+                while (await reader.ReadAsync(
+                           cancellationToken))
                 {
                     items.Add(
                         new PropietarioPaginadoItemDto
                         {
-                            PropietarioId = reader.GetInt32(0),
-                            Identificacion = Texto(reader, 1),
-                            NombreCompleto = Texto(reader, 2),
-                            Telefono = TextoNullable(reader, 3),
-                            Correo = TextoNullable(reader, 4),
-                            Direccion = TextoNullable(reader, 5),
-                            Activo = reader.GetBoolean(6),
-                            FechaRegistroUtc = reader.GetDateTime(7),
-                            TotalTerrenos = reader.GetInt32(8),
-                            UsuarioPortalId = null,
-                            UsuarioPortal = null
+                            PropietarioId =
+                                reader.GetInt32(0),
+
+                            Identificacion =
+                                Texto(
+                                    reader,
+                                    1),
+
+                            NombreCompleto =
+                                Texto(
+                                    reader,
+                                    2),
+
+                            Telefono =
+                                TextoNullable(
+                                    reader,
+                                    3),
+
+                            Correo =
+                                TextoNullable(
+                                    reader,
+                                    4),
+
+                            Direccion =
+                                TextoNullable(
+                                    reader,
+                                    5),
+
+                            Activo =
+                                reader.GetBoolean(6),
+
+                            FechaRegistroUtc =
+                                reader.GetDateTime(7),
+
+                            TotalTerrenos =
+                                reader.GetInt32(8),
+
+                            UsuarioPortalId =
+                                null,
+
+                            UsuarioPortal =
+                                null
                         });
                 }
 
@@ -264,24 +399,38 @@ namespace CONATRADEC_API.Controllers
             Action<DbCommand> configurar,
             CancellationToken cancellationToken)
         {
-            DbConnection connection = db.Database.GetDbConnection();
-            bool cerrar = connection.State != ConnectionState.Open;
+            DbConnection connection =
+                db.Database.GetDbConnection();
+
+            bool cerrar =
+                connection.State !=
+                ConnectionState.Open;
 
             if (cerrar)
-                await connection.OpenAsync(cancellationToken);
+            {
+                await connection.OpenAsync(
+                    cancellationToken);
+            }
 
             try
             {
-                await using DbCommand command = connection.CreateCommand();
-                command.CommandText = sql;
-                configurar(command);
+                await using DbCommand command =
+                    connection.CreateCommand();
+
+                command.CommandText =
+                    sql;
+
+                configurar(
+                    command);
 
                 object? value =
-                    await command.ExecuteScalarAsync(cancellationToken);
+                    await command.ExecuteScalarAsync(
+                        cancellationToken);
 
                 return value is null or DBNull
                     ? 0
-                    : Convert.ToInt32(value);
+                    : Convert.ToInt32(
+                        value);
             }
             finally
             {
@@ -295,10 +444,18 @@ namespace CONATRADEC_API.Controllers
             string nombre,
             object? valor)
         {
-            DbParameter parameter = command.CreateParameter();
-            parameter.ParameterName = nombre;
-            parameter.Value = valor ?? DBNull.Value;
-            command.Parameters.Add(parameter);
+            DbParameter parameter =
+                command.CreateParameter();
+
+            parameter.ParameterName =
+                nombre;
+
+            parameter.Value =
+                valor ??
+                DBNull.Value;
+
+            command.Parameters.Add(
+                parameter);
         }
 
         private static string Texto(

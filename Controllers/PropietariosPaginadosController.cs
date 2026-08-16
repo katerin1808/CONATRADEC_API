@@ -1,4 +1,4 @@
-using CONATRADEC_API.DTOs;
+﻿using CONATRADEC_API.DTOs;
 using CONATRADEC_API.Infrastructure;
 using CONATRADEC_API.Models;
 using CONATRADEC_API.Services;
@@ -41,6 +41,7 @@ namespace CONATRADEC_API.Controllers
                 [FromQuery] int tamanoPagina = 12,
                 [FromQuery] string? buscar = null,
                 [FromQuery] bool incluirInactivos = false,
+                [FromQuery] bool soloInactivos = false,
                 CancellationToken cancellationToken = default)
         {
             ResultadoPermisoApi permiso =
@@ -61,22 +62,44 @@ namespace CONATRADEC_API.Controllers
                     });
             }
 
-            pagina = Math.Max(1, pagina);
-            tamanoPagina = Math.Clamp(tamanoPagina, 6, 100);
-            string texto = (buscar ?? string.Empty).Trim();
+            pagina = Math.Max(
+                1,
+                pagina);
 
-            int totalRegistros = await ConsultarTotalAsync(
-                texto,
-                incluirInactivos,
-                cancellationToken);
+            tamanoPagina = Math.Clamp(
+                tamanoPagina,
+                6,
+                100);
 
-            int totalPaginas = totalRegistros == 0
-                ? 0
-                : (int)Math.Ceiling(
-                    totalRegistros / (double)tamanoPagina);
+            string texto =
+                (buscar ?? string.Empty)
+                    .Trim();
 
-            if (totalPaginas > 0 && pagina > totalPaginas)
+            /*
+             * soloInactivos se agrega sin alterar el comportamiento anterior:
+             * - false + incluirInactivos=false => solo activos.
+             * - false + incluirInactivos=true  => activos e inactivos.
+             * - true                          => exclusivamente inactivos.
+             */
+            int totalRegistros =
+                await ConsultarTotalAsync(
+                    texto,
+                    incluirInactivos,
+                    soloInactivos,
+                    cancellationToken);
+
+            int totalPaginas =
+                totalRegistros == 0
+                    ? 0
+                    : (int)Math.Ceiling(
+                        totalRegistros /
+                        (double)tamanoPagina);
+
+            if (totalPaginas > 0 &&
+                pagina > totalPaginas)
+            {
                 pagina = totalPaginas;
+            }
 
             List<PropietarioPaginadoItemDto> items =
                 totalRegistros == 0
@@ -84,6 +107,7 @@ namespace CONATRADEC_API.Controllers
                     : await ConsultarPaginaAsync(
                         texto,
                         incluirInactivos,
+                        soloInactivos,
                         pagina,
                         tamanoPagina,
                         cancellationToken);
@@ -102,12 +126,25 @@ namespace CONATRADEC_API.Controllers
         private async Task<int> ConsultarTotalAsync(
             string texto,
             bool incluirInactivos,
+            bool soloInactivos,
             CancellationToken cancellationToken)
         {
             const string sql = """
                 SELECT COUNT_BIG(1)
                 FROM dbo.propietario p
-                WHERE (@incluirInactivos = 1 OR p.activo = 1)
+                WHERE
+                    (
+                        (@soloInactivos = 1 AND p.activo = 0)
+                        OR
+                        (
+                            @soloInactivos = 0
+                            AND
+                            (
+                                @incluirInactivos = 1
+                                OR p.activo = 1
+                            )
+                        )
+                    )
                   AND (
                         @buscar = N''
                         OR p.identificacion LIKE N'%' + @buscar + N'%'
@@ -131,17 +168,28 @@ namespace CONATRADEC_API.Controllers
                     conexion.CreateCommand();
 
                 comando.CommandText = sql;
-                AgregarParametro(comando, "@buscar", texto);
+
+                AgregarParametro(
+                    comando,
+                    "@buscar",
+                    texto);
+
                 AgregarParametro(
                     comando,
                     "@incluirInactivos",
                     incluirInactivos);
 
+                AgregarParametro(
+                    comando,
+                    "@soloInactivos",
+                    soloInactivos);
+
                 object? valor =
                     await comando.ExecuteScalarAsync(
                         cancellationToken);
 
-                return valor == null || valor == DBNull.Value
+                return valor == null ||
+                       valor == DBNull.Value
                     ? 0
                     : Convert.ToInt32(valor);
             }
@@ -156,6 +204,7 @@ namespace CONATRADEC_API.Controllers
             ConsultarPaginaAsync(
                 string texto,
                 bool incluirInactivos,
+                bool soloInactivos,
                 int pagina,
                 int tamanoPagina,
                 CancellationToken cancellationToken)
@@ -180,7 +229,19 @@ namespace CONATRADEC_API.Controllers
                                 p.propietarioId
                         ) AS numeroFila
                     FROM dbo.propietario p
-                    WHERE (@incluirInactivos = 1 OR p.activo = 1)
+                    WHERE
+                        (
+                            (@soloInactivos = 1 AND p.activo = 0)
+                            OR
+                            (
+                                @soloInactivos = 0
+                                AND
+                                (
+                                    @incluirInactivos = 1
+                                    OR p.activo = 1
+                                )
+                            )
+                        )
                       AND (
                             @buscar = N''
                             OR p.identificacion LIKE N'%' + @buscar + N'%'
@@ -224,7 +285,8 @@ namespace CONATRADEC_API.Controllers
                 """;
 
             int offset =
-                (pagina - 1) * tamanoPagina;
+                (pagina - 1) *
+                tamanoPagina;
 
             DbConnection conexion =
                 db.Database.GetDbConnection();
@@ -241,12 +303,27 @@ namespace CONATRADEC_API.Controllers
                     conexion.CreateCommand();
 
                 comando.CommandText = sql;
-                AgregarParametro(comando, "@buscar", texto);
+
+                AgregarParametro(
+                    comando,
+                    "@buscar",
+                    texto);
+
                 AgregarParametro(
                     comando,
                     "@incluirInactivos",
                     incluirInactivos);
-                AgregarParametro(comando, "@offset", offset);
+
+                AgregarParametro(
+                    comando,
+                    "@soloInactivos",
+                    soloInactivos);
+
+                AgregarParametro(
+                    comando,
+                    "@offset",
+                    offset);
+
                 AgregarParametro(
                     comando,
                     "@tamanoPagina",
@@ -260,22 +337,58 @@ namespace CONATRADEC_API.Controllers
                     await comando.ExecuteReaderAsync(
                         cancellationToken);
 
-                while (await reader.ReadAsync(cancellationToken))
+                while (await reader.ReadAsync(
+                           cancellationToken))
                 {
                     resultado.Add(
                         new PropietarioPaginadoItemDto
                         {
-                            PropietarioId = reader.GetInt32(0),
-                            Identificacion = Texto(reader, 1),
-                            NombreCompleto = Texto(reader, 2),
-                            Telefono = TextoNullable(reader, 3),
-                            Correo = TextoNullable(reader, 4),
-                            Direccion = TextoNullable(reader, 5),
-                            Activo = reader.GetBoolean(6),
-                            FechaRegistroUtc = reader.GetDateTime(7),
-                            TotalTerrenos = reader.GetInt32(8),
-                            UsuarioPortalId = EnteroNullable(reader, 9),
-                            UsuarioPortal = TextoNullable(reader, 10)
+                            PropietarioId =
+                                reader.GetInt32(0),
+
+                            Identificacion =
+                                Texto(
+                                    reader,
+                                    1),
+
+                            NombreCompleto =
+                                Texto(
+                                    reader,
+                                    2),
+
+                            Telefono =
+                                TextoNullable(
+                                    reader,
+                                    3),
+
+                            Correo =
+                                TextoNullable(
+                                    reader,
+                                    4),
+
+                            Direccion =
+                                TextoNullable(
+                                    reader,
+                                    5),
+
+                            Activo =
+                                reader.GetBoolean(6),
+
+                            FechaRegistroUtc =
+                                reader.GetDateTime(7),
+
+                            TotalTerrenos =
+                                reader.GetInt32(8),
+
+                            UsuarioPortalId =
+                                EnteroNullable(
+                                    reader,
+                                    9),
+
+                            UsuarioPortal =
+                                TextoNullable(
+                                    reader,
+                                    10)
                         });
                 }
 
@@ -293,10 +406,14 @@ namespace CONATRADEC_API.Controllers
             string? valor =
                 User.FindFirstValue(
                     ClaimTypes.NameIdentifier) ??
-                User.FindFirstValue("usuarioId") ??
-                User.FindFirstValue("sub");
+                User.FindFirstValue(
+                    "usuarioId") ??
+                User.FindFirstValue(
+                    "sub");
 
-            return int.TryParse(valor, out int usuarioId) &&
+            return int.TryParse(
+                       valor,
+                       out int usuarioId) &&
                    usuarioId > 0
                 ? usuarioId
                 : null;
@@ -310,9 +427,15 @@ namespace CONATRADEC_API.Controllers
             DbParameter parametro =
                 comando.CreateParameter();
 
-            parametro.ParameterName = nombre;
-            parametro.Value = valor ?? DBNull.Value;
-            comando.Parameters.Add(parametro);
+            parametro.ParameterName =
+                nombre;
+
+            parametro.Value =
+                valor ??
+                DBNull.Value;
+
+            comando.Parameters.Add(
+                parametro);
         }
 
         private static string Texto(
