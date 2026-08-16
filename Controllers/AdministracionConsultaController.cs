@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 namespace CONATRADEC_API.Controllers
 {
     /// <summary>
-    /// Consultas paginadas para las pantallas administrativas.
+    /// Consultas optimizadas para las pantallas administrativas.
     /// No sustituye los controladores CRUD existentes.
     /// </summary>
     [ApiController]
@@ -276,12 +276,63 @@ namespace CONATRADEC_API.Controllers
             });
         }
 
+        /// <summary>
+        /// Catálogo liviano y completo para el Picker de Matriz de permisos.
+        /// No se pagina porque la pantalla necesita el conjunto de roles como
+        /// selector y solo requiere identificador, nombre y protección de Admin.
+        /// </summary>
+        [HttpGet("permisos/roles")]
+        public async Task<ActionResult<List<RolLiteDto>>>
+            ObtenerRolesMatriz(
+                [FromHeader(Name = "X-Usuario-Id")] int? usuarioSesionId,
+                CancellationToken cancellationToken = default)
+        {
+            ActionResult? acceso =
+                await ValidarMatrizAsync(
+                    usuarioSesionId,
+                    TipoPermisoApi.Leer,
+                    cancellationToken);
+
+            if (acceso != null)
+                return acceso;
+
+            List<RolLiteDto> roles =
+                await db.Roles
+                    .AsNoTracking()
+                    .Where(item => item.activo)
+                    .OrderBy(item => item.nombreRol)
+                    .ThenBy(item => item.rolId)
+                    .Select(item => new RolLiteDto
+                    {
+                        rolId = item.rolId,
+                        nombreRol = item.nombreRol,
+                        esAdministrador =
+                            item.nombreRol.Trim().ToUpper() ==
+                                "ADMINISTRADOR" ||
+                            item.nombreRol.Trim().ToUpper() ==
+                                "ADMIN"
+                    })
+                    .ToListAsync(cancellationToken);
+
+            return Ok(roles);
+        }
+
         [HttpGet("permisos/rol/{rolId:int}")]
         public async Task<ActionResult<RolConPermisosDto>>
             ObtenerPermisosPorRol(
                 int rolId,
+                [FromHeader(Name = "X-Usuario-Id")] int? usuarioSesionId,
                 CancellationToken cancellationToken = default)
         {
+            ActionResult? acceso =
+                await ValidarMatrizAsync(
+                    usuarioSesionId,
+                    TipoPermisoApi.Leer,
+                    cancellationToken);
+
+            if (acceso != null)
+                return acceso;
+
             if (rolId <= 0)
             {
                 return BadRequest(new
@@ -298,7 +349,12 @@ namespace CONATRADEC_API.Controllers
                     .Select(item => new RolLiteDto
                     {
                         rolId = item.rolId,
-                        nombreRol = item.nombreRol
+                        nombreRol = item.nombreRol,
+                        esAdministrador =
+                            item.nombreRol.Trim().ToUpper() ==
+                                "ADMINISTRADOR" ||
+                            item.nombreRol.Trim().ToUpper() ==
+                                "ADMIN"
                     })
                     .SingleOrDefaultAsync(cancellationToken);
 
@@ -312,31 +368,68 @@ namespace CONATRADEC_API.Controllers
             }
 
             List<InterfazPermisoDto> interfaces =
-                await (
-                    from interfaz in db.Interfaz.AsNoTracking()
-                    where interfaz.activo
-                    join relacion in db.RolInterfaz.AsNoTracking()
-                        .Where(item => item.rolId == rolId)
-                    on interfaz.interfazId equals relacion.interfazId
-                    into relaciones
-                    from relacion in relaciones.DefaultIfEmpty()
-                    orderby
-                        interfaz.nombreAmigableInterfaz,
-                        interfaz.nombreInterfaz
-                    select new InterfazPermisoDto
+                await db.Interfaz
+                    .AsNoTracking()
+                    .Where(item => item.activo)
+                    .OrderBy(item => item.nombreAmigableInterfaz)
+                    .ThenBy(item => item.nombreInterfaz)
+                    .ThenBy(item => item.interfazId)
+                    .Select(item => new InterfazPermisoDto
                     {
-                        interfazId = interfaz.interfazId,
-                        nombreInterfaz = interfaz.nombreInterfaz,
+                        interfazId = item.interfazId,
+                        nombreInterfaz = item.nombreInterfaz,
                         nombreAmigableInterfaz =
-                            interfaz.nombreAmigableInterfaz,
-                        leer = relacion != null && relacion.leer == true,
-                        agregar = relacion != null && relacion.agregar == true,
-                        actualizar =
-                            relacion != null && relacion.actualizar == true,
-                        eliminar =
-                            relacion != null && relacion.eliminar == true
+                            item.nombreAmigableInterfaz
                     })
                     .ToListAsync(cancellationToken);
+
+            /*
+             * Las bases históricas pueden tener varias filas RolInterfaz para
+             * el mismo par rol/interfaz. Se consolidan con OR para que la
+             * lectura coincida con PermisoApiService y nunca duplique tarjetas.
+             */
+            List<InterfazPermisoDto> relaciones =
+                await db.RolInterfaz
+                    .AsNoTracking()
+                    .Where(item => item.rolId == rolId)
+                    .Select(item => new InterfazPermisoDto
+                    {
+                        interfazId = item.interfazId,
+                        leer = item.leer == true,
+                        agregar = item.agregar == true,
+                        actualizar = item.actualizar == true,
+                        eliminar = item.eliminar == true
+                    })
+                    .ToListAsync(cancellationToken);
+
+            Dictionary<int, InterfazPermisoDto> permisosPorInterfaz =
+                relaciones
+                    .GroupBy(item => item.interfazId)
+                    .ToDictionary(
+                        grupo => grupo.Key,
+                        grupo => new InterfazPermisoDto
+                        {
+                            interfazId = grupo.Key,
+                            leer = grupo.Any(item => item.leer),
+                            agregar = grupo.Any(item => item.agregar),
+                            actualizar = grupo.Any(item => item.actualizar),
+                            eliminar = grupo.Any(item => item.eliminar)
+                        });
+
+            foreach (InterfazPermisoDto interfaz in interfaces)
+            {
+                if (!permisosPorInterfaz.TryGetValue(
+                        interfaz.interfazId,
+                        out InterfazPermisoDto? permiso))
+                {
+                    continue;
+                }
+
+                interfaz.leer = permiso.leer;
+                interfaz.agregar = permiso.agregar;
+                interfaz.actualizar = permiso.actualizar;
+                interfaz.eliminar = permiso.eliminar;
+            }
 
             return Ok(new RolConPermisosDto
             {
@@ -345,10 +438,9 @@ namespace CONATRADEC_API.Controllers
             });
         }
 
-
         /// <summary>
-        /// Este listado también alimenta la Matriz de permisos. La lectura se
-        /// autoriza por Roles o por Matriz, sin convertir ninguno de los dos
+        /// Este listado también alimenta otros consumidores de Roles. La lectura
+        /// se autoriza por Roles o por Matriz, sin convertir ninguno de los dos
         /// permisos en acceso de escritura sobre el otro módulo.
         /// </summary>
         private async Task<ActionResult?> ValidarLecturaRolesAsync(
@@ -386,6 +478,30 @@ namespace CONATRADEC_API.Controllers
                 {
                     success = false,
                     message = denegado.Mensaje
+                });
+        }
+
+        private async Task<ActionResult?> ValidarMatrizAsync(
+            int? usuarioSesionId,
+            TipoPermisoApi permiso,
+            CancellationToken cancellationToken)
+        {
+            ResultadoPermisoApi resultado =
+                await permisoApiService.ValidarAsync(
+                    usuarioSesionId,
+                    "matrizPermisosPage",
+                    permiso,
+                    cancellationToken);
+
+            if (resultado.Permitido)
+                return null;
+
+            return StatusCode(
+                resultado.CodigoEstado,
+                new
+                {
+                    success = false,
+                    message = resultado.Mensaje
                 });
         }
 
