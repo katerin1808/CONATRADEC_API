@@ -1,5 +1,6 @@
 using CONATRADEC_API.DTOs;
 using CONATRADEC_API.Models;
+using CONATRADEC_API.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -14,10 +15,14 @@ namespace CONATRADEC_API.Controllers
     public sealed class AdministracionConsultaController : ControllerBase
     {
         private readonly DBContext db;
+        private readonly PermisoApiService permisoApiService;
 
-        public AdministracionConsultaController(DBContext db)
+        public AdministracionConsultaController(
+            DBContext db,
+            PermisoApiService permisoApiService)
         {
             this.db = db;
+            this.permisoApiService = permisoApiService;
         }
 
         [HttpGet("usuarios/buscar")]
@@ -202,11 +207,20 @@ namespace CONATRADEC_API.Controllers
         [HttpGet("roles/buscar")]
         public async Task<ActionResult<RolAdministracionPaginaResponse>>
             BuscarRoles(
+                [FromHeader(Name = "X-Usuario-Id")] int? usuarioSesionId,
                 [FromQuery] string? buscar = null,
                 [FromQuery] int pagina = 1,
                 [FromQuery] int tamanoPagina = 20,
                 CancellationToken cancellationToken = default)
         {
+            ActionResult? acceso =
+                await ValidarLecturaRolesAsync(
+                    usuarioSesionId,
+                    cancellationToken);
+
+            if (acceso != null)
+                return acceso;
+
             pagina = Math.Max(1, pagina);
             tamanoPagina = Math.Clamp(tamanoPagina, 5, 100);
 
@@ -329,6 +343,50 @@ namespace CONATRADEC_API.Controllers
                 rol = rol,
                 interfaz = interfaces
             });
+        }
+
+
+        /// <summary>
+        /// Este listado también alimenta la Matriz de permisos. La lectura se
+        /// autoriza por Roles o por Matriz, sin convertir ninguno de los dos
+        /// permisos en acceso de escritura sobre el otro módulo.
+        /// </summary>
+        private async Task<ActionResult?> ValidarLecturaRolesAsync(
+            int? usuarioSesionId,
+            CancellationToken cancellationToken)
+        {
+            ResultadoPermisoApi roles =
+                await permisoApiService.ValidarAsync(
+                    usuarioSesionId,
+                    "rolPage",
+                    TipoPermisoApi.Leer,
+                    cancellationToken);
+
+            if (roles.Permitido)
+                return null;
+
+            ResultadoPermisoApi matriz =
+                await permisoApiService.ValidarAsync(
+                    usuarioSesionId,
+                    "matrizPermisosPage",
+                    TipoPermisoApi.Leer,
+                    cancellationToken);
+
+            if (matriz.Permitido)
+                return null;
+
+            ResultadoPermisoApi denegado =
+                roles.CodigoEstado == StatusCodes.Status401Unauthorized
+                    ? roles
+                    : matriz;
+
+            return StatusCode(
+                denegado.CodigoEstado,
+                new
+                {
+                    success = false,
+                    message = denegado.Mensaje
+                });
         }
 
         private static int CalcularPaginas(
