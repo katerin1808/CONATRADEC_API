@@ -126,6 +126,62 @@ namespace CONATRADEC_API.Controllers
         }
 
         // ==========================================================
+        // DETALLE ADMINISTRATIVO ACTUAL
+        // ==========================================================
+        [HttpGet("{id:int}")]
+        public async Task<IActionResult> ObtenerPorId(
+            int id,
+            CancellationToken cancellationToken = default)
+        {
+            IActionResult? acceso =
+                await ValidarAccesoAsync(
+                    TipoPermisoApi.Leer,
+                    cancellationToken);
+
+            if (acceso != null)
+                return acceso;
+
+            if (id <= 0)
+            {
+                return BadRequest(
+                    Error(
+                        "El identificador del elemento químico no es válido."));
+            }
+
+            ElementoQuimicoAdminDto? data =
+                await db.elementoQuimico
+                    .AsNoTracking()
+                    .Where(x =>
+                        x.elementoQuimicosId == id &&
+                        x.activo)
+                    .Select(x =>
+                        new ElementoQuimicoAdminDto
+                        {
+                            ElementoQuimicosId =
+                                x.elementoQuimicosId,
+                            SimboloElementoQuimico =
+                                x.simboloElementoQuimico,
+                            NombreElementoQuimico =
+                                x.nombreElementoQuimico,
+                            PesoEquivalenteElementoQuimico =
+                                x.pesoEquivalenteElementoQuimico,
+                            Activo =
+                                x.activo
+                        })
+                    .SingleOrDefaultAsync(
+                        cancellationToken);
+
+            if (data == null)
+            {
+                return NotFound(
+                    Error(
+                        "El elemento químico no existe o está inactivo."));
+            }
+
+            return Ok(data);
+        }
+
+        // ==========================================================
         // CREAR
         // ==========================================================
         [HttpPost]
