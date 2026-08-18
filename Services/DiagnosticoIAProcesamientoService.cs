@@ -1,5 +1,7 @@
 using CONATRADEC_API.Models;
 using Microsoft.EntityFrameworkCore;
+using System.Data;
+using System.Data.Common;
 using System.Net;
 using System.Text.Json;
 
@@ -112,10 +114,16 @@ namespace CONATRADEC_API.Services
                             valor.TotalFotografias);
                     });
 
+                string observacionConInstrucciones =
+                    await ConstruirObservacionConInstruccionesAsync(
+                        diagnostico.Imagenes,
+                        diagnostico.ObservacionUsuario,
+                        cancellationToken);
+
                 GeminiDiagnosticoResultado resultado =
                     await gemini.AnalizarConProgresoAsync(
                         diagnostico.Imagenes.ToList(),
-                        diagnostico.ObservacionUsuario,
+                        observacionConInstrucciones,
                         progreso,
                         cancellationToken);
 
@@ -259,6 +267,12 @@ namespace CONATRADEC_API.Services
                         .Where(item =>
                             !string.IsNullOrWhiteSpace(item)));
 
+                string observacionRevisionConInstrucciones =
+                    await ConstruirObservacionConInstruccionesAsync(
+                        diagnostico.Imagenes,
+                        observacionRevision,
+                        cancellationToken);
+
                 IProgress<GeminiDiagnosticoProgreso> progreso =
                     new ProgresoEnLinea<GeminiDiagnosticoProgreso>(valor =>
                     {
@@ -274,7 +288,7 @@ namespace CONATRADEC_API.Services
                 GeminiDiagnosticoResultado resultado =
                     await gemini.AnalizarConProgresoAsync(
                         diagnostico.Imagenes.ToList(),
-                        observacionRevision,
+                        observacionRevisionConInstrucciones,
                         progreso,
                         cancellationToken);
 
@@ -350,6 +364,104 @@ namespace CONATRADEC_API.Services
                     trabajo.UsuarioId,
                     "Ocurrió un error inesperado durante la revisión adicional de Gemini.",
                     CancellationToken.None);
+            }
+        }
+
+        /// <summary>
+        /// Agrega al contexto del análisis las instrucciones administradas para
+        /// los tipos de fotografía realmente presentes en el expediente. El
+        /// texto original del usuario se conserva intacto en la base de datos;
+        /// la ampliación existe únicamente durante la llamada a Gemini.
+        /// </summary>
+        private async Task<string> ConstruirObservacionConInstruccionesAsync(
+            IEnumerable<DiagnosticoIAImagen> imagenes,
+            string? observacionOriginal,
+            CancellationToken cancellationToken)
+        {
+            string[] codigos = imagenes
+                .Select(item => (item.TipoFotografia ?? string.Empty).Trim().ToUpperInvariant())
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            if (codigos.Length == 0)
+                return observacionOriginal ?? string.Empty;
+
+            DbConnection conexion = db.Database.GetDbConnection();
+            bool cerrar = conexion.State != ConnectionState.Open;
+
+            try
+            {
+                if (cerrar)
+                    await conexion.OpenAsync(cancellationToken);
+
+                await using DbCommand comando = conexion.CreateCommand();
+
+                var nombresParametros = new List<string>();
+                for (int indice = 0; indice < codigos.Length; indice++)
+                {
+                    string nombre = $"@codigo{indice}";
+                    nombresParametros.Add(nombre);
+
+                    DbParameter parametro = comando.CreateParameter();
+                    parametro.ParameterName = nombre;
+                    parametro.Value = codigos[indice];
+                    comando.Parameters.Add(parametro);
+                }
+
+                comando.CommandText = $"""
+SELECT [Codigo], [Nombre], [Descripcion], [InstruccionIA]
+FROM [dbo].[tipoFotografiaIA]
+WHERE [Activo] = 1
+  AND [Codigo] IN ({string.Join(", ", nombresParametros)})
+ORDER BY [Orden], [Nombre];
+""";
+
+                var instrucciones = new List<string>();
+
+                await using DbDataReader reader =
+                    await comando.ExecuteReaderAsync(cancellationToken);
+
+                while (await reader.ReadAsync(cancellationToken))
+                {
+                    string codigo = Convert.ToString(reader["Codigo"]) ?? string.Empty;
+                    string nombre = Convert.ToString(reader["Nombre"]) ?? string.Empty;
+                    string descripcion = Convert.ToString(reader["Descripcion"]) ?? string.Empty;
+                    string instruccion = Convert.ToString(reader["InstruccionIA"]) ?? string.Empty;
+
+                    if (string.IsNullOrWhiteSpace(instruccion))
+                        continue;
+
+                    instrucciones.Add(
+                        $"TIPO {codigo} - {nombre}: {descripcion} Instrucción específica: {instruccion}".Trim());
+                }
+
+                if (instrucciones.Count == 0)
+                    return observacionOriginal ?? string.Empty;
+
+                return string.Join(
+                    Environment.NewLine,
+                    new[]
+                    {
+                        (observacionOriginal ?? string.Empty).Trim(),
+                        "CONFIGURACIÓN ADMINISTRATIVA DE LOS TIPOS DE FOTOGRAFÍA UTILIZADOS:",
+                        "Aplica cada instrucción únicamente a las imágenes cuyo tipo declarado coincide con su código. Estas instrucciones orientan la observación y no autorizan a inventar síntomas.",
+                        string.Join(Environment.NewLine, instrucciones)
+                    }
+                    .Where(item => !string.IsNullOrWhiteSpace(item)));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(
+                    ex,
+                    "No fue posible cargar las instrucciones configuradas de tipos de fotografía. El análisis continuará con el contexto histórico para no bloquear el expediente.");
+
+                return observacionOriginal ?? string.Empty;
+            }
+            finally
+            {
+                if (cerrar && conexion.State == ConnectionState.Open)
+                    await conexion.CloseAsync();
             }
         }
 

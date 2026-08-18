@@ -35,9 +35,9 @@ namespace CONATRADEC_API.Auditing
                 @"(?ix)
                 \b(
                     password|pwd|clave|contrasena|contraseña|
-                    token|jwt|secret|secreto|authorization|
-                    api[-_]?key|access[-_]?key|private[-_]?key|
-                    refresh[-_]?token
+                    token|jwt|secret|secreto|authorization|permiso(?:descarga)?|
+                    x-permiso-descarga|api[-_]?key|access[-_]?key|
+                    private[-_]?key|refresh[-_]?token
                 )\b
                 \s*[:=]\s*
                 (""[^""]*""|'[^']*'|[^;,\s]+)",
@@ -51,8 +51,30 @@ namespace CONATRADEC_API.Auditing
             if (string.IsNullOrWhiteSpace(nombre))
                 return false;
 
+            string valor = nombre.Trim();
+
+            /*
+             * "permiso" se compara de forma exacta para no ocultar campos
+             * administrativos legítimos como "permisos" o "tienePermiso".
+             */
+            if (string.Equals(
+                    valor,
+                    "permiso",
+                    StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(
+                    valor,
+                    "X-Permiso-Descarga",
+                    StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(
+                    valor,
+                    "permisoDescarga",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
             return PalabrasSensibles.Any(x =>
-                nombre.Contains(
+                valor.Contains(
                     x,
                     StringComparison.OrdinalIgnoreCase));
         }

@@ -18,6 +18,14 @@ namespace CONATRADEC_API.Middleware
         public const string HeaderVersionSesion = "X-Version-Sesion";
         public const string HeaderSesionInvalidada = "X-Sesion-Invalidada";
 
+        /// <summary>
+        /// Credencial temporal de descarga utilizada por la aplicación v2.
+        /// Se procesa aquí y se elimina de la solicitud antes de continuar para
+        /// impedir que cualquier middleware posterior pueda registrarla.
+        /// </summary>
+        public const string HeaderPermisoDescarga =
+            "X-Permiso-Descarga";
+
         private readonly RequestDelegate next;
         private readonly ILogger<VersionSesionMiddleware> logger;
 
@@ -119,8 +127,21 @@ namespace CONATRADEC_API.Middleware
             IWebHostEnvironment environment,
             int actualizacionId)
         {
-            string permiso = context.Request.Query["permiso"]
-                .ToString();
+            /*
+             * La aplicación v2 envía el permiso en un encabezado. Query string
+             * y cookie se conservan como compatibilidad con versiones antiguas
+             * de la aplicación y con el portal web de descargas.
+             */
+            string permiso =
+                context.Request.Headers[
+                    HeaderPermisoDescarga]
+                    .ToString();
+
+            if (string.IsNullOrWhiteSpace(permiso))
+            {
+                permiso = context.Request.Query["permiso"]
+                    .ToString();
+            }
 
             if (string.IsNullOrWhiteSpace(permiso))
             {
@@ -141,6 +162,13 @@ namespace CONATRADEC_API.Middleware
                 await ResponderDescargaNoAutorizadaAsync(context);
                 return;
             }
+
+            /*
+             * Nunca se propaga la credencial v2 a BitacoraMiddleware ni al
+             * controlador. La autorización ya quedó validada en este punto.
+             */
+            context.Request.Headers.Remove(
+                HeaderPermisoDescarga);
 
             context.Items[
                 ActualizacionDescargaTokenService.ItemOperacionId] =
@@ -217,7 +245,7 @@ namespace CONATRADEC_API.Middleware
                             "DESCARGA_INICIADA",
 
                         Detalle =
-                            "El navegador solicitó el archivo autorizado.",
+                            "El cliente solicitó el archivo autorizado.",
 
                         Plataforma =
                             autorizacion.Plataforma,

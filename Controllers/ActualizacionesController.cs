@@ -4,6 +4,7 @@ using CONATRADEC_API.Models;
 using CONATRADEC_API.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 
@@ -27,22 +28,26 @@ namespace CONATRADEC_API.Controllers
         private readonly ActualizacionesDbContext actualizacionesDb;
         private readonly PermisoApiService permisoApiService;
         private readonly IWebHostEnvironment environment;
+        private readonly IConfiguration configuration;
         private readonly ILogger<ActualizacionesController> logger;
 
         public ActualizacionesController(
             ActualizacionesDbContext actualizacionesDb,
             PermisoApiService permisoApiService,
             IWebHostEnvironment environment,
+            IConfiguration configuration,
             ILogger<ActualizacionesController> logger)
         {
             this.actualizacionesDb = actualizacionesDb;
             this.permisoApiService = permisoApiService;
             this.environment = environment;
+            this.configuration = configuration;
             this.logger = logger;
         }
 
         /// <summary>
-        /// Endpoint público utilizado por la aplicación instalada.
+        /// Endpoint histórico. Se conserva sin cambios de contrato para
+        /// compatibilidad con clientes anteriores.
         /// </summary>
         [HttpGet("comprobar")]
         public async Task<ActionResult> Comprobar(
@@ -98,10 +103,6 @@ namespace CONATRADEC_API.Controllers
                 });
             }
 
-            /*
-             * Una versión obligatoria intermedia no puede quedar anulada por
-             * una publicación posterior marcada como opcional.
-             */
             bool obligatoria = disponibles.Any(x =>
                 x.Obligatoria ||
                 (x.VersionMinimaCodigo.HasValue &&
@@ -292,13 +293,16 @@ namespace CONATRADEC_API.Controllers
                 .GetExtension(dto.Archivo.FileName)
                 .ToLowerInvariant();
 
-            string carpeta = Path.Combine(
-                environment.ContentRootPath,
-                "resources",
-                "uploads",
-                "actualizaciones",
-                plataforma.ToLowerInvariant(),
-                canal.ToLowerInvariant());
+            /*
+             * Los instaladores nuevos se guardan fuera de ContentRoot para que
+             * una publicación del backend no elimine archivos ya publicados.
+             * Puede configurarse una ruta absoluta mediante
+             * Actualizaciones:StoragePath / Actualizaciones__StoragePath.
+             */
+            string carpeta =
+                ObtenerCarpetaAlmacenamiento(
+                    plataforma,
+                    canal);
 
             Directory.CreateDirectory(carpeta);
 
@@ -794,6 +798,47 @@ namespace CONATRADEC_API.Controllers
                 $"{Request.Scheme}://{Request.Host}{Request.PathBase}";
 
             return $"{baseUrl.TrimEnd('/')}/api/actualizaciones/descargar/{id}";
+        }
+
+        private string ObtenerCarpetaAlmacenamiento(
+            string plataforma,
+            string canal)
+        {
+            string configurada =
+                configuration["Actualizaciones:StoragePath"]?
+                    .Trim() ??
+                string.Empty;
+
+            string raiz;
+
+            if (string.IsNullOrWhiteSpace(configurada))
+            {
+                string directorioPadre =
+                    Directory.GetParent(
+                        environment.ContentRootPath)?
+                        .FullName ??
+                    environment.ContentRootPath;
+
+                raiz = Path.Combine(
+                    directorioPadre,
+                    "CONATRADEC_DATA",
+                    "actualizaciones");
+            }
+            else
+            {
+                raiz = Path.IsPathRooted(configurada)
+                    ? configurada
+                    : Path.Combine(
+                        environment.ContentRootPath,
+                        configurada);
+            }
+
+            raiz = Path.GetFullPath(raiz);
+
+            return Path.Combine(
+                raiz,
+                plataforma.ToLowerInvariant(),
+                canal.ToLowerInvariant());
         }
 
         private static string NormalizarPlataforma(string? valor)
