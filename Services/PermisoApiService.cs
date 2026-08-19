@@ -120,8 +120,17 @@ namespace CONATRADEC_API.Services
                 TipoPermisoApi.Eliminar => eliminar,
                 TipoPermisoApi.AgregarOActualizar =>
                     agregar || actualizar,
+
+                /*
+                 * Consultar pantallas administrativas requiere poder leer la
+                 * interfaz y, además, poseer al menos una acción de gestión.
+                 * Las mutaciones continúan validando Agregar/Actualizar/Eliminar
+                 * de forma independiente en cada endpoint.
+                 */
                 TipoPermisoApi.Administrar =>
-                    agregar || actualizar || eliminar,
+                    leer &&
+                    (agregar || actualizar || eliminar),
+
                 _ => false
             };
 
