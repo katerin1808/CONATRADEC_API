@@ -9,9 +9,33 @@ namespace CONATRADEC_API.Filters
     /// <summary>
     /// Convierte en ApiErrorResponse cualquier respuesta 4xx o 5xx
     /// devuelta manualmente por los controladores.
+    ///
+    /// También ejecuta la protección de compatibilidad para los endpoints
+    /// históricos del Álbum Botánico, que siguen publicados para clientes
+    /// anteriores pero ahora deben respetar los permisos funcionales.
     /// </summary>
-    public sealed class ApiErrorResponseFilter : IAsyncResultFilter
+    public sealed class ApiErrorResponseFilter :
+        IAsyncActionFilter,
+        IAsyncResultFilter
     {
+        public async Task OnActionExecutionAsync(
+            ActionExecutingContext context,
+            ActionExecutionDelegate next)
+        {
+            IActionResult? acceso =
+                await AlbumBotanicoEndpointPermissionGuard.ValidarAsync(
+                    context.HttpContext,
+                    context.HttpContext.RequestAborted);
+
+            if (acceso != null)
+            {
+                context.Result = acceso;
+                return;
+            }
+
+            await next();
+        }
+
         public async Task OnResultExecutionAsync(
             ResultExecutingContext context,
             ResultExecutionDelegate next)
