@@ -12,10 +12,10 @@ using System.Security.Claims;
 namespace CONATRADEC_API.Controllers
 {
     /// <summary>
-    /// Paginador numerado aditivo para la bandeja operativa del analizador.
-    /// El endpoint por cursor existente se conserva intacto para clientes
-    /// anteriores. Cada consulta devuelve únicamente la página solicitada y el
-    /// total, con orden determinista por fecha e identificador descendentes.
+    /// Paginador numerado aditivo para las bandejas operativas de Analizador y
+    /// Aprobador. El endpoint por cursor existente se conserva intacto para
+    /// clientes anteriores. Cada consulta devuelve únicamente la página
+    /// solicitada y el total, con orden determinista por fecha e identificador.
     /// </summary>
     [ApiController]
     [Authorize]
@@ -46,7 +46,15 @@ namespace CONATRADEC_API.Controllers
         [HttpGet("bandeja-operativa-pagina")]
         public async Task<IActionResult> ObtenerPagina(
             [FromQuery] string modo = "analizador",
+            [FromQuery] string? buscar = null,
+            [FromQuery] string? propietario = null,
             [FromQuery] int? tecnicoId = null,
+            [FromQuery] string? departamento = null,
+            [FromQuery] string? tipoFotografia = null,
+            [FromQuery] string? estado = null,
+            [FromQuery] DateTime? fechaDesde = null,
+            [FromQuery] DateTime? fechaHasta = null,
+            [FromQuery] int desfaseHorarioMinutos = 0,
             [FromQuery] int pagina = 1,
             [FromQuery] int tamanoPagina = 20,
             CancellationToken cancellationToken = default)
@@ -56,18 +64,15 @@ namespace CONATRADEC_API.Controllers
                 return Forbid();
 
             string modoNormalizado = NormalizarModo(modo);
-            if (modoNormalizado is not (
-                "analizador" or
-                "analizador-disponibles" or
-                "analizador-revisadas"))
+            if (!EsModoValido(modoNormalizado))
             {
                 return BadRequest(Error(
-                    "Este paginador admite analizador, analizador-disponibles o analizador-revisadas."));
+                    "Este paginador admite analizador, analizador-disponibles, analizador-revisadas, aprobador, aprobador-disponibles o aprobador-revisadas."));
             }
 
             ResultadoPermisoApi permiso = await permisos.ValidarAsync(
                 usuarioId,
-                DiagnosticoIAFlujo.InterfazAnalizador,
+                ObtenerInterfaz(modoNormalizado),
                 TipoPermisoApi.Leer,
                 cancellationToken);
 
@@ -80,6 +85,53 @@ namespace CONATRADEC_API.Controllers
 
             pagina = Math.Max(1, pagina);
             tamanoPagina = Math.Clamp(tamanoPagina, 10, 50);
+            desfaseHorarioMinutos = Math.Clamp(
+                desfaseHorarioMinutos,
+                -840,
+                840);
+
+            DateTime hoyLocal = DateTime.UtcNow
+                .AddMinutes(desfaseHorarioMinutos)
+                .Date;
+            DateTime? desdeLocal = fechaDesde?.Date;
+            DateTime? hastaLocal = fechaHasta?.Date;
+
+            if (desdeLocal.HasValue && desdeLocal.Value > hoyLocal)
+                return BadRequest(Error("La fecha inicial no puede estar en el futuro."));
+
+            if (hastaLocal.HasValue && hastaLocal.Value > hoyLocal)
+                return BadRequest(Error("La fecha final no puede estar en el futuro."));
+
+            if (desdeLocal.HasValue && hastaLocal.HasValue &&
+                desdeLocal.Value > hastaLocal.Value)
+            {
+                return BadRequest(Error(
+                    "La fecha inicial debe ser anterior o igual a la fecha final."));
+            }
+
+            string estadoNormalizado = NormalizarCodigo(estado);
+            HashSet<string> estadosValidos =
+            [
+                "BORRADOR",
+                "EN_PROCESO",
+                "EN_PROCESO_CON_ERRORES",
+                "PARCIAL",
+                "PENDIENTE_REVISION",
+                "PENDIENTE_APROBACION",
+                "FINALIZADA",
+                "FINALIZADA_PARCIALMENTE"
+            ];
+
+            if (!string.IsNullOrWhiteSpace(estadoNormalizado) &&
+                !estadosValidos.Contains(estadoNormalizado))
+            {
+                return BadRequest(Error("El estado indicado no es válido."));
+            }
+
+            DateTime? desdeUtc = desdeLocal?.AddMinutes(-desfaseHorarioMinutos);
+            DateTime? hastaUtcExclusiva = hastaLocal?
+                .AddDays(1)
+                .AddMinutes(-desfaseHorarioMinutos);
 
             await InicializarAsync(cancellationToken);
 
@@ -89,7 +141,14 @@ namespace CONATRADEC_API.Controllers
                 int totalPaginas) = await ConsultarPaginaAsync(
                     usuarioId.Value,
                     modoNormalizado,
+                    Normalizar(buscar),
+                    Normalizar(propietario),
                     tecnicoId is > 0 ? tecnicoId : null,
+                    Normalizar(departamento),
+                    NormalizarCodigo(tipoFotografia),
+                    estadoNormalizado,
+                    desdeUtc,
+                    hastaUtcExclusiva,
                     pagina,
                     tamanoPagina,
                     cancellationToken);
@@ -97,15 +156,7 @@ namespace CONATRADEC_API.Controllers
             return Ok(new
             {
                 success = true,
-                message = modoNormalizado switch
-                {
-                    "analizador-disponibles" =>
-                        "Expedientes disponibles para tomar como analizador obtenidos correctamente.",
-                    "analizador-revisadas" =>
-                        "Inspecciones revisadas por el analizador obtenidas correctamente.",
-                    _ =>
-                        "Expedientes asignados al analizador actual obtenidos correctamente."
-                },
+                message = ObtenerMensajeModo(modoNormalizado),
                 data = new InspeccionFitosanitariaBandejaPaginaNumeradaDto
                 {
                     Items = items,
@@ -131,7 +182,14 @@ namespace CONATRADEC_API.Controllers
             int TotalPaginas)> ConsultarPaginaAsync(
                 int usuarioId,
                 string modo,
+                string buscar,
+                string propietario,
                 int? tecnicoId,
+                string departamento,
+                string tipoFotografia,
+                string estado,
+                DateTime? fechaDesdeUtc,
+                DateTime? fechaHastaUtc,
                 int pagina,
                 int tamanoPagina,
                 CancellationToken cancellationToken)
@@ -273,6 +331,75 @@ OUTER APPLY
 ) portada
 WHERE d.Activo = 1
   AND (@tecnicoId IS NULL OR d.UsuarioSolicitanteId = @tecnicoId)
+  AND (@fechaDesdeUtc IS NULL OR d.FechaSolicitudUtc >= @fechaDesdeUtc)
+  AND (@fechaHastaUtc IS NULL OR d.FechaSolicitudUtc < @fechaHastaUtc)
+  AND
+  (
+      @buscar = N''
+      OR ISNULL(d.NombreInspeccion, N'') LIKE N'%' + @buscar + N'%'
+      OR ISNULL(d.CodigoTerreno, N'') LIKE N'%' + @buscar + N'%'
+      OR ISNULL(t.direccionTerreno, N'') LIKE N'%' + @buscar + N'%'
+      OR ISNULL(m.NombreMunicipio, N'') LIKE N'%' + @buscar + N'%'
+      OR ISNULL(dep.NombreDepartamento, N'') LIKE N'%' + @buscar + N'%'
+      OR ISNULL(tecnico.nombreCompletoUsuario, N'') LIKE N'%' + @buscar + N'%'
+      OR ISNULL(tecnico.nombreUsuario, N'') LIKE N'%' + @buscar + N'%'
+      OR EXISTS
+      (
+          SELECT 1
+          FROM dbo.propietarioTerreno ptBuscar
+          INNER JOIN dbo.propietario pBuscar
+              ON pBuscar.propietarioId = ptBuscar.propietarioId
+          WHERE ptBuscar.terrenoId = t.terrenoId
+            AND ptBuscar.activo = 1
+            AND pBuscar.activo = 1
+            AND (
+                pBuscar.nombreCompleto LIKE N'%' + @buscar + N'%'
+                OR pBuscar.identificacion LIKE N'%' + @buscar + N'%'
+            )
+      )
+      OR EXISTS
+      (
+          SELECT 1
+          FROM dbo.diagnosticoIAImagen iBuscar
+          WHERE iBuscar.DiagnosticoIAId = d.DiagnosticoIAId
+            AND ISNULL(iBuscar.Activo, 1) = 1
+            AND ISNULL(iBuscar.NombreArchivoOriginal, N'') LIKE N'%' + @buscar + N'%'
+      )
+  )
+  AND
+  (
+      @propietario = N''
+      OR EXISTS
+      (
+          SELECT 1
+          FROM dbo.propietarioTerreno ptFiltro
+          INNER JOIN dbo.propietario pFiltro
+              ON pFiltro.propietarioId = ptFiltro.propietarioId
+          WHERE ptFiltro.terrenoId = t.terrenoId
+            AND ptFiltro.activo = 1
+            AND pFiltro.activo = 1
+            AND (
+                pFiltro.nombreCompleto LIKE N'%' + @propietario + N'%'
+                OR pFiltro.identificacion LIKE N'%' + @propietario + N'%'
+            )
+      )
+  )
+  AND (
+      @departamento = N''
+      OR ISNULL(dep.NombreDepartamento, N'') LIKE N'%' + @departamento + N'%'
+  )
+  AND
+  (
+      @tipoFotografia = N''
+      OR EXISTS
+      (
+          SELECT 1
+          FROM dbo.diagnosticoIAImagen iTipo
+          WHERE iTipo.DiagnosticoIAId = d.DiagnosticoIAId
+            AND ISNULL(iTipo.Activo, 1) = 1
+            AND UPPER(ISNULL(iTipo.TipoFotografia, N'')) = @tipoFotografia
+      )
+  )
   AND
   (
       (
@@ -341,7 +468,61 @@ WHERE d.Activo = 1
                      N'DEVUELTA_AL_TECNICO')
           )
       )
+      OR
+      (
+          @modo = N'aprobador'
+          AND ISNULL(d.CerradaDefinitiva, 0) = 0
+          AND ISNULL(d.EtapaTecnicaFinalizada, 0) = 1
+          AND asignacion.UsuarioAprobadorId = @usuarioId
+          AND EXISTS
+          (
+              SELECT 1 FROM dbo.diagnosticoIAImagen ap
+              WHERE ap.DiagnosticoIAId = d.DiagnosticoIAId
+                AND ISNULL(ap.Activo, 1) = 1
+                AND ISNULL(ap.Descartada, 0) = 0
+                AND UPPER(ISNULL(ap.Estado, N'BORRADOR')) = N'PENDIENTE_APROBACION'
+          )
+      )
+      OR
+      (
+          @modo = N'aprobador-disponibles'
+          AND ISNULL(d.CerradaDefinitiva, 0) = 0
+          AND ISNULL(d.EtapaTecnicaFinalizada, 0) = 1
+          AND asignacion.UsuarioAprobadorId IS NULL
+          AND EXISTS
+          (
+              SELECT 1 FROM dbo.diagnosticoIAImagen apDisponible
+              WHERE apDisponible.DiagnosticoIAId = d.DiagnosticoIAId
+                AND ISNULL(apDisponible.Activo, 1) = 1
+                AND ISNULL(apDisponible.Descartada, 0) = 0
+                AND UPPER(ISNULL(apDisponible.Estado, N'BORRADOR')) = N'PENDIENTE_APROBACION'
+          )
+      )
+      OR
+      (
+          @modo = N'aprobador-revisadas'
+          AND EXISTS
+          (
+              SELECT 1
+              FROM dbo.diagnosticoIAImagenAprobacionV2 apr
+              INNER JOIN dbo.diagnosticoIAImagen imgApr
+                  ON imgApr.DiagnosticoIAImagenId = apr.DiagnosticoIAImagenId
+              WHERE imgApr.DiagnosticoIAId = d.DiagnosticoIAId
+                AND apr.UsuarioAprobadorId = @usuarioId
+          )
+          AND NOT EXISTS
+          (
+              SELECT 1 FROM dbo.diagnosticoIAImagen pendienteApr
+              WHERE pendienteApr.DiagnosticoIAId = d.DiagnosticoIAId
+                AND ISNULL(pendienteApr.Activo, 1) = 1
+                AND ISNULL(pendienteApr.Descartada, 0) = 0
+                AND UPPER(ISNULL(pendienteApr.Estado, N'BORRADOR')) = N'PENDIENTE_APROBACION'
+          )
+      )
   );
+
+DELETE FROM #bandeja
+WHERE @estado <> N'' AND EstadoCalculado <> @estado;
 
 DECLARE @total INT = (SELECT COUNT(1) FROM #bandeja);
 DECLARE @totalPaginas INT = CASE
@@ -409,7 +590,14 @@ FETCH NEXT @tamanoPagina ROWS ONLY;
 
                 AgregarParametro(comando, "@usuarioId", usuarioId, DbType.Int32);
                 AgregarParametro(comando, "@modo", modo, DbType.String);
+                AgregarParametro(comando, "@buscar", buscar, DbType.String);
+                AgregarParametro(comando, "@propietario", propietario, DbType.String);
                 AgregarParametro(comando, "@tecnicoId", tecnicoId, DbType.Int32);
+                AgregarParametro(comando, "@departamento", departamento, DbType.String);
+                AgregarParametro(comando, "@tipoFotografia", tipoFotografia, DbType.String);
+                AgregarParametro(comando, "@estado", estado, DbType.String);
+                AgregarParametro(comando, "@fechaDesdeUtc", fechaDesdeUtc, DbType.DateTime2);
+                AgregarParametro(comando, "@fechaHastaUtc", fechaHastaUtc, DbType.DateTime2);
                 AgregarParametro(comando, "@pagina", pagina, DbType.Int32);
                 AgregarParametro(
                     comando,
@@ -492,6 +680,35 @@ FETCH NEXT @tamanoPagina ROWS ONLY;
             }
         }
 
+        private static bool EsModoValido(string modo) => modo is
+            "analizador" or
+            "analizador-disponibles" or
+            "analizador-revisadas" or
+            "aprobador" or
+            "aprobador-disponibles" or
+            "aprobador-revisadas";
+
+        private static string ObtenerInterfaz(string modo) =>
+            modo.StartsWith("aprobador", StringComparison.Ordinal)
+                ? DiagnosticoIAFlujo.InterfazAprobador
+                : DiagnosticoIAFlujo.InterfazAnalizador;
+
+        private static string ObtenerMensajeModo(string modo) => modo switch
+        {
+            "analizador-disponibles" =>
+                "Expedientes disponibles para tomar como analizador obtenidos correctamente.",
+            "analizador-revisadas" =>
+                "Inspecciones revisadas por el analizador obtenidas correctamente.",
+            "aprobador" =>
+                "Expedientes asignados al aprobador actual obtenidos correctamente.",
+            "aprobador-disponibles" =>
+                "Expedientes disponibles para tomar como aprobador obtenidos correctamente.",
+            "aprobador-revisadas" =>
+                "Inspecciones revisadas por el aprobador obtenidas correctamente.",
+            _ =>
+                "Expedientes asignados al analizador actual obtenidos correctamente."
+        };
+
         private int? ObtenerUsuarioId()
         {
             string? valor =
@@ -509,6 +726,16 @@ FETCH NEXT @tamanoPagina ROWS ONLY;
             string.IsNullOrWhiteSpace(modo)
                 ? "analizador"
                 : modo.Trim().ToLowerInvariant();
+
+        private static string Normalizar(string? valor) =>
+            string.IsNullOrWhiteSpace(valor)
+                ? string.Empty
+                : valor.Trim();
+
+        private static string NormalizarCodigo(string? valor) =>
+            string.IsNullOrWhiteSpace(valor)
+                ? string.Empty
+                : valor.Trim().ToUpperInvariant().Replace(' ', '_');
 
         private static void AgregarParametro(
             DbCommand comando,
