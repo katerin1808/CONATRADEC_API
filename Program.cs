@@ -72,6 +72,7 @@ builder.Services.AddScoped<AnalisisHistorialActionFilter>();
 builder.Services.AddScoped<InspeccionFitosanitariaControlActionFilter>();
 builder.Services.AddScoped<InspeccionFitosanitariaControlDatabaseInitializer>();
 builder.Services.AddScoped<InspeccionFitosanitariaAdministracionDatabaseInitializer>();
+builder.Services.AddScoped<InspeccionFitosanitariaReglasIAInitializer>();
 
 builder.Services.AddControllers(options =>
 {
@@ -719,6 +720,12 @@ await using (
             .GetRequiredService<InspeccionFitosanitariaControlDatabaseInitializer>();
 
     await inspeccionControlInitializer.InicializarAsync();
+
+    InspeccionFitosanitariaReglasIAInitializer inspeccionReglasIAInitializer =
+        scope.ServiceProvider
+            .GetRequiredService<InspeccionFitosanitariaReglasIAInitializer>();
+
+    await inspeccionReglasIAInitializer.InicializarAsync();
 
     InspeccionFitosanitariaAdministracionDatabaseInitializer inspeccionAdminInitializer =
         scope.ServiceProvider
