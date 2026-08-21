@@ -70,6 +70,7 @@ builder.Services.AddScoped<
 
 builder.Services.AddScoped<AnalisisHistorialActionFilter>();
 builder.Services.AddScoped<InspeccionFitosanitariaControlActionFilter>();
+builder.Services.AddScoped<InspeccionFitosanitariaReglasIAActionFilter>();
 builder.Services.AddScoped<InspeccionFitosanitariaControlDatabaseInitializer>();
 builder.Services.AddScoped<InspeccionFitosanitariaAdministracionDatabaseInitializer>();
 builder.Services.AddScoped<InspeccionFitosanitariaReglasIAInitializer>();
@@ -87,6 +88,7 @@ builder.Services.AddControllers(options =>
 
     options.Filters.AddService<AnalisisHistorialActionFilter>();
     options.Filters.AddService<InspeccionFitosanitariaControlActionFilter>();
+    options.Filters.AddService<InspeccionFitosanitariaReglasIAActionFilter>();
 });
 
 builder.Services.AddConatradecJwt(
