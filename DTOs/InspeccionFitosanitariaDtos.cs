@@ -32,6 +32,31 @@ namespace CONATRADEC_API.DTOs
         public List<int> FotografiaIds { get; set; } = [];
     }
 
+    /// <summary>
+    /// Contexto técnico individual aportado antes del primer análisis IA.
+    /// Cada texto pertenece únicamente a la fotografía indicada.
+    /// </summary>
+    public sealed class InspeccionFotoContextoIARequest
+    {
+        [Range(1, int.MaxValue)]
+        public int FotografiaId { get; set; }
+
+        [Required, MinLength(8), MaxLength(500)]
+        public string Contexto { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// Request aditivo para clientes que envían contexto por fotografía.
+    /// El request histórico se conserva intacto para no romper versiones previas.
+    /// </summary>
+    public sealed class InspeccionFotosAnalisisContextualRequest :
+        InspeccionFotosSeleccionadasRequest
+    {
+        // Opcional para mantener compatibilidad con versiones anteriores.
+        // El cliente actualizado envía un elemento por fotografía seleccionada.
+        public List<InspeccionFotoContextoIARequest> Contextos { get; set; } = [];
+    }
+
     public sealed class InspeccionFotosRevisionIARequest :
         InspeccionFotosSeleccionadasRequest
     {
