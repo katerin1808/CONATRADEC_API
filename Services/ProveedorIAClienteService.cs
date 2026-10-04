@@ -54,7 +54,11 @@ namespace CONATRADEC_API.Services
             new(JsonSerializerDefaults.Web)
             {
                 PropertyNameCaseInsensitive = true,
-                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+                Converters =
+                {
+                    new FlexibleStringListJsonConverter()
+                }
             };
 
         public ProveedorIAClienteService(
@@ -255,10 +259,27 @@ namespace CONATRADEC_API.Services
                                 base64,
                                 cancellationToken);
 
-                    ProveedorIAResultadoFoto? resultado =
-                        JsonSerializer.Deserialize<ProveedorIAResultadoFoto>(
-                            LimpiarJson(respuesta),
-                            JsonOptions);
+                    string jsonLimpio = LimpiarJson(respuesta);
+                    ProveedorIAResultadoFoto? resultado;
+
+                    try
+                    {
+                        resultado =
+                            JsonSerializer.Deserialize<ProveedorIAResultadoFoto>(
+                                jsonLimpio,
+                                JsonOptions);
+                    }
+                    catch (JsonException ex)
+                    {
+                        logger.LogWarning(
+                            ex,
+                            "El proveedor IA devolvió un JSON con estructura incompatible: {Respuesta}",
+                            Limitar(jsonLimpio, 1200));
+
+                        throw new ProveedorIAException(
+                            HttpStatusCode.BadGateway,
+                            "El proveedor devolvió una respuesta JSON con un formato inesperado. Puede reintentarse sin perder la fotografía.");
+                    }
 
                     if (resultado == null)
                     {
