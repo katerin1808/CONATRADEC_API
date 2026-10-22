@@ -61,6 +61,7 @@ public sealed class ResumenTerritorialMapaController : ControllerBase
                 departamentoId,
                 municipioId,
                 nivel,
+                TerritorioAccesoMapa.UsuarioId(User),
                 cancellationToken);
 
         return Ok(respuesta);

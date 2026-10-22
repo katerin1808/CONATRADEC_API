@@ -40,12 +40,17 @@ public sealed class ResumenTerritorialMapaService
         int? departamentoId,
         int? municipioId,
         string? nivelAgrupacion,
+        int? usuarioId,
         CancellationToken cancellationToken = default)
     {
+        IQueryable<int> terrenosPermitidos =
+            TerritorioAccesoMapa.TerrenosPermitidos(db, usuarioId);
+
         IQueryable<Terreno> query =
             db.Terreno
                 .AsNoTracking()
-                .Where(item => item.activo);
+                .Where(item => item.activo &&
+                    terrenosPermitidos.Contains(item.terrenoId));
 
         if (departamentoId is > 0)
         {

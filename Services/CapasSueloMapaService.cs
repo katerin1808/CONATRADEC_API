@@ -32,6 +32,7 @@ public sealed class CapasSueloMapaService
         string clave,
         int? departamentoId,
         int? municipioId,
+        int? usuarioId,
         CancellationToken cancellationToken = default)
     {
         string claveNormalizada = NormalizarClave(clave);
@@ -54,6 +55,7 @@ public sealed class CapasSueloMapaService
             await ObtenerUltimosCalculosAsync(
                 departamentoId,
                 municipioId,
+                usuarioId,
                 cancellationToken);
 
         bool agruparPorMunicipio =
@@ -164,14 +166,19 @@ public sealed class CapasSueloMapaService
         ObtenerUltimosCalculosAsync(
             int? departamentoId,
             int? municipioId,
+            int? usuarioId,
             CancellationToken cancellationToken)
     {
+        IQueryable<int> terrenosPermitidos =
+            TerritorioAccesoMapa.TerrenosPermitidos(db, usuarioId);
+
         IQueryable<AnalisisSueloCalculo> query =
             db.AnalisisSueloCalculos
                 .AsNoTracking()
                 .Where(item =>
                     item.activo &&
-                    item.terrenoId > 0);
+                    item.terrenoId > 0 &&
+                    terrenosPermitidos.Contains(item.terrenoId));
 
         if (departamentoId is > 0)
         {

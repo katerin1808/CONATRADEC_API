@@ -1,12 +1,14 @@
 using CONATRADEC_API.Models;
 using CONATRADEC_API.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using static CONATRADEC_API.DTOs.MapaWebDto;
 
 namespace CONATRADEC_API.Controllers
 {
     [ApiController]
+    [Authorize]
     [Route("api/mapa")]
     public sealed class MapaController : ControllerBase
     {
@@ -20,6 +22,14 @@ namespace CONATRADEC_API.Controllers
         {
             this.db = db;
             this.umbralesService = umbralesService;
+        }
+
+        [HttpGet("mi-cobertura/municipios")]
+        public async Task<ActionResult<List<int>>> MisMunicipios(
+            CancellationToken cancellationToken = default)
+        {
+            return Ok(await TerritorioAccesoMapa.MunicipiosPermitidosAsync(
+                db, TerritorioAccesoMapa.UsuarioId(User), cancellationToken));
         }
 
         [HttpGet("terrenos")]
@@ -197,10 +207,15 @@ namespace CONATRADEC_API.Controllers
                 UmbralesAlertas umbrales,
                 CancellationToken cancellationToken)
         {
+            IQueryable<int> terrenosPermitidos =
+                TerritorioAccesoMapa.TerrenosPermitidos(
+                    db, TerritorioAccesoMapa.UsuarioId(User));
+
             IQueryable<Terreno> query =
                 db.Terreno
                     .AsNoTracking()
                     .Where(item =>
+                        terrenosPermitidos.Contains(item.terrenoId) &&
                         item.activo &&
                         item.latitud >= -90 &&
                         item.latitud <= 90 &&

@@ -1,12 +1,14 @@
 using CONATRADEC_API.Models;
 using CONATRADEC_API.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using static CONATRADEC_API.DTOs.CentroGeoespacialDto;
 
 namespace CONATRADEC_API.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api/centro-geoespacial")]
 public sealed class CentroGeoespacialController : ControllerBase
 {
@@ -269,6 +271,7 @@ public sealed class CentroGeoespacialController : ControllerBase
                 clave,
                 departamentoId,
                 municipioId,
+                TerritorioAccesoMapa.UsuarioId(User),
                 cancellationToken);
 
         return respuesta.Disponible
@@ -285,9 +288,14 @@ public sealed class CentroGeoespacialController : ControllerBase
     {
         limite = Math.Clamp(limite, 1, 100);
 
+        IQueryable<int> terrenosPermitidos =
+            TerritorioAccesoMapa.TerrenosPermitidos(
+                db, TerritorioAccesoMapa.UsuarioId(User));
+
         var terreno = await db.Terreno
             .AsNoTracking()
-            .Where(item => item.activo && item.terrenoId == terrenoId)
+            .Where(item => item.activo && item.terrenoId == terrenoId &&
+                terrenosPermitidos.Contains(item.terrenoId))
             .Select(item => new
             {
                 item.terrenoId,

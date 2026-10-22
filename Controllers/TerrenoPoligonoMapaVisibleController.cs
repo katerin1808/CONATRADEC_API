@@ -94,6 +94,44 @@ public sealed class TerrenoPoligonoMapaVisibleController : ControllerBase
                 ON d.departamentoId = m.departamentoId
                AND d.activo = 1
             WHERE p.activo = 1
+              AND EXISTS
+              (
+                  SELECT 1 FROM dbo.terreno permitido
+                  WHERE permitido.terrenoId = t.terrenoId
+                    AND permitido.activo = 1
+                    AND
+                    (
+                        (
+                            EXISTS (SELECT 1 FROM dbo.usuarioPropietario up
+                                    WHERE up.usuarioId = @usuarioId AND up.activo = 1)
+                            AND NOT EXISTS (SELECT 1 FROM dbo.usuarioCoberturaTerritorial c
+                                            WHERE c.usuarioId = @usuarioId AND c.activo = 1)
+                            AND EXISTS
+                            (
+                                SELECT 1 FROM dbo.usuarioPropietario up
+                                JOIN dbo.propietarioTerreno pt
+                                    ON pt.propietarioId = up.propietarioId AND pt.activo = 1
+                                WHERE up.usuarioId = @usuarioId AND up.activo = 1
+                                  AND pt.terrenoId = permitido.terrenoId
+                            )
+                        )
+                        OR
+                        (
+                            NOT EXISTS (SELECT 1 FROM dbo.usuarioPropietario up
+                                        WHERE up.usuarioId = @usuarioId AND up.activo = 1)
+                            AND EXISTS
+                            (
+                                SELECT 1 FROM dbo.usuarioCoberturaTerritorial c
+                                WHERE c.usuarioId = @usuarioId AND c.activo = 1
+                                  AND (c.tipoCobertura = N'NACIONAL'
+                                       OR (c.tipoCobertura = N'DEPARTAMENTO'
+                                           AND c.departamentoId = m.departamentoId)
+                                       OR (c.tipoCobertura = N'MUNICIPIO'
+                                           AND c.municipioId = m.municipioId))
+                            )
+                        )
+                    )
+              )
               AND
               (
                   (
@@ -126,6 +164,8 @@ public sealed class TerrenoPoligonoMapaVisibleController : ControllerBase
                 command =>
                 {
                     AgregarParametro(command, "@limite", limite);
+                    AgregarParametro(command, "@usuarioId",
+                        TerritorioAccesoMapa.UsuarioId(User) ?? 0);
                     AgregarParametro(
                         command,
                         "@usarTerritorio",

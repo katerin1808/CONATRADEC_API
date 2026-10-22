@@ -529,6 +529,25 @@ public sealed class ParametrizacionAccesoController : ControllerBase
         if (!await ExistePropietarioAsync(dto.PropietarioId, cancellationToken))
             return NotFound(Respuesta("No se encontró el propietario."));
 
+        // Ambas vías de asignación bloquean la misma fila para evitar carreras.
+        await using var transaccion = await db.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        await BloquearUsuarioAsync(dto.UsuarioId, cancellationToken);
+
+        int? coberturaActiva = await EscalarEnteroAsync(
+            """
+            SELECT TOP (1) usuarioCoberturaTerritorialId
+            FROM dbo.usuarioCoberturaTerritorial
+            WHERE usuarioId = @usuarioId AND activo = 1;
+            """,
+            command => AgregarParametro(command, "@usuarioId", dto.UsuarioId),
+            cancellationToken);
+
+        if (coberturaActiva.HasValue)
+            return Conflict(Respuesta(
+                "Este usuario tiene una cobertura territorial activa. " +
+                "Retírela antes de vincularlo con un propietario."));
+
         int usuarioSesionId = ObtenerUsuarioId();
 
         List<int> usuariosAfectados = await ConsultarAsync(
@@ -547,8 +566,6 @@ public sealed class ParametrizacionAccesoController : ControllerBase
             reader => reader.GetInt32(0),
             cancellationToken);
 
-        await using var transaccion =
-            await db.Database.BeginTransactionAsync(cancellationToken);
 
         await EjecutarAsync(
             """
@@ -676,15 +693,26 @@ public sealed class ParametrizacionAccesoController : ControllerBase
             FROM dbo.usuarioTerrenoAsignacion a
             INNER JOIN dbo.usuario u
                 ON u.UsuarioId = a.usuarioId
+            INNER JOIN dbo.usuarioPropietario up
+                ON up.usuarioId = a.usuarioId
+               AND up.activo = 1
             INNER JOIN dbo.terreno t
                 ON t.terrenoId = a.terrenoId
-            LEFT JOIN dbo.propietarioTerreno pt
+            INNER JOIN dbo.propietarioTerreno pt
                 ON pt.terrenoId = t.terrenoId
+               AND pt.propietarioId = up.propietarioId
                AND pt.activo = 1
-            LEFT JOIN dbo.propietario p
+            INNER JOIN dbo.propietario p
                 ON p.propietarioId = pt.propietarioId
                AND p.activo = 1
             WHERE a.activo = 1
+              AND NOT EXISTS
+                  (
+                      SELECT 1
+                      FROM dbo.usuarioCoberturaTerritorial c
+                      WHERE c.usuarioId = a.usuarioId
+                        AND c.activo = 1
+                  )
               AND (@usuarioId IS NULL OR a.usuarioId = @usuarioId)
               AND (@terrenoId IS NULL OR a.terrenoId = @terrenoId)
             ORDER BY
@@ -729,7 +757,7 @@ public sealed class ParametrizacionAccesoController : ControllerBase
         if (acceso is not null)
             return acceso;
 
-        string tipo = NormalizarTipo(dto.TipoAsignacion);
+        const string tipo = "PROPIETARIO";
 
         if (!await db.Usuarios.AsNoTracking().AnyAsync(
                 x => x.UsuarioId == dto.UsuarioId && x.activo,
@@ -738,32 +766,100 @@ public sealed class ParametrizacionAccesoController : ControllerBase
             return NotFound(Respuesta("No se encontró un usuario activo."));
         }
 
-        if (!await db.Terreno.AsNoTracking().AnyAsync(
-                x => x.terrenoId == dto.TerrenoId && x.activo,
-                cancellationToken))
+        await using var transaccionAsignacion =
+            await db.Database.BeginTransactionAsync(
+                IsolationLevel.Serializable, cancellationToken);
+        await BloquearUsuarioAsync(dto.UsuarioId, cancellationToken);
+
+        int? propietarioId = await EscalarEnteroAsync(
+            """
+            SELECT TOP (1) up.propietarioId
+            FROM dbo.usuarioPropietario up
+            INNER JOIN dbo.propietario p
+                ON p.propietarioId = up.propietarioId
+               AND p.activo = 1
+            WHERE up.usuarioId = @usuarioId
+              AND up.activo = 1;
+            """,
+            command => AgregarParametro(
+                command,
+                "@usuarioId",
+                dto.UsuarioId),
+            cancellationToken);
+
+        if (!propietarioId.HasValue)
         {
-            return NotFound(Respuesta("No se encontró un terreno activo."));
+            return Conflict(Respuesta(
+                "El usuario debe estar vinculado a un propietario antes de asignarle terrenos."));
+        }
+
+        int? coberturaActiva = await EscalarEnteroAsync(
+            """
+            SELECT TOP (1) usuarioCoberturaTerritorialId
+            FROM dbo.usuarioCoberturaTerritorial
+            WHERE usuarioId = @usuarioId
+              AND activo = 1;
+            """,
+            command => AgregarParametro(
+                command,
+                "@usuarioId",
+                dto.UsuarioId),
+            cancellationToken);
+
+        if (coberturaActiva.HasValue)
+        {
+            return Conflict(Respuesta(
+                "El usuario tiene una cobertura territorial activa. " +
+                "No se pueden mezclar accesos de propietario y colaborador."));
+        }
+
+        int? terrenoPropietario = await EscalarEnteroAsync(
+            """
+            SELECT TOP (1) pt.terrenoId
+            FROM dbo.propietarioTerreno pt
+            INNER JOIN dbo.terreno t
+                ON t.terrenoId = pt.terrenoId
+               AND t.activo = 1
+            WHERE pt.propietarioId = @propietarioId
+              AND pt.terrenoId = @terrenoId
+              AND pt.activo = 1;
+            """,
+            command =>
+            {
+                AgregarParametro(
+                    command,
+                    "@propietarioId",
+                    propietarioId.Value);
+                AgregarParametro(
+                    command,
+                    "@terrenoId",
+                    dto.TerrenoId);
+            },
+            cancellationToken);
+
+        if (!terrenoPropietario.HasValue)
+        {
+            return Conflict(Respuesta(
+                "El terreno seleccionado no pertenece al propietario vinculado a este usuario."));
         }
 
         int? existente = await EscalarEnteroAsync(
             """
-            SELECT usuarioTerrenoAsignacionId
+            SELECT TOP (1) usuarioTerrenoAsignacionId
             FROM dbo.usuarioTerrenoAsignacion
             WHERE usuarioId = @usuarioId
               AND terrenoId = @terrenoId
-              AND tipoAsignacion = @tipo
               AND activo = 1;
             """,
             command =>
             {
                 AgregarParametro(command, "@usuarioId", dto.UsuarioId);
                 AgregarParametro(command, "@terrenoId", dto.TerrenoId);
-                AgregarParametro(command, "@tipo", tipo);
             },
             cancellationToken);
 
         if (existente.HasValue)
-            return Conflict(Respuesta("La asignación ya se encuentra activa."));
+            return Conflict(Respuesta("El terreno ya se encuentra asignado a este propietario."));
 
         await EjecutarAsync(
             """
@@ -798,7 +894,7 @@ public sealed class ParametrizacionAccesoController : ControllerBase
                 AgregarParametro(
                     command,
                     "@principal",
-                    dto.EsResponsablePrincipal);
+                    true);
                 AgregarParametro(
                     command,
                     "@observacion",
@@ -814,7 +910,9 @@ public sealed class ParametrizacionAccesoController : ControllerBase
             dto.UsuarioId,
             cancellationToken);
 
-        return Ok(Respuesta("Terreno asignado correctamente.", true));
+        await transaccionAsignacion.CommitAsync(cancellationToken);
+
+        return Ok(Respuesta("Terreno asignado al propietario correctamente.", true));
     }
 
     [HttpDelete("asignaciones/{asignacionId:int}")]
@@ -957,11 +1055,33 @@ public sealed class ParametrizacionAccesoController : ControllerBase
             return BadRequest(Respuesta(ex.Message));
         }
 
-        if (tipo == "DEPARTAMENTO" && !dto.DepartamentoId.HasValue)
-            return BadRequest(Respuesta("Debe seleccionar un departamento."));
+        if (tipo == "DEPARTAMENTO")
+        {
+            if (!dto.DepartamentoId.HasValue)
+                return BadRequest(Respuesta("Debe seleccionar un departamento."));
 
-        if (tipo == "MUNICIPIO" && !dto.MunicipioId.HasValue)
-            return BadRequest(Respuesta("Debe seleccionar un municipio."));
+            dto.MunicipioId = null;
+        }
+
+        if (tipo == "MUNICIPIO")
+        {
+            if (!dto.DepartamentoId.HasValue)
+                return BadRequest(Respuesta("Debe seleccionar un departamento."));
+
+            if (!dto.MunicipioId.HasValue)
+                return BadRequest(Respuesta("Debe seleccionar un municipio."));
+
+            bool municipioValido = await db.Municipios
+                .AsNoTracking()
+                .AnyAsync(
+                    x => x.MunicipioId == dto.MunicipioId.Value &&
+                         x.DepartamentoId == dto.DepartamentoId.Value,
+                    cancellationToken);
+
+            if (!municipioValido)
+                return BadRequest(Respuesta(
+                    "El municipio seleccionado no pertenece al departamento indicado."));
+        }
 
         if (tipo == "NACIONAL")
         {
@@ -975,6 +1095,60 @@ public sealed class ParametrizacionAccesoController : ControllerBase
         {
             return NotFound(Respuesta("No se encontró un usuario activo."));
         }
+
+        await using var transaccionCobertura =
+            await db.Database.BeginTransactionAsync(
+                IsolationLevel.Serializable, cancellationToken);
+        await BloquearUsuarioAsync(dto.UsuarioId, cancellationToken);
+
+        int? propietarioActivo = await EscalarEnteroAsync(
+            """
+            SELECT TOP (1) usuarioPropietarioId
+            FROM dbo.usuarioPropietario
+            WHERE usuarioId = @usuarioId AND activo = 1;
+            """,
+            command => AgregarParametro(command, "@usuarioId", dto.UsuarioId),
+            cancellationToken);
+
+        if (propietarioActivo.HasValue)
+            return Conflict(Respuesta(
+                "Este usuario ya está vinculado a un propietario. " +
+                "Desvincúlelo antes de asignarle una cobertura territorial."));
+
+        int? coberturaDuplicada = await EscalarEnteroAsync(
+            """
+            SELECT TOP (1) usuarioCoberturaTerritorialId
+            FROM dbo.usuarioCoberturaTerritorial
+            WHERE usuarioId = @usuarioId
+              AND activo = 1
+              AND tipoCobertura = @tipo
+              AND (
+                    (departamentoId IS NULL AND @departamentoId IS NULL)
+                    OR departamentoId = @departamentoId
+                  )
+              AND (
+                    (municipioId IS NULL AND @municipioId IS NULL)
+                    OR municipioId = @municipioId
+                  );
+            """,
+            command =>
+            {
+                AgregarParametro(command, "@usuarioId", dto.UsuarioId);
+                AgregarParametro(command, "@tipo", tipo);
+                AgregarParametro(
+                    command,
+                    "@departamentoId",
+                    dto.DepartamentoId);
+                AgregarParametro(
+                    command,
+                    "@municipioId",
+                    dto.MunicipioId);
+            },
+            cancellationToken);
+
+        if (coberturaDuplicada.HasValue)
+            return Conflict(Respuesta(
+                "Este usuario ya tiene registrada esa misma cobertura territorial."));
 
         await EjecutarAsync(
             """
@@ -1024,6 +1198,8 @@ public sealed class ParametrizacionAccesoController : ControllerBase
         await IncrementarVersionSesionAsync(
             dto.UsuarioId,
             cancellationToken);
+
+        await transaccionCobertura.CommitAsync(cancellationToken);
 
         return Ok(Respuesta("Cobertura agregada correctamente.", true));
     }
@@ -1103,6 +1279,110 @@ public sealed class ParametrizacionAccesoController : ControllerBase
                 rol = x.Rol.nombreRol
             })
             .ToListAsync(cancellationToken);
+
+        return Ok(items);
+    }
+
+    [HttpGet("catalogos/usuarios-propietarios")]
+    public async Task<IActionResult> CatalogoUsuariosPropietarios(
+        CancellationToken cancellationToken = default)
+    {
+        IActionResult? acceso = await ValidarPermisoAsync(
+            ParametrizacionAccesoDatabaseInitializer.AsignacionTerreno,
+            TipoPermisoApi.Leer,
+            cancellationToken);
+
+        if (acceso is not null)
+            return acceso;
+
+        var items = await ConsultarAsync(
+            """
+            SELECT
+                up.usuarioId,
+                up.propietarioId,
+                p.nombreCompleto
+            FROM dbo.usuarioPropietario up
+            INNER JOIN dbo.usuario u
+                ON u.UsuarioId = up.usuarioId
+               AND u.activo = 1
+            INNER JOIN dbo.propietario p
+                ON p.propietarioId = up.propietarioId
+               AND p.activo = 1
+            WHERE up.activo = 1
+              AND NOT EXISTS
+                  (
+                      SELECT 1
+                      FROM dbo.usuarioCoberturaTerritorial c
+                      WHERE c.usuarioId = up.usuarioId
+                        AND c.activo = 1
+                  )
+            ORDER BY p.nombreCompleto, up.usuarioId;
+            """,
+            command => { },
+            reader => new
+            {
+                usuarioId = reader.GetInt32(0),
+                propietarioId = reader.GetInt32(1),
+                propietario = Texto(reader, 2)
+            },
+            cancellationToken);
+
+        return Ok(items);
+    }
+
+    [HttpGet("catalogos/terrenos-propietario/{usuarioId:int}")]
+    public async Task<IActionResult> CatalogoTerrenosPropietario(
+        int usuarioId,
+        CancellationToken cancellationToken = default)
+    {
+        IActionResult? acceso = await ValidarPermisoAsync(
+            ParametrizacionAccesoDatabaseInitializer.AsignacionTerreno,
+            TipoPermisoApi.Leer,
+            cancellationToken);
+
+        if (acceso is not null)
+            return acceso;
+
+        var items = await ConsultarAsync(
+            """
+            SELECT
+                t.terrenoId,
+                t.codigoTerreno,
+                p.nombreCompleto,
+                ISNULL(t.direccionTerreno, N'')
+            FROM dbo.usuarioPropietario up
+            INNER JOIN dbo.propietario p
+                ON p.propietarioId = up.propietarioId
+               AND p.activo = 1
+            INNER JOIN dbo.propietarioTerreno pt
+                ON pt.propietarioId = p.propietarioId
+               AND pt.activo = 1
+            INNER JOIN dbo.terreno t
+                ON t.terrenoId = pt.terrenoId
+               AND t.activo = 1
+            WHERE up.usuarioId = @usuarioId
+              AND up.activo = 1
+              AND NOT EXISTS
+                  (
+                      SELECT 1
+                      FROM dbo.usuarioCoberturaTerritorial c
+                      WHERE c.usuarioId = up.usuarioId
+                        AND c.activo = 1
+                  )
+            ORDER BY t.codigoTerreno;
+            """,
+            command => AgregarParametro(
+                command,
+                "@usuarioId",
+                usuarioId),
+            reader => new
+            {
+                terrenoId = reader.GetInt32(0),
+                codigoTerreno = Texto(reader, 1),
+                propietarioActual = Texto(reader, 2),
+                direccion = Texto(reader, 3)
+            },
+            cancellationToken);
 
         return Ok(items);
     }
@@ -1207,13 +1487,11 @@ public sealed class ParametrizacionAccesoController : ControllerBase
                    AND pt.activo = 1
                 WHERE up.usuarioId = @usuarioId
                   AND up.activo = 1
-
-                UNION
-
-                SELECT a.terrenoId
-                FROM dbo.usuarioTerrenoAsignacion a
-                WHERE a.usuarioId = @usuarioId
-                  AND a.activo = 1
+                  AND NOT EXISTS
+                  (
+                      SELECT 1 FROM dbo.usuarioCoberturaTerritorial c
+                      WHERE c.usuarioId = @usuarioId AND c.activo = 1
+                  )
 
                 UNION
 
@@ -1237,6 +1515,11 @@ public sealed class ParametrizacionAccesoController : ControllerBase
                     )
                 WHERE c.usuarioId = @usuarioId
                   AND c.activo = 1
+                  AND NOT EXISTS
+                  (
+                      SELECT 1 FROM dbo.usuarioPropietario up
+                      WHERE up.usuarioId = @usuarioId AND up.activo = 1
+                  )
             )
             SELECT DISTINCT
                 t.terrenoId,
@@ -1370,6 +1653,18 @@ public sealed class ParametrizacionAccesoController : ControllerBase
             ? usuarioId
             : throw new UnauthorizedAccessException(
                 "No se encontró la identidad del usuario autenticado.");
+    }
+
+    private async Task BloquearUsuarioAsync(
+        int usuarioId, CancellationToken cancellationToken)
+    {
+        await EscalarEnteroAsync(
+            """
+            SELECT UsuarioId FROM dbo.usuario WITH (UPDLOCK, HOLDLOCK)
+            WHERE UsuarioId = @usuarioId AND activo = 1;
+            """,
+            command => AgregarParametro(command, "@usuarioId", usuarioId),
+            cancellationToken);
     }
 
     private async Task<bool> ExistePropietarioAsync(
@@ -1549,17 +1844,6 @@ public sealed class ParametrizacionAccesoController : ControllerBase
                 .ToUpperInvariant()
                 .Where(char.IsLetterOrDigit)
                 .ToArray());
-
-    private static string NormalizarTipo(string valor)
-    {
-        string tipo = (valor ?? string.Empty)
-            .Trim()
-            .ToUpperInvariant();
-
-        return string.IsNullOrWhiteSpace(tipo)
-            ? "TECNICO"
-            : tipo;
-    }
 
     private static string NormalizarCobertura(string valor)
     {

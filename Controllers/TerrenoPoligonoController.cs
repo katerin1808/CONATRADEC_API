@@ -51,6 +51,14 @@ public sealed class TerrenoPoligonoController : ControllerBase
         if (acceso is not null)
             return acceso;
 
+        bool autorizado = await TerritorioAccesoMapa.TerrenosPermitidos(
+                db, TerritorioAccesoMapa.UsuarioId(User))
+            .ContainsAsync(terrenoId, cancellationToken);
+
+        if (!autorizado)
+            return NotFound(new { success = false,
+                message = "No se encontró el terreno solicitado." });
+
         RespuestaDto? resultado = await ObtenerUnoAsync(
             terrenoId,
             usuarioPropietarioId: null,
@@ -80,9 +88,19 @@ public sealed class TerrenoPoligonoController : ControllerBase
         if (acceso is not null)
             return acceso;
 
-        return Ok(await ListarAsync(
+        var permitidos = await TerritorioAccesoMapa.TerrenosPermitidos(
+                db, TerritorioAccesoMapa.UsuarioId(User))
+            .ToListAsync(cancellationToken);
+
+        if (permitidos.Count == 0)
+            return Ok(Array.Empty<RespuestaDto>());
+
+        var resultados = await ListarAsync(
             usuarioPropietarioId: null,
-            cancellationToken));
+            cancellationToken);
+
+        return Ok(resultados.Where(item => permitidos.Contains(item.TerrenoId))
+            .ToList());
     }
 
     /// <summary>

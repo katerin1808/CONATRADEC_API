@@ -46,7 +46,7 @@ public sealed class AsignarUsuarioTerrenoDto
     public int TerrenoId { get; set; }
 
     [Required, MaxLength(50)]
-    public string TipoAsignacion { get; set; } = "TECNICO";
+    public string TipoAsignacion { get; set; } = "PROPIETARIO";
 
     public bool EsResponsablePrincipal { get; set; }
 
